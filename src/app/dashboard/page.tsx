@@ -169,13 +169,16 @@ export default function Dashboard() {
           /* ── Main dashboard ── */
           <>
             {/* Tabs */}
-            <div className="flex gap-1 bg-white border border-gray-200 rounded-xl p-1 mb-6 w-fit">
+            <div className="flex gap-1 bg-white border border-gray-200 rounded-xl p-1 mb-6 w-fit flex-wrap">
               {([["overview","Visão geral"],["comments","Comentários"],["install","Instalar"],["settings","Configurações"]] as [Tab,string][]).map(([t,label]) => (
                 <button key={t} onClick={() => setTab(t)}
                   className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${tab===t ? "bg-indigo-600 text-white" : "text-gray-600 hover:text-gray-900"}`}>
                   {label}
                 </button>
               ))}
+              <a href="/dashboard/popups" className="px-4 py-1.5 rounded-lg text-sm font-medium transition text-gray-600 hover:text-gray-900 hover:bg-gray-50">
+                Popups
+              </a>
             </div>
 
             {/* Overview */}
@@ -266,7 +269,7 @@ export default function Dashboard() {
 <div id="commentful-widget"></div>
 
 <!-- 2. Script do widget -->
-<script src="https://comentei.vercel.app/widget.js"></script>
+<script src="https://commentful.vercel.app/widget.js"></script>
 
 <!-- 3. Inicialização -->
 <script>

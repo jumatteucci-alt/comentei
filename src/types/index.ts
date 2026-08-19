@@ -20,3 +20,110 @@ export interface Comment {
   createdAt: number;
   replies?: Comment[];
 }
+
+// ── Popup types ──
+
+export type BlockType = "image" | "title" | "text" | "button" | "countdown" | "email-input";
+export type TriggerType = "delay" | "scroll" | "exit";
+export type ColumnLayout = 1 | 2 | 3;
+
+export interface BlockBase {
+  id: string;
+  type: BlockType;
+}
+
+export interface ImageBlock extends BlockBase {
+  type: "image";
+  src: string;
+  alt: string;
+  width: string; // e.g. "100%"
+  borderRadius: string;
+}
+
+export interface TitleBlock extends BlockBase {
+  type: "title";
+  text: string;
+  fontSize: string;
+  color: string;
+  align: "left" | "center" | "right";
+  fontWeight: "400" | "600" | "700";
+}
+
+export interface TextBlock extends BlockBase {
+  type: "text";
+  text: string;
+  fontSize: string;
+  color: string;
+  align: "left" | "center" | "right";
+}
+
+export interface ButtonBlock extends BlockBase {
+  type: "button";
+  label: string;
+  url: string;
+  openInNewTab: boolean;
+  backgroundColor: string;
+  color: string;
+  fontSize: string;
+  borderRadius: string;
+  align: "left" | "center" | "right";
+  fullWidth: boolean;
+}
+
+export interface CountdownBlock extends BlockBase {
+  type: "countdown";
+  targetDate: string; // ISO string
+  expiredText: string;
+  color: string;
+  fontSize: string;
+  align: "left" | "center" | "right";
+}
+
+export interface EmailInputBlock extends BlockBase {
+  type: "email-input";
+  placeholder: string;
+  buttonLabel: string;
+  buttonColor: string;
+  buttonTextColor: string;
+  successMessage: string;
+  webhookUrl: string;
+}
+
+export type Block = ImageBlock | TitleBlock | TextBlock | ButtonBlock | CountdownBlock | EmailInputBlock;
+
+export interface PopupColumn {
+  id: string;
+  blocks: Block[];
+}
+
+export interface PopupRow {
+  id: string;
+  layout: ColumnLayout;
+  columns: PopupColumn[];
+}
+
+export interface PopupTrigger {
+  type: TriggerType;
+  delaySeconds?: number;
+  scrollPercent?: number;
+}
+
+export interface Popup {
+  id: string;
+  siteId: string;
+  name: string;
+  active: boolean;
+  rows: PopupRow[];
+  trigger: PopupTrigger;
+  // Style
+  overlayColor: string;
+  backgroundColor: string;
+  maxWidth: string;
+  padding: string;
+  borderRadius: string;
+  showCloseButton: boolean;
+  // Frequency
+  showOncePerSession: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
