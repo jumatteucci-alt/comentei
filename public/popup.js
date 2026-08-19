@@ -137,10 +137,22 @@
       rowEl.style.cssText = "display:grid;grid-template-columns:repeat(" + row.layout + ",1fr);gap:12px;";
       (row.columns || []).forEach(function (col) {
         var colEl = document.createElement("div");
-        colEl.style.cssText = "display:flex;flex-direction:column;gap:8px;";
+        colEl.style.cssText = [
+          "display:flex",
+          "flex-direction:column",
+          "gap:8px",
+          "justify-content:" + (col.justifyContent || "flex-start"),
+          "align-items:" + (col.alignItems || "stretch"),
+        ].join(";");
         (col.blocks || []).forEach(function (block) {
           var el = renderBlock(block);
-          if (el) colEl.appendChild(el);
+          if (el) {
+            if (block.marginTop) el.style.marginTop = block.marginTop;
+            if (block.marginBottom) el.style.marginBottom = block.marginBottom;
+            if (block.marginLeft) el.style.marginLeft = block.marginLeft;
+            if (block.marginRight) el.style.marginRight = block.marginRight;
+            colEl.appendChild(el);
+          }
         });
         rowEl.appendChild(colEl);
       });

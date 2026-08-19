@@ -262,6 +262,7 @@ export default function PopupEditor() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
+  const [selectedColId, setSelectedColId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"editor" | "settings" | "segmentation">("editor");
   const dragItem = useRef<{ rowId: string; colId: string; blockId: string } | null>(null);
   const dragOver = useRef<{ rowId: string; colId: string; index: number } | null>(null);
@@ -333,6 +334,14 @@ export default function PopupEditor() {
     setSelectedBlockId(null);
   };
 
+  const updateColumn = (rowId: string, col: PopupColumn) => {
+    if (!popup) return;
+    const rows = popup.rows.map(r => r.id !== rowId ? r : {
+      ...r, columns: r.columns.map(c => c.id === col.id ? col : c)
+    });
+    update({ ...popup, rows });
+  };
+
   // ── Drag to reorder blocks ──
   const onDragStart = (rowId: string, colId: string, blockId: string) => {
     dragItem.current = { rowId, colId, blockId };
@@ -374,6 +383,15 @@ export default function PopupEditor() {
         const block = col.blocks.find(b => b.id === selectedBlockId);
         if (block) return { rowId: row.id, colId: col.id, block };
       }
+    }
+    return null;
+  })();
+
+  const selectedColumn = (() => {
+    if (!popup || !selectedColId) return null;
+    for (const row of popup.rows) {
+      const col = row.columns.find(c => c.id === selectedColId);
+      if (col) return { rowId: row.id, col };
     }
     return null;
   })();
@@ -539,15 +557,17 @@ export default function PopupEditor() {
                     <div className={`grid gap-3`} style={{ gridTemplateColumns: `repeat(${row.layout}, 1fr)` }}>
                       {row.columns.map((col) => (
                         <div key={col.id}
-                          onClick={() => setSelectedBlockId(col.blocks[0]?.id ?? null)}
+                          onClick={() => { setSelectedColId(col.id); setSelectedBlockId(col.blocks[0]?.id ?? null); }}
                           onDragOver={e => { e.preventDefault(); onDragOverBlock(row.id, col.id, col.blocks.length); }}
                           onDrop={onDrop}
+                          style={{ justifyContent: col.justifyContent || "flex-start", alignItems: col.alignItems || "stretch" }}
                           className={`min-h-[48px] rounded-lg border-2 border-dashed p-2 flex flex-col gap-2 transition ${selectedContext?.colId === col.id ? "border-indigo-300 bg-indigo-50/30" : "border-gray-200 hover:border-indigo-200"}`}>
                           {col.blocks.map((block, bi) => (
                             <div key={block.id} draggable
                               onDragStart={() => onDragStart(row.id, col.id, block.id)}
                               onDragOver={e => { e.preventDefault(); e.stopPropagation(); onDragOverBlock(row.id, col.id, bi); }}
-                              onClick={e => { e.stopPropagation(); setSelectedBlockId(block.id === selectedBlockId ? null : block.id); }}>
+                              onClick={e => { e.stopPropagation(); setSelectedColId(col.id); setSelectedBlockId(block.id === selectedBlockId ? null : block.id); }}
+                              style={{ marginTop: block.marginTop || "0", marginBottom: block.marginBottom || "0", marginLeft: block.marginLeft || "0", marginRight: block.marginRight || "0" }}>
                               <BlockPreview block={block} selected={selectedBlockId === block.id} onClick={() => {}} />
                             </div>
                           ))}
@@ -569,22 +589,69 @@ export default function PopupEditor() {
           </div>
         </div>
 
-        {/* Right sidebar — block config */}
+        {/* Right sidebar — block config + column alignment */}
         <div className="w-60 bg-white border-l border-gray-200 flex flex-col flex-shrink-0 overflow-y-auto">
           <div className="p-3 border-b border-gray-100">
-            <p className="text-xs font-medium text-gray-500">{selectedContext ? "Propriedades" : "Selecione um bloco"}</p>
+            <p className="text-xs font-medium text-gray-500">{selectedContext ? "Propriedades do bloco" : selectedColumn ? "Propriedades da coluna" : "Selecione um elemento"}</p>
           </div>
-          <div className="p-3">
-            {selectedContext ? (
-              <BlockConfig
-                block={selectedContext.block}
-                onChange={b => updateBlock(selectedContext.rowId, selectedContext.colId, b)}
-                onDelete={() => removeBlock(selectedContext.rowId, selectedContext.colId, selectedContext.block.id)}
-                userId={user?.uid ?? ""}
-              />
-            ) : (
-              <p className="text-xs text-gray-400">Clique em um bloco no canvas para editar suas propriedades.</p>
+          <div className="p-3 flex flex-col gap-4">
+            {selectedColumn && (
+              <div className="flex flex-col gap-3">
+                <p className="text-xs font-medium text-gray-700">Alinhamento da coluna</p>
+                <div>
+                  <label className="text-xs text-gray-500 block mb-1">Vertical</label>
+                  <div className="flex gap-1">
+                    {([["flex-start","Topo"],["center","Centro"],["flex-end","Base"]] as const).map(([v,l]) => (
+                      <button key={v} onClick={() => updateColumn(selectedColumn.rowId, { ...selectedColumn.col, justifyContent: v })}
+                        className={`flex-1 py-1 text-xs rounded border transition ${selectedColumn.col.justifyContent === v || (!selectedColumn.col.justifyContent && v === "flex-start") ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 block mb-1">Horizontal</label>
+                  <div className="flex gap-1">
+                    {([["flex-start","Esq."],["center","Centro"],["flex-end","Dir."]] as const).map(([v,l]) => (
+                      <button key={v} onClick={() => updateColumn(selectedColumn.rowId, { ...selectedColumn.col, alignItems: v })}
+                        className={`flex-1 py-1 text-xs rounded border transition ${selectedColumn.col.alignItems === v || (!selectedColumn.col.alignItems && v === "flex-start") ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {selectedContext && <div className="border-t border-gray-100 pt-3" />}
+              </div>
             )}
+            {selectedContext ? (
+              <>
+                <BlockConfig
+                  block={selectedContext.block}
+                  onChange={b => updateBlock(selectedContext.rowId, selectedContext.colId, b)}
+                  onDelete={() => removeBlock(selectedContext.rowId, selectedContext.colId, selectedContext.block.id)}
+                  userId={user?.uid ?? ""}
+                />
+                <div className="border-t border-gray-100 pt-3 flex flex-col gap-2">
+                  <p className="text-xs font-medium text-gray-700">Margens</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([["marginTop","Cima"],["marginBottom","Baixo"],["marginLeft","Esq."],["marginRight","Dir."]] as const).map(([key, label]) => (
+                      <div key={key}>
+                        <label className="text-xs text-gray-500 block mb-1">{label}</label>
+                        <input
+                          type="text"
+                          placeholder="0px"
+                          value={selectedContext.block[key] || ""}
+                          onChange={e => updateBlock(selectedContext.rowId, selectedContext.colId, { ...selectedContext.block, [key]: e.target.value })}
+                          className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            ) : !selectedColumn ? (
+              <p className="text-xs text-gray-400">Clique em um bloco ou coluna no canvas para editar.</p>
+            ) : null}
           </div>
         </div>
       </div>

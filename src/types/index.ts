@@ -30,6 +30,10 @@ export type ColumnLayout = 1 | 2 | 3;
 export interface BlockBase {
   id: string;
   type: BlockType;
+  marginTop?: string;
+  marginBottom?: string;
+  marginLeft?: string;
+  marginRight?: string;
 }
 
 export interface ImageBlock extends BlockBase {
@@ -94,6 +98,8 @@ export type Block = ImageBlock | TitleBlock | TextBlock | ButtonBlock | Countdow
 export interface PopupColumn {
   id: string;
   blocks: Block[];
+  justifyContent?: "flex-start" | "center" | "flex-end" | "space-between";
+  alignItems?: "flex-start" | "center" | "flex-end";
 }
 
 export interface PopupRow {
