@@ -73,7 +73,6 @@
     var key = "cmt_popup_" + popup.id;
     if (popup.showOncePerSession && sessionStorage.getItem(key)) return;
     if (!self._matchesSegmentation(popup)) return;
-    var ctx = { widgetId: self._widgetId, popupId: popup.id };
 
     var show = function () { self._render(popup); };
 
@@ -133,6 +132,7 @@
     // Rows
     var body = document.createElement("div");
     body.style.cssText = "display:flex;flex-direction:column;gap:12px;";
+    var ctx = { widgetId: self._widgetId, popupId: popup.id };
 
     (popup.rows || []).forEach(function (row) {
       var rowEl = document.createElement("div");
