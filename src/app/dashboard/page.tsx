@@ -179,6 +179,9 @@ export default function Dashboard() {
               <a href="/dashboard/popups" className="px-4 py-1.5 rounded-lg text-sm font-medium transition text-gray-600 hover:text-gray-900 hover:bg-gray-50">
                 Popups
               </a>
+              <a href="/dashboard/leads" className="px-4 py-1.5 rounded-lg text-sm font-medium transition text-gray-600 hover:text-gray-900 hover:bg-gray-50">
+                Leads
+              </a>
             </div>
 
             {/* Overview */}

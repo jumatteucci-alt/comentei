@@ -42,6 +42,8 @@ export interface ImageBlock extends BlockBase {
   alt: string;
   width: string; // e.g. "100%"
   borderRadius: string;
+  linkUrl?: string;
+  linkNewTab?: boolean;
 }
 
 export interface TitleBlock extends BlockBase {

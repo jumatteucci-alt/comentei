@@ -139,13 +139,34 @@ function BlockConfig({ block, onChange, onDelete, userId }: { block: Block; onCh
 
   const fields = () => {
     switch (block.type) {
-      case "image": return [
-        <ImageUploader key="upload" userId={userId} onUploaded={url => onChange({ ...block, src: url } as Block)} />,
-        input("URL da imagem", (block as ImageBlock).src, "src"),
-        input("Texto alternativo", (block as ImageBlock).alt, "alt"),
-        input("Largura", (block as ImageBlock).width, "width"),
-        input("Border radius", (block as ImageBlock).borderRadius, "borderRadius"),
-      ];
+      case "image": {
+        const img = block as ImageBlock;
+        const widthNum = parseInt(img.width) || 100;
+        return [
+          <ImageUploader key="upload" userId={userId} onUploaded={url => onChange({ ...block, src: url } as Block)} />,
+          input("URL da imagem", img.src, "src"),
+          input("Texto alternativo", img.alt, "alt"),
+          <div key="width">
+            <label className="text-xs text-gray-500 block mb-1">Largura ({widthNum}%)</label>
+            <input type="range" min={10} max={100} step={1} value={widthNum}
+              onChange={e => onChange({ ...block, width: e.target.value + "%" } as Block)}
+              className="w-full accent-indigo-600" />
+            <div className="flex justify-between text-xs text-gray-300 mt-0.5"><span>10%</span><span>100%</span></div>
+          </div>,
+          input("Border radius", img.borderRadius, "borderRadius"),
+          <div key="divlink" className="border-t border-gray-100 pt-2">
+            <p className="text-xs font-medium text-gray-600 mb-2">Link da imagem</p>
+          </div>,
+          input("URL de destino", img.linkUrl || "", "linkUrl"),
+          <div key="linktab" className="flex items-center justify-between">
+            <label className="text-xs text-gray-500">Abrir em nova aba</label>
+            <button onClick={() => onChange({ ...block, linkNewTab: !img.linkNewTab } as Block)}
+              className={`w-9 h-5 rounded-full transition ${img.linkNewTab ? "bg-indigo-500" : "bg-gray-200"}`}>
+              <span className={`block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${img.linkNewTab ? "translate-x-4" : ""}`} />
+            </button>
+          </div>,
+        ];
+      }
       case "title": return [textarea("Texto","text"), input("Tamanho da fonte",(block as TitleBlock).fontSize,"fontSize"), colorField("Cor","color"), select("Alinhamento","align",alignOptions), select("Peso","fontWeight",[["400","Normal"],["600","Semibold"],["700","Bold"]])];
       case "text": return [textarea("Texto","text"), input("Tamanho da fonte",(block as TextBlock).fontSize,"fontSize"), colorField("Cor","color"), select("Alinhamento","align",alignOptions)];
       case "button": return [input("Label",(block as ButtonBlock).label,"label"), input("URL",(block as ButtonBlock).url,"url"), toggle("Abrir em nova aba","openInNewTab"), colorField("Cor de fundo","backgroundColor"), colorField("Cor do texto","color"), input("Tamanho da fonte",(block as ButtonBlock).fontSize,"fontSize"), input("Border radius",(block as ButtonBlock).borderRadius,"borderRadius"), select("Alinhamento","align",alignOptions), toggle("Largura total","fullWidth")];
@@ -632,16 +653,17 @@ export default function PopupEditor() {
                   userId={user?.uid ?? ""}
                 />
                 <div className="border-t border-gray-100 pt-3 flex flex-col gap-2">
-                  <p className="text-xs font-medium text-gray-700">Margens</p>
+                  <p className="text-xs font-medium text-gray-700">Margens (px)</p>
                   <div className="grid grid-cols-2 gap-2">
                     {([["marginTop","Cima"],["marginBottom","Baixo"],["marginLeft","Esq."],["marginRight","Dir."]] as const).map(([key, label]) => (
                       <div key={key}>
                         <label className="text-xs text-gray-500 block mb-1">{label}</label>
                         <input
-                          type="text"
-                          placeholder="0px"
-                          value={selectedContext.block[key] || ""}
-                          onChange={e => updateBlock(selectedContext.rowId, selectedContext.colId, { ...selectedContext.block, [key]: e.target.value })}
+                          type="number"
+                          min={0}
+                          placeholder="0"
+                          value={parseInt(selectedContext.block[key] || "0") || 0}
+                          onChange={e => updateBlock(selectedContext.rowId, selectedContext.colId, { ...selectedContext.block, [key]: e.target.value + "px" })}
                           className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400"
                         />
                       </div>

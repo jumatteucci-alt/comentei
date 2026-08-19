@@ -73,6 +73,7 @@
     var key = "cmt_popup_" + popup.id;
     if (popup.showOncePerSession && sessionStorage.getItem(key)) return;
     if (!self._matchesSegmentation(popup)) return;
+    var ctx = { widgetId: self._widgetId, popupId: popup.id };
 
     var show = function () { self._render(popup); };
 
@@ -94,6 +95,7 @@
   };
 
   ComenteiPopup.prototype._render = function (popup) {
+    var self = this;
     var key = "cmt_popup_" + popup.id;
     if (document.getElementById(key)) return;
 
@@ -145,7 +147,7 @@
           "align-items:" + (col.alignItems || "stretch"),
         ].join(";");
         (col.blocks || []).forEach(function (block) {
-          var el = renderBlock(block);
+          var el = renderBlock(block, ctx);
           if (el) {
             if (block.marginTop) el.style.marginTop = block.marginTop;
             if (block.marginBottom) el.style.marginBottom = block.marginBottom;
@@ -166,13 +168,21 @@
     if (popup.showOncePerSession) sessionStorage.setItem(key, "1");
   };
 
-  function renderBlock(block) {
+  function renderBlock(block, ctx) {
     switch (block.type) {
       case "image": {
         if (!block.src) return null;
         var img = document.createElement("img");
         img.src = block.src; img.alt = block.alt || "";
         img.style.cssText = "width:" + block.width + ";border-radius:" + block.borderRadius + ";display:block;margin:0 auto;";
+        if (block.linkUrl) {
+          var a = document.createElement("a");
+          a.href = block.linkUrl;
+          if (block.linkNewTab) a.target = "_blank";
+          a.style.cssText = "display:block;";
+          a.appendChild(img);
+          return a;
+        }
         return img;
       }
       case "title": {
@@ -238,6 +248,13 @@
           var email = inp.value.trim();
           if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { inp.style.borderColor = "#ef4444"; return; }
           inp.style.borderColor = "#ddd";
+          // Save lead to Comentei
+          fetch("https://comentei.vercel.app/api/leads", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ widgetId: (ctx || {}).widgetId, popupId: (ctx || {}).popupId, email: email })
+          }).catch(function(){});
+          // Also fire webhook if configured
           if (block.webhookUrl) {
             fetch(block.webhookUrl, { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email: email }) }).catch(function(){});
           }
