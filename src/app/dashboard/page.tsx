@@ -266,7 +266,7 @@ export default function Dashboard() {
 <div id="commentful-widget"></div>
 
 <!-- 2. Script do widget -->
-<script src="https://commentful.vercel.app/widget.js"></script>
+<script src="https://comentei.vercel.app/widget.js"></script>
 
 <!-- 3. Inicialização -->
 <script>
