@@ -14,7 +14,7 @@
 (function (global) {
   "use strict";
 
-  var API_BASE = "https://commentful.vercel.app/api/comments";
+  var API_BASE = "https://comentei.vercel.app/api/comments";
 
   var PALETTE = [
     ["#e0e7ff","#3730a3"],["#ede9fe","#6d28d9"],["#d1fae5","#065f46"],
