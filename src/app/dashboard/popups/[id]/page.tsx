@@ -414,9 +414,9 @@ export default function PopupEditor() {
                           {col.blocks.map((block, bi) => (
                             <div key={block.id} draggable
                               onDragStart={() => onDragStart(row.id, col.id, block.id)}
-                              onDragOver={e => { e.preventDefault(); e.stopPropagation(); onDragOverBlock(row.id, col.id, bi); }}>
-                              <BlockPreview block={block} selected={selectedBlockId === block.id}
-                                onClick={() => setSelectedBlockId(block.id === selectedBlockId ? null : block.id)} />
+                              onDragOver={e => { e.preventDefault(); e.stopPropagation(); onDragOverBlock(row.id, col.id, bi); }}
+                              onClick={e => { e.stopPropagation(); setSelectedBlockId(block.id === selectedBlockId ? null : block.id); }}>
+                              <BlockPreview block={block} selected={selectedBlockId === block.id} onClick={() => {}} />
                             </div>
                           ))}
                           {col.blocks.length === 0 && (
