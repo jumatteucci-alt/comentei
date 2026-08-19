@@ -1,20 +1,11 @@
 /**
- * Commentful Widget v1.0
- * Uso:
- *   <div id="commentful-widget"></div>
- *   <script src="https://commentful.vercel.app/widget.js"></script>
- *   <script>
- *     Commentful.init({
- *       widgetId: "SEU_WIDGET_ID",
- *       pageId: "slug-da-pagina",
- *       primaryColor: "#4f46e5"   // opcional
- *     });
- *   </script>
+ * Comentei Widget v1.1
  */
 (function (global) {
   "use strict";
 
   var API_BASE = "https://comentei.vercel.app/api/comments";
+  var PAGE_SIZE = 10;
 
   var PALETTE = [
     ["#e0e7ff","#3730a3"],["#ede9fe","#6d28d9"],["#d1fae5","#065f46"],
@@ -78,7 +69,9 @@
       ".cfl-rf{margin-top:11px;padding-top:11px;border-top:0.5px solid #eee;display:none}",
       ".cfl-rf.open{display:block}",
       ".cfl-rf .cfl-row{margin-bottom:6px}",
-      ".cfl-pw{margin-top:1.5rem;text-align:center;font-size:10px;color:#ccc}",
+      ".cfl-more{margin-top:16px;text-align:center}",
+      ".cfl-more-btn{padding:7px 22px;background:transparent;border:0.5px solid "+color+";color:"+color+";border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit;transition:background 0.15s,color 0.15s}",
+      ".cfl-more-btn:hover{background:"+color+";color:#fff}",
       "@media(max-width:480px){.cfl-row{grid-template-columns:1fr}}",
     ].join("");
     document.head.appendChild(s);
@@ -89,7 +82,7 @@
     return '<div class="'+(sm?"cfl-rav":"cfl-av")+'" style="background:'+c[0]+';color:'+c[1]+'">'+esc(initials(name))+'</div>';
   }
 
-  function renderComment(c, color) {
+  function renderComment(c) {
     var rps = (c.replies || []).map(function (r) {
       return '<div class="cfl-rp">'+avatar(r.name,true)+'<div class="cfl-rpb"><div class="cfl-rpnm">'+esc(r.name)+'</div><div class="cfl-rptx">'+esc(r.text)+'</div><div class="cfl-rpdt">'+fmtDate(r.createdAt)+'</div></div></div>';
     }).join("");
@@ -111,6 +104,8 @@
   function Commentful() {
     this._cfg = null;
     this._el = null;
+    this._all = [];
+    this._shown = 0;
   }
 
   Commentful.prototype.init = function (opts) {
@@ -128,7 +123,7 @@
       ? document.querySelector(this._cfg.container)
       : this._cfg.container;
 
-    if (!this._el) { console.error("[Commentful] Container não encontrado."); return; }
+    if (!this._el) { console.error("[Comentei] Container não encontrado."); return; }
     this._el.innerHTML = this._shell();
     this._bindForm();
     this._load();
@@ -145,7 +140,7 @@
       '</div>' +
       '<div id="cfl-loading" style="font-size:13px;color:#aaa;padding:4px 0"><span class="cfl-spin"></span> Carregando...</div>' +
       '<div class="cfl-list" id="cfl-list" style="display:none"></div>' +
-      '<div class="cfl-pw">Comentários por <a href="https://commentful.vercel.app" target="_blank" style="color:inherit">Commentful</a></div>' +
+      '<div class="cfl-more" id="cfl-more" style="display:none"><button class="cfl-more-btn" id="cfl-more-btn">Mostrar mais</button></div>' +
     '</div>';
   };
 
@@ -160,20 +155,55 @@
         if (loading) loading.style.display = "none";
         if (!list) return;
         list.style.display = "";
+
         if (!data.ok || !data.data || !data.data.length) {
           list.innerHTML = '<p style="font-size:13px;color:#aaa;margin:0">Seja o primeiro a comentar!</p>';
           document.getElementById("cfl-count").textContent = "";
+          document.getElementById("cfl-more").style.display = "none";
           return;
         }
-        var total = data.data.reduce(function(s,c){ return s + 1 + (c.replies||[]).length; }, 0);
+
+        // mais recentes primeiro
+        self._all = data.data.slice().reverse();
+        self._shown = 0;
+
+        var total = self._all.reduce(function(s,c){ return s + 1 + (c.replies||[]).length; }, 0);
         document.getElementById("cfl-count").textContent = total + " comentário" + (total !== 1 ? "s" : "");
-        list.innerHTML = data.data.map(function (c) { return renderComment(c, self._cfg.primaryColor); }).join("");
-        self._bindReplies();
+
+        list.innerHTML = "";
+        self._showMore();
+
+        var moreBtn = document.getElementById("cfl-more-btn");
+        if (moreBtn) moreBtn.addEventListener("click", function () { self._showMore(); });
       })
       .catch(function () {
         var loading = document.getElementById("cfl-loading");
         if (loading) loading.textContent = "Erro ao carregar comentários.";
       });
+  };
+
+  Commentful.prototype._showMore = function () {
+    var list = document.getElementById("cfl-list");
+    var moreWrap = document.getElementById("cfl-more");
+    if (!list) return;
+
+    var next = this._all.slice(this._shown, this._shown + PAGE_SIZE);
+    next.forEach(function (c) {
+      var div = document.createElement("div");
+      div.innerHTML = renderComment(c);
+      list.appendChild(div.firstChild);
+    });
+    this._shown += next.length;
+
+    if (this._shown < this._all.length) {
+      moreWrap.style.display = "";
+      var remaining = this._all.length - this._shown;
+      document.getElementById("cfl-more-btn").textContent = "Mostrar mais (" + remaining + ")";
+    } else {
+      moreWrap.style.display = "none";
+    }
+
+    this._bindReplies();
   };
 
   Commentful.prototype._bindForm = function () {
@@ -185,6 +215,8 @@
   Commentful.prototype._bindReplies = function () {
     var self = this;
     document.querySelectorAll(".cfl-rp-btn").forEach(function (btn) {
+      if (btn._cflBound) return;
+      btn._cflBound = true;
       btn.addEventListener("click", function () {
         var id = btn.getAttribute("data-toggle");
         var rf = document.getElementById(id);
@@ -192,6 +224,8 @@
       });
     });
     document.querySelectorAll(".cfl-rbtn").forEach(function (btn) {
+      if (btn._cflBound) return;
+      btn._cflBound = true;
       btn.addEventListener("click", function () { self._submitReply(btn); });
     });
   };
