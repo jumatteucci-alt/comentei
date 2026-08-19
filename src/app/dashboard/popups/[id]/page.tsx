@@ -5,13 +5,46 @@ import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { getPopup, updatePopup } from "@/lib/popups";
 import { defaultBlock, defaultRow, defaultColumn } from "@/lib/popup-defaults";
+import { storage } from "@/lib/firebase";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import {
   Popup, PopupRow, PopupColumn, Block, BlockType,
-  ImageBlock, TitleBlock, TextBlock, ButtonBlock, CountdownBlock, EmailInputBlock
+  ImageBlock, TitleBlock, TextBlock, ButtonBlock, CountdownBlock, EmailInputBlock,
+  PopupCondition, PopupSegmentation, ConditionType, ConditionOperator
 } from "@/types";
 import Link from "next/link";
 
 function uid() { return Math.random().toString(36).slice(2, 10); }
+
+// ── Image uploader ──
+function ImageUploader({ userId, onUploaded }: { userId: string; onUploaded: (url: string) => void }) {
+  const [progress, setProgress] = useState<number | null>(null);
+  const [error, setError] = useState("");
+
+  const handleFile = (file: File) => {
+    if (!file.type.startsWith("image/")) { setError("Selecione uma imagem."); return; }
+    if (file.size > 5 * 1024 * 1024) { setError("Máximo 5MB."); return; }
+    setError(""); setProgress(0);
+    const storageRef = ref(storage, `popups/${userId}/${Date.now()}-${file.name}`);
+    const task = uploadBytesResumable(storageRef, file);
+    task.on("state_changed",
+      snap => setProgress(Math.round(snap.bytesTransferred / snap.totalBytes * 100)),
+      () => { setError("Erro no upload."); setProgress(null); },
+      () => { getDownloadURL(task.snapshot.ref).then(url => { onUploaded(url); setProgress(null); }); }
+    );
+  };
+
+  return (
+    <div>
+      <label className="text-xs text-gray-500 block mb-1">Upload de imagem</label>
+      <label className="flex flex-col items-center justify-center w-full h-20 border-2 border-dashed border-gray-200 rounded-lg cursor-pointer hover:border-indigo-300 hover:bg-indigo-50/30 transition">
+        <span className="text-xs text-gray-400">{progress !== null ? `${progress}%` : "Clique ou arraste"}</span>
+        <input type="file" accept="image/*" className="hidden" onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
+      </label>
+      {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
+    </div>
+  );
+}
 
 // ── Block renderer (preview) ──
 function BlockPreview({ block, selected, onClick }: { block: Block; selected: boolean; onClick: () => void }) {
@@ -56,7 +89,7 @@ function BlockPreview({ block, selected, onClick }: { block: Block; selected: bo
 }
 
 // ── Block config panel ──
-function BlockConfig({ block, onChange, onDelete }: { block: Block; onChange: (b: Block) => void; onDelete: () => void }) {
+function BlockConfig({ block, onChange, onDelete, userId }: { block: Block; onChange: (b: Block) => void; onDelete: () => void; userId: string }) {
   const input = (label: string, value: string, key: string, type = "text") => (
     <div key={key}>
       <label className="text-xs text-gray-500 block mb-1">{label}</label>
@@ -106,7 +139,13 @@ function BlockConfig({ block, onChange, onDelete }: { block: Block; onChange: (b
 
   const fields = () => {
     switch (block.type) {
-      case "image": return [input("URL da imagem","src","src"), input("Texto alternativo",(block as ImageBlock).alt,"alt"), input("Largura",(block as ImageBlock).width,"width"), input("Border radius",(block as ImageBlock).borderRadius,"borderRadius")];
+      case "image": return [
+        <ImageUploader key="upload" userId={userId} onUploaded={url => onChange({ ...block, src: url } as Block)} />,
+        input("URL da imagem", (block as ImageBlock).src, "src"),
+        input("Texto alternativo", (block as ImageBlock).alt, "alt"),
+        input("Largura", (block as ImageBlock).width, "width"),
+        input("Border radius", (block as ImageBlock).borderRadius, "borderRadius"),
+      ];
       case "title": return [textarea("Texto","text"), input("Tamanho da fonte",(block as TitleBlock).fontSize,"fontSize"), colorField("Cor","color"), select("Alinhamento","align",alignOptions), select("Peso","fontWeight",[["400","Normal"],["600","Semibold"],["700","Bold"]])];
       case "text": return [textarea("Texto","text"), input("Tamanho da fonte",(block as TextBlock).fontSize,"fontSize"), colorField("Cor","color"), select("Alinhamento","align",alignOptions)];
       case "button": return [input("Label",(block as ButtonBlock).label,"label"), input("URL",(block as ButtonBlock).url,"url"), toggle("Abrir em nova aba","openInNewTab"), colorField("Cor de fundo","backgroundColor"), colorField("Cor do texto","color"), input("Tamanho da fonte",(block as ButtonBlock).fontSize,"fontSize"), input("Border radius",(block as ButtonBlock).borderRadius,"borderRadius"), select("Alinhamento","align",alignOptions), toggle("Largura total","fullWidth")];
@@ -126,6 +165,93 @@ function BlockConfig({ block, onChange, onDelete }: { block: Block; onChange: (b
   );
 }
 
+
+// ── Segmentation panel ──
+const CONDITION_LABELS: Record<ConditionType, string> = {
+  url_contains: "URL contém",
+  url_equals: "URL é exatamente",
+  url_starts_with: "URL começa com",
+  url_not_contains: "URL não contém",
+  cookie_equals: "Cookie igual a",
+  cookie_contains: "Cookie contém",
+  cookie_exists: "Cookie existe",
+  cookie_not_exists: "Cookie não existe",
+  utm_source: "UTM source igual a",
+  utm_medium: "UTM medium igual a",
+  utm_campaign: "UTM campaign igual a",
+  device_is: "Dispositivo é",
+};
+
+const NEEDS_KEY: ConditionType[] = ["cookie_equals", "cookie_contains", "cookie_exists", "cookie_not_exists"];
+const DEVICE_OPTIONS = ["desktop", "mobile", "tablet"];
+const NO_VALUE: ConditionType[] = ["cookie_exists", "cookie_not_exists"];
+
+function SegmentationPanel({ seg, onChange }: { seg: PopupSegmentation; onChange: (s: PopupSegmentation) => void }) {
+  const addCondition = () => {
+    const c: PopupCondition = { id: Math.random().toString(36).slice(2,8), type: "url_contains", value: "" };
+    onChange({ ...seg, conditions: [...seg.conditions, c] });
+  };
+  const removeCondition = (id: string) => onChange({ ...seg, conditions: seg.conditions.filter(c => c.id !== id) });
+  const updateCondition = (updated: PopupCondition) => onChange({ ...seg, conditions: seg.conditions.map(c => c.id === updated.id ? updated : c) });
+
+  return (
+    <div className="p-3 flex flex-col gap-3">
+      <div>
+        <p className="text-xs font-medium text-gray-700 mb-2">Regras de exibição</p>
+        <p className="text-xs text-gray-400 mb-3">O popup só aparece quando as condições abaixo forem satisfeitas.</p>
+        {seg.conditions.length > 1 && (
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-xs text-gray-500">Combinar com:</span>
+            <div className="flex rounded-lg overflow-hidden border border-gray-200">
+              {(["and","or"] as ConditionOperator[]).map(op => (
+                <button key={op} onClick={() => onChange({ ...seg, operator: op })}
+                  className={`px-3 py-1 text-xs font-medium transition ${seg.operator === op ? "bg-indigo-600 text-white" : "text-gray-600 hover:bg-gray-50"}`}>
+                  {op === "and" ? "E (todas)" : "OU (qualquer)"}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="flex flex-col gap-3">
+          {seg.conditions.map((cond, i) => (
+            <div key={cond.id} className="bg-gray-50 rounded-lg p-2.5 flex flex-col gap-2">
+              {i > 0 && <div className="text-xs text-center text-gray-400 font-medium">{seg.operator === "and" ? "E" : "OU"}</div>}
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-gray-600">Condição {i+1}</span>
+                <button onClick={() => removeCondition(cond.id)} className="text-xs text-red-400 hover:text-red-600">Remover</button>
+              </div>
+              <select value={cond.type} onChange={e => updateCondition({ ...cond, type: e.target.value as ConditionType, key: undefined, value: "" })}
+                className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-white focus:outline-none focus:border-indigo-400">
+                {(Object.keys(CONDITION_LABELS) as ConditionType[]).map(t => (
+                  <option key={t} value={t}>{CONDITION_LABELS[t]}</option>
+                ))}
+              </select>
+              {NEEDS_KEY.includes(cond.type) && (
+                <input placeholder="Nome do cookie" value={cond.key || ""} onChange={e => updateCondition({ ...cond, key: e.target.value })}
+                  className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400" />
+              )}
+              {!NO_VALUE.includes(cond.type) && (
+                cond.type === "device_is" ? (
+                  <select value={cond.value} onChange={e => updateCondition({ ...cond, value: e.target.value })}
+                    className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-white focus:outline-none focus:border-indigo-400">
+                    <option value="">Selecione...</option>
+                    {DEVICE_OPTIONS.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                ) : (
+                  <input placeholder="Valor" value={cond.value} onChange={e => updateCondition({ ...cond, value: e.target.value })}
+                    className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400" />
+                )
+              )}
+            </div>
+          ))}
+        </div>
+        <button onClick={addCondition} className="mt-3 w-full py-1.5 border border-dashed border-gray-300 rounded-lg text-xs text-gray-500 hover:border-indigo-300 hover:text-indigo-600 transition">
+          + Adicionar condição
+        </button>
+      </div>
+    </div>
+  );
+}
 // ── Main editor ──
 export default function PopupEditor() {
   const { id } = useParams<{ id: string }>();
@@ -136,7 +262,7 @@ export default function PopupEditor() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"editor" | "settings">("editor");
+  const [activeTab, setActiveTab] = useState<"editor" | "settings" | "segmentation">("editor");
   const dragItem = useRef<{ rowId: string; colId: string; blockId: string } | null>(null);
   const dragOver = useRef<{ rowId: string; colId: string; index: number } | null>(null);
 
@@ -287,7 +413,8 @@ export default function PopupEditor() {
           <div className="p-3 border-b border-gray-100">
             <div className="flex rounded-lg overflow-hidden border border-gray-200">
               <button onClick={() => setActiveTab("editor")} className={`flex-1 py-1.5 text-xs font-medium transition ${activeTab==="editor" ? "bg-indigo-600 text-white" : "text-gray-600 hover:bg-gray-50"}`}>Editor</button>
-              <button onClick={() => setActiveTab("settings")} className={`flex-1 py-1.5 text-xs font-medium transition ${activeTab==="settings" ? "bg-indigo-600 text-white" : "text-gray-600 hover:bg-gray-50"}`}>Configurar</button>
+              <button onClick={() => setActiveTab("settings")} className={`flex-1 py-1.5 text-xs font-medium transition ${activeTab==="settings" ? "bg-indigo-600 text-white" : "text-gray-600 hover:bg-gray-50"}`}>Estilo</button>
+              <button onClick={() => setActiveTab("segmentation")} className={`flex-1 py-1.5 text-xs font-medium transition ${activeTab==="segmentation" ? "bg-indigo-600 text-white" : "text-gray-600 hover:bg-gray-50"}`}>Público</button>
             </div>
           </div>
 
@@ -326,7 +453,7 @@ export default function PopupEditor() {
                 </div>
               )}
             </>
-          ) : (
+          ) : activeTab === "settings" ? (
             <div className="p-3 flex flex-col gap-4">
               {/* Trigger */}
               <div>
@@ -383,7 +510,12 @@ export default function PopupEditor() {
                 </div>
               </div>
             </div>
-          )}
+          ) : activeTab === "segmentation" ? (
+            <SegmentationPanel
+              seg={popup.segmentation ?? { operator: "and", conditions: [] }}
+              onChange={seg => update({ ...popup, segmentation: seg })}
+            />
+          ) : null}
         </div>
 
         {/* Center — canvas */}
@@ -448,6 +580,7 @@ export default function PopupEditor() {
                 block={selectedContext.block}
                 onChange={b => updateBlock(selectedContext.rowId, selectedContext.colId, b)}
                 onDelete={() => removeBlock(selectedContext.rowId, selectedContext.colId, selectedContext.block.id)}
+                userId={user?.uid ?? ""}
               />
             ) : (
               <p className="text-xs text-gray-400">Clique em um bloco no canvas para editar suas propriedades.</p>

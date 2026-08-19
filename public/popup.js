@@ -23,10 +23,56 @@
       .catch(function () {});
   };
 
+
+  // ── Segmentation evaluator ──
+  ComenteiPopup.prototype._matchesSegmentation = function (popup) {
+    var seg = popup.segmentation;
+    if (!seg || !seg.conditions || seg.conditions.length === 0) return true;
+
+    var url = window.location.href;
+    var params = new URLSearchParams(window.location.search);
+
+    function getCookie(name) {
+      var match = document.cookie.match(new RegExp("(?:^|; )" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "=([^;]*)"));
+      return match ? decodeURIComponent(match[1]) : null;
+    }
+
+    function getDevice() {
+      var w = window.innerWidth;
+      if (w <= 768) return "mobile";
+      if (w <= 1024) return "tablet";
+      return "desktop";
+    }
+
+    function evalCondition(cond) {
+      switch (cond.type) {
+        case "url_contains":      return url.includes(cond.value);
+        case "url_equals":        return url === cond.value;
+        case "url_starts_with":   return url.startsWith(cond.value);
+        case "url_not_contains":  return !url.includes(cond.value);
+        case "cookie_equals":     return getCookie(cond.key) === cond.value;
+        case "cookie_contains":   { var v = getCookie(cond.key); return v !== null && v.includes(cond.value); }
+        case "cookie_exists":     return getCookie(cond.key) !== null;
+        case "cookie_not_exists": return getCookie(cond.key) === null;
+        case "utm_source":        return params.get("utm_source") === cond.value;
+        case "utm_medium":        return params.get("utm_medium") === cond.value;
+        case "utm_campaign":      return params.get("utm_campaign") === cond.value;
+        case "device_is":         return getDevice() === cond.value;
+        default:                  return true;
+      }
+    }
+
+    var results = seg.conditions.map(evalCondition);
+    return seg.operator === "or"
+      ? results.some(Boolean)
+      : results.every(Boolean);
+  };
+
   ComenteiPopup.prototype._schedule = function (popup) {
     var self = this;
     var key = "cmt_popup_" + popup.id;
     if (popup.showOncePerSession && sessionStorage.getItem(key)) return;
+    if (!self._matchesSegmentation(popup)) return;
 
     var show = function () { self._render(popup); };
 

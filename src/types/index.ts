@@ -108,6 +108,26 @@ export interface PopupTrigger {
   scrollPercent?: number;
 }
 
+export type ConditionType =
+  | "url_contains" | "url_equals" | "url_starts_with" | "url_not_contains"
+  | "cookie_equals" | "cookie_contains" | "cookie_exists" | "cookie_not_exists"
+  | "utm_source" | "utm_medium" | "utm_campaign"
+  | "device_is";
+
+export type ConditionOperator = "and" | "or";
+
+export interface PopupCondition {
+  id: string;
+  type: ConditionType;
+  key?: string;   // for cookie conditions: cookie name
+  value: string;  // the value to match
+}
+
+export interface PopupSegmentation {
+  operator: ConditionOperator; // "and" | "or" between conditions
+  conditions: PopupCondition[];
+}
+
 export interface Popup {
   id: string;
   siteId: string;
@@ -115,6 +135,7 @@ export interface Popup {
   active: boolean;
   rows: PopupRow[];
   trigger: PopupTrigger;
+  segmentation?: PopupSegmentation;
   // Style
   overlayColor: string;
   backgroundColor: string;
