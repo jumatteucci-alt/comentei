@@ -56,19 +56,7 @@ export default function PopupsPage() {
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" /></div>;
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white border-b border-gray-200 px-4 h-14 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 4C2 3.45 2.45 3 3 3h10c.55 0 1 .45 1 1v6c0 .55-.45 1-1 1H3c-.55 0-1-.45-1-1V4z" fill="white" fillOpacity=".9"/><path d="M4 10.5v2l2.5-2H4z" fill="white"/></svg>
-          </div>
-          <Link href="/dashboard" className="font-semibold text-gray-900">Comentei</Link>
-          <span className="text-gray-400 text-sm">/ Popups</span>
-        </div>
-        <Link href="/dashboard" className="text-sm text-gray-500 hover:text-gray-700">← Voltar</Link>
-      </nav>
-
-      <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className="max-w-3xl mx-auto px-6 py-8">
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-xl font-semibold text-gray-900">Popups</h1>
@@ -136,7 +124,6 @@ export default function PopupsPage() {
             </div>
           </div>
         )}
-      </div>
     </div>
   );
 }
