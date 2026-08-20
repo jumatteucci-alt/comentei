@@ -171,6 +171,8 @@ function EditorInner() {
   const savingHistory = useRef(false);
   const blurOriginMap = useRef<Map<string, string>>(new Map()); // uid → JSON string of original
   const blurValueMap  = useRef<Map<string, number>>(new Map()); // uid → current blur value
+  const blurPosMap    = useRef<Map<string, {left:number;top:number;scaleX:number;scaleY:number;angle:number}>>(new Map()); // uid → original position before any blur
+  const blurTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [site, setSite] = useState<Site | null>(null);
   const [fabricLoaded, setFabricLoaded] = useState(false);
@@ -408,21 +410,16 @@ function EditorInner() {
   const updateBlur = (v: number) => {
     setSelBlur(v);
     if (!fc.current || !sel) return;
-    const fabric = (window as any).fabric;
+
     const uid = sel.__uid;
 
-    // Track value so syncSel can read it back
+    // Track value
     if (v > 0) blurValueMap.current.set(uid, v);
     else blurValueMap.current.delete(uid);
 
-    const left   = sel.left;
-    const top    = sel.top;
-    const angle  = sel.angle  || 0;
-    const scaleX = sel.scaleX || 1;
-    const scaleY = sel.scaleY || 1;
-
-    // ── Real uploaded image: fabric filter works fine ──
+    // ── Real uploaded image: fabric filter, no debounce needed ──
     if (sel.type === "image" && !blurOriginMap.current.has(uid)) {
+      const fabric = (window as any).fabric;
       const filters = (sel.filters || []).filter((f: any) => f.type !== "Blur");
       if (v > 0) filters.push(new fabric.Image.filters.Blur({ blur: v / 100 }));
       sel.filters = filters;
@@ -432,86 +429,95 @@ function EditorInner() {
       return;
     }
 
-    // ── Blur = 0: restore original shape/text ──
-    if (v === 0 && blurOriginMap.current.has(uid)) {
-      const json = blurOriginMap.current.get(uid)!;
-      blurOriginMap.current.delete(uid);
-      fc.current.remove(sel);
-      fabric.util.enlivenObjects([JSON.parse(json)], (objs: any[]) => {
-        const orig = objs[0];
-        orig.set({ left, top, angle, scaleX, scaleY });
-        orig.__uid = uid;
-        fc.current.add(orig);
-        fc.current.setActiveObject(orig);
-        setSel(orig);
-        fc.current.requestRenderAll();
+    // Save original position ONCE before first rasterization
+    if (!blurPosMap.current.has(uid)) {
+      blurPosMap.current.set(uid, {
+        left: sel.left, top: sel.top,
+        scaleX: sel.scaleX || 1, scaleY: sel.scaleY || 1,
+        angle: sel.angle || 0,
       });
-      return;
     }
 
-    // ── Save JSON on first blur ──
-    if (!blurOriginMap.current.has(uid)) {
+    // Save original object JSON ONCE
+    if (!blurOriginMap.current.has(uid) && sel.type !== "image") {
       blurOriginMap.current.set(uid, JSON.stringify(sel.toObject()));
     }
 
-    // Remove current from canvas (whether shape or previously rasterized image)
-    fc.current.remove(sel);
+    // Debounce: only rasterize 150ms after slider stops
+    if (blurTimer.current) clearTimeout(blurTimer.current);
+    blurTimer.current = setTimeout(() => {
+      const fabric = (window as any).fabric;
+      const currentV = blurValueMap.current.get(uid) ?? 0;
+      const pos = blurPosMap.current.get(uid)!;
 
-    // Enliven source from saved JSON
-    const sourceJson = blurOriginMap.current.get(uid)!;
-    fabric.util.enlivenObjects([JSON.parse(sourceJson)], (objs: any[]) => {
-      const sourceObj = objs[0];
-
-      // Measure source at scale
-      const srcW = (sourceObj.width  || 100) * scaleX;
-      const srcH = (sourceObj.height || 100) * scaleY;
-      const blurPx = Math.max(1, Math.round(v * 0.3));
-      const pad = blurPx * 4; // enough room for blur to spread
-
-      const cw = Math.min(Math.ceil(srcW) + pad * 2, 1800);
-      const ch = Math.min(Math.ceil(srcH) + pad * 2, 1800);
-
-      // Render into mini fabric canvas
-      const miniEl = document.createElement("canvas");
-      miniEl.width = cw; miniEl.height = ch;
-      const miniCanvas = new fabric.StaticCanvas(miniEl, {
-        width: cw, height: ch, enableRetinaScaling: false,
-      });
-      sourceObj.set({
-        left: cw / 2, top: ch / 2,
-        originX: "center", originY: "center",
-        angle: 0, scaleX, scaleY,
-      });
-      miniCanvas.add(sourceObj);
-      miniCanvas.renderAll();
-
-      // Apply native CSS blur onto a second canvas WITH padding for blur spread
-      const outEl = document.createElement("canvas");
-      outEl.width = cw + pad * 2; outEl.height = ch + pad * 2;
-      const ctx = outEl.getContext("2d")!;
-      ctx.filter = `blur(${blurPx}px)`;
-      ctx.drawImage(miniEl, pad, pad);
-      miniCanvas.dispose();
-
-      const dataURL = outEl.toDataURL("image/png");
-
-      fabric.Image.fromURL(dataURL, (img: any) => {
-        img.set({
-          left: left - pad,
-          top:  top  - pad,
-          angle,
-          scaleX: 1, scaleY: 1,
-          originX: "left", originY: "top",
-          strokeUniform: true,
+      // ── Blur = 0: restore original ──
+      if (currentV === 0 && blurOriginMap.current.has(uid)) {
+        const json = blurOriginMap.current.get(uid)!;
+        blurOriginMap.current.delete(uid);
+        blurPosMap.current.delete(uid);
+        const current = fc.current.getObjects().find((o: any) => o.__uid === uid);
+        if (current) fc.current.remove(current);
+        fabric.util.enlivenObjects([JSON.parse(json)], (objs: any[]) => {
+          const orig = objs[0];
+          orig.set({ left: pos.left, top: pos.top, angle: pos.angle, scaleX: pos.scaleX, scaleY: pos.scaleY });
+          orig.__uid = uid;
+          fc.current.add(orig);
+          fc.current.setActiveObject(orig);
+          setSel(orig);
+          setSelBlur(0);
+          fc.current.requestRenderAll();
         });
-        img.__uid = uid;
-        fc.current.add(img);
-        fc.current.setActiveObject(img);
-        setSel(img);
-        setSelBlur(v);
-        fc.current.requestRenderAll();
+        return;
+      }
+
+      // ── Rasterize from original JSON ──
+      const sourceJson = blurOriginMap.current.get(uid)!;
+      const current = fc.current.getObjects().find((o: any) => o.__uid === uid);
+      if (current) fc.current.remove(current);
+
+      fabric.util.enlivenObjects([JSON.parse(sourceJson)], (objs: any[]) => {
+        const sourceObj = objs[0];
+        const srcW = (sourceObj.width  || 100) * pos.scaleX;
+        const srcH = (sourceObj.height || 100) * pos.scaleY;
+        const blurPx = Math.max(1, Math.round(currentV * 0.3));
+        const pad = blurPx * 4;
+        const cw = Math.min(Math.ceil(srcW) + pad * 2, 1800);
+        const ch = Math.min(Math.ceil(srcH) + pad * 2, 1800);
+
+        const miniEl = document.createElement("canvas");
+        miniEl.width = cw; miniEl.height = ch;
+        const miniCanvas = new fabric.StaticCanvas(miniEl, { width: cw, height: ch, enableRetinaScaling: false });
+        sourceObj.set({ left: cw / 2, top: ch / 2, originX: "center", originY: "center", angle: 0, scaleX: pos.scaleX, scaleY: pos.scaleY });
+        miniCanvas.add(sourceObj);
+        miniCanvas.renderAll();
+
+        const outEl = document.createElement("canvas");
+        outEl.width = cw; outEl.height = ch;
+        const ctx = outEl.getContext("2d")!;
+        ctx.filter = `blur(${blurPx}px)`;
+        ctx.drawImage(miniEl, 0, 0);
+        miniCanvas.dispose();
+
+        const dataURL = outEl.toDataURL("image/png");
+        fabric.Image.fromURL(dataURL, (img: any) => {
+          // Center image over original position
+          img.set({
+            left: pos.left + (srcW / 2) - (cw / 2),
+            top:  pos.top  + (srcH / 2) - (ch / 2),
+            angle: pos.angle,
+            scaleX: 1, scaleY: 1,
+            originX: "left", originY: "top",
+            strokeUniform: true,
+          });
+          img.__uid = uid;
+          fc.current.add(img);
+          fc.current.setActiveObject(img);
+          setSel(img);
+          setSelBlur(currentV);
+          fc.current.requestRenderAll();
+        });
       });
-    });
+    }, 150);
   };
 
   const toggleLock = (uid: string) => {
