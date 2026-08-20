@@ -16,7 +16,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   // Editor de popup usa layout próprio (tela cheia)
   // Editor de popup: /dashboard/popups/[id] — tela cheia. Install page não é fullscreen.
-  const isFullscreen = /\/dashboard\/popups\/[^/]+$/.test(pathname) && !pathname.endsWith("/install");
+  const isFullscreen = (/\/dashboard\/popups\/[^/]+$/.test(pathname) && !pathname.endsWith("/install")) || pathname === "/dashboard/canvas/editor";
 
   useEffect(() => {
     if (!loading && !user) router.push("/auth");

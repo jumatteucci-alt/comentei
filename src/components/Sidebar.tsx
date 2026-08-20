@@ -33,6 +33,14 @@ const NAV: NavGroup[] = [
     ],
   },
   {
+    label: "Canvas",
+    icon: <svg width="15" height="15" fill="none" viewBox="0 0 16 16"><rect x="1" y="1" width="14" height="14" rx="2" fill="currentColor" opacity=".15"/><rect x="1" y="1" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.2"/><circle cx="5" cy="5" r="1.5" fill="currentColor"/><path d="M1 10l4-4 3 3 2-2 5 5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+    items: [
+      { href: "/dashboard/canvas", label: "Galeria" },
+      { href: "/dashboard/canvas/editor?format=square", label: "Nova arte" },
+    ],
+  },
+  {
     label: "Chat IA",
     icon: <svg width="15" height="15" fill="none" viewBox="0 0 16 16"><path d="M2 3a1 1 0 011-1h10a1 1 0 011 1v7a1 1 0 01-1 1H9l-3 2.5V11H3a1 1 0 01-1-1V3z" fill="currentColor"/><circle cx="5" cy="7" r="1" fill="white"/><circle cx="8" cy="7" r="1" fill="white"/><circle cx="11" cy="7" r="1" fill="white"/></svg>,
     items: [
