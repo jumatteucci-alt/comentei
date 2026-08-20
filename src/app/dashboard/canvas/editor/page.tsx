@@ -331,9 +331,11 @@ function EditorInner() {
       const newSize = Math.round((obj.fontSize * obj.scaleY) / scale);
       setSelFontSize(newSize);
     });
+    
     canvas.on("object:scaled", (e: any) => {
       const obj = e.target;
       if (!obj) return;
+      
       // Bake font size for text
       if (obj.type === "textbox" || obj.type === "i-text") {
         const newFontSize = Math.round(obj.fontSize * obj.scaleY);
@@ -341,14 +343,36 @@ function EditorInner() {
         obj.set({ fontSize: newFontSize, width: newWidth, scaleX: 1, scaleY: 1 });
         canvas.requestRenderAll();
         syncSel(obj);
+        return;
       }
-      // Keep border-radius proportional for rects
+      
+      // Keep border-radius proportional for rects - CORRIGIDO
       if (obj.type === "rect" && (obj.rx || obj.ry)) {
-        const newW = obj.width  * (obj.scaleX || 1);
+        // Salvar o raio original se ainda não foi salvo
+        if (!obj._originalRx) {
+          obj._originalRx = obj.rx || 0;
+        }
+        
+        const newW = obj.width * (obj.scaleX || 1);
         const newH = obj.height * (obj.scaleY || 1);
-        const minScale = Math.min(obj.scaleX || 1, obj.scaleY || 1);
-        const newRx = (obj.rx || 0) * minScale;
-        obj.set({ width: newW, height: newH, rx: newRx, ry: newRx, scaleX: 1, scaleY: 1 });
+        
+        // Calcular novo raio baseado na média das escalas
+        const avgScale = ((obj.scaleX || 1) + (obj.scaleY || 1)) / 2;
+        let newRx = obj._originalRx * avgScale;
+        
+        // Limitar para não ultrapassar metade do menor lado
+        const minDimension = Math.min(newW, newH);
+        newRx = Math.min(newRx, minDimension / 2);
+        
+        obj.set({ 
+          width: newW, 
+          height: newH, 
+          rx: newRx, 
+          ry: newRx, 
+          scaleX: 1, 
+          scaleY: 1 
+        });
+        
         canvas.requestRenderAll();
         syncSel(obj);
       }
