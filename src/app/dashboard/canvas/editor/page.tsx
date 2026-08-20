@@ -334,51 +334,86 @@ function EditorInner() {
     pathObj.selectable = false;
     pathObj.evented = false;
 
-    const pathData = pathObj.path;
+    // Converte path original para coordenadas absolutas na tela
     const matrix = pathObj.calcTransformMatrix();
+    const globalCommands: any[] = [];
 
-    const helpers: any[] = [];
-    pathData.forEach((cmd: any[], cIdx: number) => {
+    pathObj.path.forEach((cmd: any[]) => {
       const type = cmd[0];
       if (type === "M" || type === "L") {
         const pt = fabric.util.transformPoint({ x: cmd[1], y: cmd[2] }, matrix);
-        const node = new fabric.Circle({
-          left: pt.x, top: pt.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2,
-          originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true
-        });
-        node.on("moving", () => {
-          const inv = fabric.util.invertTransform(pathObj.calcTransformMatrix());
-          const orig = fabric.util.transformPoint({ x: node.left, y: node.top }, inv);
-          cmd[1] = orig.x; cmd[2] = orig.y;
-          pathObj.dirty = true;
-          canvas.requestRenderAll();
-        });
-        helpers.push(node);
-        canvas.add(node);
+        globalCommands.push({ type, x: pt.x, y: pt.y });
       } else if (type === "C") {
-        // Curve: control point 1, control point 2, anchor point
         const cp1 = fabric.util.transformPoint({ x: cmd[1], y: cmd[2] }, matrix);
         const cp2 = fabric.util.transformPoint({ x: cmd[3], y: cmd[4] }, matrix);
         const end = fabric.util.transformPoint({ x: cmd[5], y: cmd[6] }, matrix);
+        globalCommands.push({ type: "C", cp1x: cp1.x, cp1y: cp1.y, cp2x: cp2.x, cp2y: cp2.y, x: end.x, y: end.y });
+      } else if (type === "Z" || type === "z") {
+        globalCommands.push({ type: "Z" });
+      }
+    });
 
-        const nodeCp1 = new fabric.Circle({ left: cp1.x, top: cp1.y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
-        const nodeCp2 = new fabric.Circle({ left: cp2.x, top: cp2.y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
-        const nodeEnd = new fabric.Circle({ left: end.x, top: end.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
+    const rebuildPath = () => {
+      let d = "";
+      globalCommands.forEach((c) => {
+        if (c.type === "M") d += `M ${c.x} ${c.y} `;
+        else if (c.type === "L") d += `L ${c.x} ${c.y} `;
+        else if (c.type === "C") d += `C ${c.cp1x} ${c.cp1y} ${c.cp2x} ${c.cp2y} ${c.x} ${c.y} `;
+        else if (c.type === "Z") d += `Z `;
+      });
+
+      const parsed = fabric.util.parsePath(d);
+      pathObj.set({
+        path: parsed,
+        left: 0,
+        top: 0,
+        scaleX: 1,
+        scaleY: 1,
+        angle: 0,
+        originX: "left",
+        originY: "top"
+      });
+      if (pathObj._setPath) {
+        pathObj._setPath(parsed);
+      }
+      pathObj.setCoords();
+      canvas.requestRenderAll();
+    };
+
+    const helpers: any[] = [];
+
+    globalCommands.forEach((cmd) => {
+      if (cmd.type === "M" || cmd.type === "L") {
+        const node = new fabric.Circle({
+          left: cmd.x, top: cmd.y, radius: 6, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2,
+          originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true
+        });
+        node.on("moving", () => {
+          cmd.x = node.left;
+          cmd.y = node.top;
+          rebuildPath();
+        });
+        helpers.push(node);
+        canvas.add(node);
+      } else if (cmd.type === "C") {
+        const nodeCp1 = new fabric.Circle({ left: cmd.cp1x, top: cmd.cp1y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
+        const nodeCp2 = new fabric.Circle({ left: cmd.cp2x, top: cmd.cp2y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
+        const nodeEnd = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 6, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
 
         nodeCp1.on("moving", () => {
-          const orig = fabric.util.transformPoint({ x: nodeCp1.left, y: nodeCp1.top }, fabric.util.invertTransform(pathObj.calcTransformMatrix()));
-          cmd[1] = orig.x; cmd[2] = orig.y;
-          pathObj.dirty = true; canvas.requestRenderAll();
+          cmd.cp1x = nodeCp1.left;
+          cmd.cp1y = nodeCp1.top;
+          rebuildPath();
         });
         nodeCp2.on("moving", () => {
-          const orig = fabric.util.transformPoint({ x: nodeCp2.left, y: nodeCp2.top }, fabric.util.invertTransform(pathObj.calcTransformMatrix()));
-          cmd[3] = orig.x; cmd[4] = orig.y;
-          pathObj.dirty = true; canvas.requestRenderAll();
+          cmd.cp2x = nodeCp2.left;
+          cmd.cp2y = nodeCp2.top;
+          rebuildPath();
         });
         nodeEnd.on("moving", () => {
-          const orig = fabric.util.transformPoint({ x: nodeEnd.left, y: nodeEnd.top }, fabric.util.invertTransform(pathObj.calcTransformMatrix()));
-          cmd[5] = orig.x; cmd[6] = orig.y;
-          pathObj.dirty = true; canvas.requestRenderAll();
+          cmd.x = nodeEnd.left;
+          cmd.y = nodeEnd.top;
+          rebuildPath();
         });
 
         helpers.push(nodeCp1, nodeCp2, nodeEnd);
@@ -386,6 +421,7 @@ function EditorInner() {
       }
     });
 
+    rebuildPath();
     editControlPoints.current = helpers;
     canvas.requestRenderAll();
   };
@@ -521,13 +557,12 @@ function EditorInner() {
       const currIdx = pts.length - 1;
       const anchor = pts[currIdx];
 
-      // Symmetrical bezier handles
       const dx = p.x - anchor.x;
       const dy = p.y - anchor.y;
 
       penCurveHandles.current[currIdx] = [
-        { x: anchor.x - dx, y: anchor.y - dy }, // entry handle
-        { x: anchor.x + dx, y: anchor.y + dy }  // exit handle
+        { x: anchor.x - dx, y: anchor.y - dy },
+        { x: anchor.x + dx, y: anchor.y + dy }
       ];
 
       if (activeHandleLine.current) canvas.remove(activeHandleLine.current);
