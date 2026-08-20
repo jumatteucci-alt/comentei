@@ -404,6 +404,8 @@ function EditorInner() {
     const filters = (sel.filters || []).filter((f: any) => f.type !== "Blur");
     if (v > 0) filters.push(new fabric.Image.filters.Blur({ blur: v / 100 }));
     sel.filters = filters;
+    // Expand padding so blur bleeds outside the element bounds
+    sel.set({ padding: v > 0 ? Math.round(v * 0.6) : 0 });
     sel.applyFilters();
     fc.current.requestRenderAll();
   };
