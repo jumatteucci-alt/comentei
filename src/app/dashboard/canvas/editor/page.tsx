@@ -382,7 +382,14 @@ function EditorInner() {
   // ─── Helpers to update selected object ───────────────
   const upd = (props: Record<string, any>) => {
     if (!fc.current || !sel) return;
-    sel.set(props); fc.current.requestRenderAll();
+    sel.set(props);
+    if (isText && sel.fontFamily) {
+      document.fonts.load(`${sel.fontSize || 48}px "${sel.fontFamily}"`).finally(() => {
+        fc.current?.requestRenderAll();
+      });
+    } else {
+      fc.current.requestRenderAll();
+    }
   };
 
   const updateFill = (color: string) => {
@@ -812,19 +819,27 @@ function EditorInner() {
             <div className="p-3 flex flex-col gap-3 border-b border-gray-200">
               <p className="font-semibold text-gray-600 uppercase tracking-wide" style={{fontSize:10}}>Propriedades</p>
 
-              {/* Fill */}
-              <Sec title="Preenchimento" />
-              <ColorPicker value={selFill} onChange={updateFill} label="" />
-              <GradientEditor value={selFillGradient} onChange={updateFillGradient} />
+              {/* Fill — hidden for images */}
+              {sel.type !== "image" && (
+                <>
+                  <Sec title="Preenchimento" />
+                  <ColorPicker value={selFill} onChange={updateFill} label="" />
+                  <GradientEditor value={selFillGradient} onChange={updateFillGradient} />
+                </>
+              )}
 
               {/* Opacity */}
               <Sec title="Opacidade" />
               <SliderRow label="" value={selOpacity} min={0} max={100} unit="%" onChange={updateOpacity} />
 
-              {/* Stroke */}
-              <Sec title="Borda" />
-              <ColorPicker value={selStroke} onChange={c => { setSelStroke(c); updateStroke(c); }} label="Cor" />
-              <NumRow label="Espessura" value={selStrokeW} min={0} max={50} onChange={v => { setSelStrokeW(v); updateStrokeW(v); }} />
+              {/* Stroke — hidden for images */}
+              {sel.type !== "image" && (
+                <>
+                  <Sec title="Borda" />
+                  <ColorPicker value={selStroke} onChange={c => { setSelStroke(c); updateStroke(c); }} label="Cor" />
+                  <NumRow label="Espessura" value={selStrokeW} min={0} max={50} onChange={v => { setSelStrokeW(v); updateStrokeW(v); }} />
+                </>
+              )}
 
               {/* Rotation */}
               <Sec title="Rotação" />
