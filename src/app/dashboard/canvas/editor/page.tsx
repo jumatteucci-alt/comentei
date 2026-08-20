@@ -69,18 +69,28 @@ function GradientEditor({ value, onChange }: { value: { c1: string; c2: string; 
         </button>
       </div>
       {on && (
-        <>
-          <div className="flex gap-2">
-            <div className="flex-1"><p className="text-xs text-gray-400 mb-1">Cor 1</p>
-              <div className="flex gap-1"><input type="color" value={g.c1} onChange={e => onChange({ ...g, c1: e.target.value })} className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0" />
-                <input type="text" value={g.c1} onChange={e => onChange({ ...g, c1: e.target.value })} className="flex-1 px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:border-indigo-400 min-w-0" /></div></div>
-            <div className="flex-1"><p className="text-xs text-gray-400 mb-1">Cor 2</p>
-              <div className="flex gap-1"><input type="color" value={g.c2} onChange={e => onChange({ ...g, c2: e.target.value })} className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0" />
-                <input type="text" value={g.c2} onChange={e => onChange({ ...g, c2: e.target.value })} className="flex-1 px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:border-indigo-400 min-w-0" /></div></div>
+        <div className="flex flex-col gap-2">
+          <div>
+            <p className="text-xs text-gray-400 mb-1">Cor 1</p>
+            <div className="flex gap-1">
+              <input type="color" value={g.c1} onChange={e => onChange({ ...g, c1: e.target.value })} className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0 flex-shrink-0" />
+              <input type="text" value={g.c1} onChange={e => onChange({ ...g, c1: e.target.value })} className="flex-1 px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:border-indigo-400 min-w-0" />
+            </div>
           </div>
-          <div><p className="text-xs text-gray-400 mb-1">Ângulo: {g.angle}°</p>
-            <input type="range" min={0} max={360} value={g.angle} onChange={e => onChange({ ...g, angle: +e.target.value })} className="w-full accent-indigo-600" /></div>
-        </>
+          <div>
+            <p className="text-xs text-gray-400 mb-1">Cor 2</p>
+            <div className="flex gap-1">
+              <input type="color" value={g.c2} onChange={e => onChange({ ...g, c2: e.target.value })} className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0 flex-shrink-0" />
+              <input type="text" value={g.c2} onChange={e => onChange({ ...g, c2: e.target.value })} className="flex-1 px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:border-indigo-400 min-w-0" />
+            </div>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400 mb-1">Ângulo: {g.angle}°</p>
+            <input type="range" min={0} max={360} value={g.angle} onChange={e => onChange({ ...g, angle: +e.target.value })} className="w-full accent-indigo-600" />
+          </div>
+          {/* Preview */}
+          <div style={{ background: `linear-gradient(${g.angle}deg, ${g.c1}, ${g.c2})`, height: 20, borderRadius: 6 }} />
+        </div>
       )}
     </div>
   );
@@ -244,6 +254,7 @@ function EditorInner() {
     if (!fabricLoaded || !canvasRef.current) return;
     const canvas = new (window as any).fabric.Canvas(canvasRef.current, {
       width: DISPLAY_W, height: DISPLAY_H, backgroundColor: "#ffffff", selection: true,
+      centeredRotation: true,
     });
     fc.current = canvas;
 
@@ -355,7 +366,7 @@ function EditorInner() {
   };
   const updateOpacity  = (v: number) => { setSelOpacity(v);  upd({ opacity: v/100 }); };
   const updateStroke   = (c: string) => { setSelStroke(c);   upd({ stroke: c }); };
-  const updateStrokeW  = (v: number) => { setSelStrokeW(v);  upd({ strokeWidth: v }); };
+  const updateStrokeW  = (v: number) => { setSelStrokeW(v);  upd({ strokeWidth: v, strokeUniform: true }); };
   const updateRadius   = (v: number) => { setSelRadius(v);   upd({ rx: v, ry: v }); };
   const updateRotation = (v: number) => { setSelRotation(v); upd({ angle: v }); };
   const updateFontSize = (v: number) => { setSelFontSize(v); upd({ fontSize: v * scale }); };
@@ -415,19 +426,19 @@ function EditorInner() {
     const obj = fn((window as any).fabric);
     fc.current.add(obj); fc.current.setActiveObject(obj); syncSel(obj); setShapesOpen(false);
   };
-  const addText  = () => add(fab => { const t = new fab.IText("Texto aqui", { left:DISPLAY_W/2, top:DISPLAY_H/2, originX:"center", originY:"center", fontSize:48*scale, fontFamily:"Montserrat", fill:"#000000" }); return t; });
-  const addRect  = (r=0) => add(fab => new fab.Rect({ left:DISPLAY_W/2-75, top:DISPLAY_H/2-50, width:150, height:100, fill:"#3b82f6", rx:r, ry:r }));
-  const addCirc  = () => add(fab => new fab.Circle({ left:DISPLAY_W/2-60, top:DISPLAY_H/2-60, radius:60, fill:"#3b82f6" }));
-  const addTri   = () => add(fab => new fab.Triangle({ left:DISPLAY_W/2-60, top:DISPLAY_H/2-60, width:120, height:120, fill:"#3b82f6" }));
-  const addLine  = () => add(fab => new fab.Line([DISPLAY_W/2-80, DISPLAY_H/2, DISPLAY_W/2+80, DISPLAY_H/2], { stroke:"#000000", strokeWidth:3 }));
+  const addText  = () => add(fab => { const t = new fab.IText("Texto aqui", { left:DISPLAY_W/2, top:DISPLAY_H/2, originX:"center", originY:"center", fontSize:48*scale, fontFamily:"Montserrat", fill:"#000000", strokeUniform:true }); return t; });
+  const addRect  = (r=0) => add(fab => new fab.Rect({ left:DISPLAY_W/2-75, top:DISPLAY_H/2-50, width:150, height:100, fill:"#3b82f6", rx:r, ry:r, strokeUniform:true }));
+  const addCirc  = () => add(fab => new fab.Circle({ left:DISPLAY_W/2-60, top:DISPLAY_H/2-60, radius:60, fill:"#3b82f6", strokeUniform:true }));
+  const addTri   = () => add(fab => new fab.Triangle({ left:DISPLAY_W/2-60, top:DISPLAY_H/2-60, width:120, height:120, fill:"#3b82f6", strokeUniform:true }));
+  const addLine  = () => add(fab => new fab.Line([DISPLAY_W/2-80, DISPLAY_H/2, DISPLAY_W/2+80, DISPLAY_H/2], { stroke:"#000000", strokeWidth:3, strokeUniform:true }));
   const addStar  = () => {
     const points: { x: number; y: number }[] = [];
     for (let i=0;i<10;i++) { const r = i%2===0?60:24; const a = (Math.PI/5)*i - Math.PI/2; points.push({ x: r*Math.cos(a), y: r*Math.sin(a) }); }
-    add(fab => new fab.Polygon(points, { left:DISPLAY_W/2, top:DISPLAY_H/2, originX:"center", originY:"center", fill:"#eab308" }));
+    add(fab => new fab.Polygon(points, { left:DISPLAY_W/2, top:DISPLAY_H/2, originX:"center", originY:"center", fill:"#eab308", strokeUniform:true }));
   };
   const addArrow = () => {
     const points: { x: number; y: number }[] = [{ x:0,y:20 },{ x:80,y:20 },{ x:80,y:0 },{ x:120,y:35 },{ x:80,y:70 },{ x:80,y:50 },{ x:0,y:50 }];
-    add(fab => new fab.Polygon(points, { left:DISPLAY_W/2-60, top:DISPLAY_H/2-35, fill:"#3b82f6" }));
+    add(fab => new fab.Polygon(points, { left:DISPLAY_W/2-60, top:DISPLAY_H/2-35, fill:"#3b82f6", strokeUniform:true }));
   };
 
   const handleImg = (e: React.ChangeEvent<HTMLInputElement>) => {
