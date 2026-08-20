@@ -202,6 +202,8 @@ function EditorInner() {
   const [selBold, setSelBold] = useState(false);
   const [selItalic, setSelItalic] = useState(false);
   const [selUnderline, setSelUnderline] = useState(false);
+  const [selCharSpacing, setSelCharSpacing] = useState(0);
+  const [selLineHeight, setSelLineHeight] = useState(1.2);
   const [selFillGradient, setSelFillGradient] = useState<{c1:string;c2:string;angle:number}|null>(null);
 
   // Background
@@ -251,6 +253,8 @@ function EditorInner() {
     setSelBold(obj.fontWeight === "bold");
     setSelItalic(obj.fontStyle === "italic");
     setSelUnderline(!!obj.underline);
+    setSelCharSpacing(obj.charSpacing ?? 0);
+    setSelLineHeight(obj.lineHeight ?? 1.2);
     const sh = obj.shadow;
     setSelShadow(!!sh);
     if (sh) { setSelShadowColor(sh.color||"rgba(0,0,0,0.5)"); setSelShadowBlur(sh.blur||10); setSelShadowX(sh.offsetX||5); setSelShadowY(sh.offsetY||5); }
@@ -390,10 +394,16 @@ function EditorInner() {
   const updateRadius   = (v: number) => { setSelRadius(v);   upd({ rx: v, ry: v }); };
   const updateRotation = (v: number) => { setSelRotation(v); upd({ angle: v }); };
   const updateFontSize = (v: number) => { setSelFontSize(v); upd({ fontSize: v * scale }); };
-  const updateFontFamily = (v: string) => { setSelFontFamily(v); upd({ fontFamily: v }); };
+  const updateFontFamily = (v: string) => {
+    setSelFontFamily(v);
+    upd({ fontFamily: v });
+    document.fonts.ready.then(() => fc.current?.requestRenderAll());
+  };
   const toggleBold      = () => { const n = !selBold;      setSelBold(n);      upd({ fontWeight: n ? "bold" : "normal" }); };
   const toggleItalic    = () => { const n = !selItalic;    setSelItalic(n);    upd({ fontStyle:  n ? "italic" : "normal" }); };
   const toggleUnderline = () => { const n = !selUnderline; setSelUnderline(n); upd({ underline: n }); };
+  const updateCharSpacing = (v: number) => { setSelCharSpacing(v); upd({ charSpacing: v }); };
+  const updateLineHeight  = (v: number) => { setSelLineHeight(v);  upd({ lineHeight: v }); };
 
   const updateShadow = (on: boolean) => {
     setSelShadow(on);
@@ -475,7 +485,7 @@ function EditorInner() {
       const current = fc.current.getObjects().find((o: any) => o.__uid === uid);
       if (current) fc.current.remove(current);
 
-      fabric.util.enlivenObjects([JSON.parse(sourceJson)], (objs: any[]) => {
+      fabric.util.enlivenObjects([JSON.parse(sourceJson)], async (objs: any[]) => {
         const sourceObj = objs[0];
         const srcW = (sourceObj.width  || 100) * pos.scaleX;
         const srcH = (sourceObj.height || 100) * pos.scaleY;
@@ -489,6 +499,9 @@ function EditorInner() {
         const miniCanvas = new fabric.StaticCanvas(miniEl, { width: cw, height: ch, enableRetinaScaling: false });
         sourceObj.set({ left: cw / 2, top: ch / 2, originX: "center", originY: "center", angle: 0, scaleX: pos.scaleX, scaleY: pos.scaleY });
         miniCanvas.add(sourceObj);
+
+        // Wait for fonts before rendering so Google Fonts display correctly
+        await document.fonts.ready;
         miniCanvas.renderAll();
 
         const outEl = document.createElement("canvas");
@@ -567,7 +580,7 @@ function EditorInner() {
     const obj = fn((window as any).fabric);
     fc.current.add(obj); fc.current.setActiveObject(obj); syncSel(obj); setShapesOpen(false);
   };
-  const addText  = () => add(fab => { const t = new fab.IText("Texto aqui", { left:DISPLAY_W/2, top:DISPLAY_H/2, originX:"center", originY:"center", fontSize:48*scale, fontFamily:"Montserrat", fill:"#000000", strokeUniform:true }); return t; });
+  const addText  = () => add(fab => { const t = new fab.IText("Texto aqui", { left:DISPLAY_W/2, top:DISPLAY_H/2, originX:"center", originY:"center", fontSize:48*scale, fontFamily:"Montserrat", fill:"#000000", strokeUniform:true }); document.fonts.ready.then(() => fc.current?.requestRenderAll()); return t; });
   const addRect  = (r=0) => add(fab => new fab.Rect({ left:DISPLAY_W/2-75, top:DISPLAY_H/2-50, width:150, height:100, fill:"#3b82f6", rx:r, ry:r, strokeUniform:true }));
   const addCirc  = () => add(fab => new fab.Circle({ left:DISPLAY_W/2-60, top:DISPLAY_H/2-60, radius:60, fill:"#3b82f6", strokeUniform:true }));
   const addTri   = () => add(fab => new fab.Triangle({ left:DISPLAY_W/2-60, top:DISPLAY_H/2-60, width:120, height:120, fill:"#3b82f6", strokeUniform:true }));
@@ -799,6 +812,26 @@ function EditorInner() {
                         U
                       </button>
                     </div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <p className="text-gray-400">Espaço entre letras</p>
+                      <span className="text-gray-500">{selCharSpacing}</span>
+                    </div>
+                    <input type="range" min={-200} max={800} step={10} value={selCharSpacing}
+                      onChange={e => updateCharSpacing(+e.target.value)}
+                      className="w-full accent-indigo-600" />
+                    <div className="flex justify-between text-gray-300 mt-0.5" style={{fontSize:9}}><span>−200</span><span>0</span><span>800</span></div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <p className="text-gray-400">Espaço entre linhas</p>
+                      <span className="text-gray-500">{selLineHeight.toFixed(1)}</span>
+                    </div>
+                    <input type="range" min={0.1} max={4} step={0.1} value={selLineHeight}
+                      onChange={e => updateLineHeight(+e.target.value)}
+                      className="w-full accent-indigo-600" />
+                    <div className="flex justify-between text-gray-300 mt-0.5" style={{fontSize:9}}><span>0.1</span><span>1.0</span><span>4.0</span></div>
                   </div>
                 </>
               )}
