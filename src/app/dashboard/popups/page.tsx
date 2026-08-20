@@ -107,7 +107,7 @@ export default function PopupsPage() {
       ) : (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           {/* Header */}
-          <div className="grid grid-cols-[1fr_80px_80px_80px_auto] gap-4 px-5 py-3 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-400">
+          <div className="grid grid-cols-[1fr_90px_90px_70px_200px] gap-2 px-5 py-3 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-400">
             <span>Nome</span>
             <span className="text-center">Exibições</span>
             <span className="text-center">Cliques</span>
@@ -119,7 +119,7 @@ export default function PopupsPage() {
             {popups.map(p => {
               const s = stats[p.id];
               return (
-                <div key={p.id} className="grid grid-cols-[1fr_80px_80px_80px_auto] gap-4 px-5 py-4 items-center">
+                <div key={p.id} className="grid grid-cols-[1fr_90px_90px_70px_200px] gap-2 px-5 py-4 items-center">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-gray-900 truncate">{p.name}</span>
