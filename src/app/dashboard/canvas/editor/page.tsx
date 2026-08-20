@@ -189,10 +189,13 @@ function EditorInner() {
   const [layers, setLayers] = useState<{ id: string; label: string; locked: boolean }[]>([]);
   const [shapesOpen, setShapesOpen] = useState(false);
   const [activeTool, setActiveTool] = useState<"select"|"pen">("select");
+  const activeToolRef = useRef<"select"|"pen">("select");
   const penPoints = useRef<{x:number;y:number}[]>([]);
   const penLines = useRef<any[]>([]);
   const penDots = useRef<any[]>([]);
   const penCurveHandles = useRef<{x:number;y:number}[][]>([]); // bezier handles per point
+  const finalizePenRef = useRef<(close:boolean)=>void>(() => {});
+  const cancelPenRef = useRef<()=>void>(() => {});
 
   // Selected object state — always reflects actual object values
   const [sel, setSel] = useState<any>(null);
@@ -386,8 +389,13 @@ function EditorInner() {
     });
 
     // ── Pen tool canvas events ──
+    canvas.on("mouse:down:before", (e: any) => {
+      if (activeToolRef.current !== "pen") return;
+      // Prevent fabric from selecting/deselecting objects while pen is active
+      e.e.stopPropagation?.();
+    });
     canvas.on("mouse:down", (e: any) => {
-      if (activeTool !== "pen") return;
+      if (activeToolRef.current !== "pen") return;
       const fabric = (window as any).fabric;
       const p = canvas.getPointer(e.e);
       const pts = penPoints.current;
@@ -396,7 +404,7 @@ function EditorInner() {
       if (pts.length > 1) {
         const first = pts[0];
         const dist = Math.hypot(p.x - first.x, p.y - first.y);
-        if (dist < 12) { finalizePen(true); return; }
+        if (dist < 12) { finalizePenRef.current(true); return; }
       }
 
       pts.push({ x: p.x, y: p.y });
@@ -478,10 +486,10 @@ function EditorInner() {
         obj.setCoords(); canvas.requestRenderAll();
       }
       if (e.key === "Escape") {
-        if (activeTool === "pen") { stopPen(); }
+        if (activeToolRef.current === "pen") { cancelPenRef.current(); activeToolRef.current = "select"; setActiveTool("select"); if (fc.current) { fc.current.defaultCursor="default"; fc.current.hoverCursor="move"; fc.current.selection=true; } }
         else { canvas.discardActiveObject(); canvas.requestRenderAll(); }
       }
-      if (e.key === "Enter" && activeTool === "pen") { finalizePen(true); }
+      if (e.key === "Enter" && activeToolRef.current === "pen") { finalizePenRef.current(true); }
     };
     window.addEventListener("keydown", onKey);
     return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
@@ -1065,7 +1073,7 @@ function EditorInner() {
   };
 
   const startPen = () => {
-    setActiveTool("pen");
+    setActiveTool("pen"); activeToolRef.current = "pen";
     if (fc.current) {
       fc.current.defaultCursor = "crosshair";
       fc.current.hoverCursor = "crosshair";
@@ -1076,14 +1084,18 @@ function EditorInner() {
   };
 
   const stopPen = () => {
-    setActiveTool("select");
-    cancelPen();
+    setActiveTool("select"); activeToolRef.current = "select";
+    cancelPenRef.current();
     if (fc.current) {
       fc.current.defaultCursor = "default";
       fc.current.hoverCursor = "move";
       fc.current.selection = true;
     }
   };
+
+  // Keep refs in sync so canvas event handlers (closures) can call latest versions
+  finalizePenRef.current = finalizePen;
+  cancelPenRef.current = cancelPen;
 
   const deleteSelected = () => {
     if (!fc.current || !sel) return;
