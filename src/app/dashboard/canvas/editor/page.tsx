@@ -357,14 +357,15 @@ function EditorInner() {
       }
       // Keep border-radius proportional for rects
       if (obj.type === "rect") {
-        const origRx = rectBeforeScale.current?.rx ?? obj.rx ?? 0;
+        const origRx = rectBeforeScale.current?.rx ?? 0;
         const sx = obj.scaleX || 1;
         const sy = obj.scaleY || 1;
         const newW = obj.width * sx;
         const newH = obj.height * sy;
-        // The visual corner radius = origRx * min(sx, sy)
-        // This keeps the radius anchored to the shorter dimension
-        const newRx = origRx * Math.min(sx, sy);
+        // origRx is the radius BEFORE scaling — keep it absolute (pixel-fixed)
+        // only shrink it if the object becomes smaller than the radius allows
+        const maxRx = Math.min(newW, newH) / 2;
+        const newRx = Math.min(origRx, maxRx);
         obj.set({ width: newW, height: newH, rx: newRx, ry: newRx, scaleX: 1, scaleY: 1 });
         rectBeforeScale.current = null;
         canvas.requestRenderAll();
