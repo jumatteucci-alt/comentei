@@ -205,6 +205,7 @@ function EditorInner() {
   const [selCharSpacing, setSelCharSpacing] = useState(0);
   const [selLineHeight, setSelLineHeight] = useState(1.2);
   const [selTextWidth, setSelTextWidth] = useState(300);
+  const [selTextHeight, setSelTextHeight] = useState(0); // 0 = auto
   const [selFillGradient, setSelFillGradient] = useState<{c1:string;c2:string;angle:number}|null>(null);
 
   // Background
@@ -256,7 +257,10 @@ function EditorInner() {
     setSelUnderline(!!obj.underline);
     setSelCharSpacing(obj.charSpacing ?? 0);
     setSelLineHeight(obj.lineHeight ?? 1.2);
-    if (obj.type === "textbox") setSelTextWidth(Math.round((obj.width || 300) / scale));
+    if (obj.type === "textbox") {
+      setSelTextWidth(Math.round((obj.width || 300) / scale));
+      setSelTextHeight(obj.__fixedHeight ? Math.round(obj.height / scale) : 0);
+    }
     const sh = obj.shadow;
     setSelShadow(!!sh);
     if (sh) { setSelShadowColor(sh.color||"rgba(0,0,0,0.5)"); setSelShadowBlur(sh.blur||10); setSelShadowX(sh.offsetX||5); setSelShadowY(sh.offsetY||5); }
@@ -612,6 +616,23 @@ function EditorInner() {
     setSelTextWidth(v);
     upd({ width: v * scale });
   };
+
+  const updateTextHeight = (v: number) => {
+    setSelTextHeight(v);
+    if (!fc.current || !sel) return;
+    if (v === 0) {
+      // Auto height: remove fixed height
+      sel.set({ minHeight: undefined, __fixedHeight: false });
+      sel.__fixedHeight = false;
+      // Restore natural height by triggering a re-render
+      sel.initDimensions?.();
+      fc.current.requestRenderAll();
+    } else {
+      sel.__fixedHeight = true;
+      sel.set({ height: v * scale, minHeight: v * scale });
+      fc.current.requestRenderAll();
+    }
+  };
   const addRect  = (r=0) => add(fab => new fab.Rect({ left:DISPLAY_W/2-75, top:DISPLAY_H/2-50, width:150, height:100, fill:"#3b82f6", rx:r, ry:r, strokeUniform:true }));
   const addCirc  = () => add(fab => new fab.Circle({ left:DISPLAY_W/2-60, top:DISPLAY_H/2-60, radius:60, fill:"#3b82f6", strokeUniform:true }));
   const addTri   = () => add(fab => new fab.Triangle({ left:DISPLAY_W/2-60, top:DISPLAY_H/2-60, width:120, height:120, fill:"#3b82f6", strokeUniform:true }));
@@ -866,13 +887,29 @@ function EditorInner() {
                     <div className="flex justify-between text-gray-300 mt-0.5" style={{fontSize:9}}><span>0.1</span><span>1.0</span><span>4.0</span></div>
                   </div>
                   {isTextbox && (
-                    <NumRow
-                      label="Largura (px)"
-                      value={selTextWidth}
-                      min={50}
-                      max={Math.round(fmt.w)}
-                      onChange={updateTextWidth}
-                    />
+                    <>
+                      <NumRow
+                        label="Largura (px)"
+                        value={selTextWidth}
+                        min={50}
+                        max={Math.round(fmt.w)}
+                        onChange={updateTextWidth}
+                      />
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-gray-400">Altura (px)</p>
+                          <span className="text-xs text-gray-300">0 = automático</span>
+                        </div>
+                        <input
+                          type="number"
+                          value={selTextHeight}
+                          min={0}
+                          max={Math.round(fmt.h)}
+                          onChange={e => updateTextHeight(+e.target.value)}
+                          className="w-full px-2 py-1 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400"
+                        />
+                      </div>
+                    </>
                   )}
                 </>
               )}
