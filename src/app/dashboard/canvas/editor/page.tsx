@@ -408,16 +408,21 @@ function EditorInner() {
   const alignObj = (dir: string) => {
     if (!fc.current || !sel) return;
     const canvas = fc.current;
-    const cw = canvas.getWidth() / canvas.getZoom();
-    const ch = canvas.getHeight() / canvas.getZoom();
-    const bw = sel.getBoundingRect().width; const bh = sel.getBoundingRect().height;
+    const zoom = canvas.getZoom();
+    const cw = canvas.getWidth() / zoom;
+    const ch = canvas.getHeight() / zoom;
+    sel.setCoords();
+    const br = sel.getBoundingRect(true); // true = use object coords, not viewport
+    const bw = br.width;
+    const bh = br.height;
     if (dir === "left")    sel.set({ left: 0 });
     if (dir === "hcenter") sel.set({ left: (cw - bw) / 2 });
     if (dir === "right")   sel.set({ left: cw - bw });
     if (dir === "top")     sel.set({ top: 0 });
     if (dir === "vcenter") sel.set({ top: (ch - bh) / 2 });
     if (dir === "bottom")  sel.set({ top: ch - bh });
-    sel.setCoords(); canvas.requestRenderAll();
+    sel.setCoords();
+    canvas.requestRenderAll();
   };
 
   // ─── Add elements ─────────────────────────────────────
@@ -447,7 +452,15 @@ function EditorInner() {
     const r = new FileReader();
     r.onload = ev => (window as any).fabric.Image.fromURL(ev.target?.result as string, (img: any) => {
       if (img.width > DISPLAY_W * 0.8) img.scaleToWidth(DISPLAY_W * 0.8);
-      img.set({ left:DISPLAY_W/2, top:DISPLAY_H/2, originX:"center", originY:"center" });
+      // Use top-left origin so alignment math is consistent with other objects
+      const scaledW = img.getScaledWidth();
+      const scaledH = img.getScaledHeight();
+      img.set({
+        left: (DISPLAY_W - scaledW) / 2,
+        top: (DISPLAY_H - scaledH) / 2,
+        originX: "left",
+        originY: "top",
+      });
       fc.current.add(img); fc.current.setActiveObject(img); syncSel(img);
     });
     r.readAsDataURL(file); e.target.value = "";
