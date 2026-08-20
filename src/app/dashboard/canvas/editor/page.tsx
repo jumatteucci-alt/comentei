@@ -163,6 +163,7 @@ function EditorInner() {
   const clipboardRef = useRef<any>(null);
   const historyRef = useRef<{ undo: string[]; redo: string[] }>({ undo: [], redo: [] });
   const savingHistory = useRef(false);
+  const blurOriginMap = useRef<Map<string, string>>(new Map()); // uid → JSON string of original
 
   const [site, setSite] = useState<Site | null>(null);
   const [fabricLoaded, setFabricLoaded] = useState(false);
@@ -401,13 +402,87 @@ function EditorInner() {
     setSelBlur(v);
     if (!fc.current || !sel) return;
     const fabric = (window as any).fabric;
-    const filters = (sel.filters || []).filter((f: any) => f.type !== "Blur");
-    if (v > 0) filters.push(new fabric.Image.filters.Blur({ blur: v / 100 }));
-    sel.filters = filters;
-    // Expand padding so blur bleeds outside the element bounds
-    sel.set({ padding: v > 0 ? Math.round(v * 0.6) : 0 });
-    sel.applyFilters();
-    fc.current.requestRenderAll();
+    const uid = sel.__uid;
+
+    const applyBlurToImage = (img: any, blurValue: number) => {
+      const filters = (img.filters || []).filter((f: any) => f.type !== "Blur");
+      if (blurValue > 0) filters.push(new fabric.Image.filters.Blur({ blur: blurValue / 100 }));
+      img.filters = filters;
+      img.set({ padding: blurValue > 0 ? Math.round(blurValue * 0.8) : 0 });
+      img.applyFilters();
+      fc.current.requestRenderAll();
+    };
+
+    // Helper: restore original from JSON and place on canvas
+    const restoreOriginal = (json: string, left: number, top: number, angle: number, scaleX: number, scaleY: number) => {
+      fabric.util.enlivenObjects([JSON.parse(json)], (objs: any[]) => {
+        const original = objs[0];
+        original.set({ left, top, angle, scaleX, scaleY });
+        original.__uid = uid;
+        fc.current.add(original);
+        fc.current.setActiveObject(original);
+        syncSel(original);
+        fc.current.requestRenderAll();
+      });
+    };
+
+    // Helper: rasterize an enlivened object and apply blur
+    const rasterizeAndBlur = (objToRaster: any, left: number, top: number, angle: number, scaleX: number, scaleY: number, blurValue: number) => {
+      // Temporarily add to canvas off-screen to allow toDataURL, then remove
+      objToRaster.set({ left: -9999, top: -9999, angle: 0, scaleX: 1, scaleY: 1 });
+      fc.current.add(objToRaster);
+      const dataURL = objToRaster.toDataURL({ multiplier: 3 }); // high res
+      fc.current.remove(objToRaster);
+
+      fabric.Image.fromURL(dataURL, (img: any) => {
+        img.set({ left, top, angle, scaleX, scaleY, strokeUniform: true });
+        img.__uid = uid;
+        fc.current.add(img);
+        fc.current.setActiveObject(img);
+        syncSel(img);
+        applyBlurToImage(img, blurValue);
+      });
+    };
+
+    // Capture current transform (before removing from canvas)
+    const left   = sel.left;
+    const top    = sel.top;
+    const angle  = sel.angle  || 0;
+    const scaleX = sel.scaleX || 1;
+    const scaleY = sel.scaleY || 1;
+
+    // ── Blur = 0: restore original ──
+    if (v === 0 && blurOriginMap.current.has(uid)) {
+      const json = blurOriginMap.current.get(uid)!;
+      blurOriginMap.current.delete(uid);
+      fc.current.remove(sel);
+      restoreOriginal(json, left, top, angle, scaleX, scaleY);
+      return;
+    }
+
+    // ── Already rasterized: re-rasterize from original JSON at current transform ──
+    if (sel.type === "image" && blurOriginMap.current.has(uid)) {
+      const json = blurOriginMap.current.get(uid)!;
+      fc.current.remove(sel);
+      fabric.util.enlivenObjects([JSON.parse(json)], (objs: any[]) => {
+        rasterizeAndBlur(objs[0], left, top, angle, scaleX, scaleY, v);
+      });
+      return;
+    }
+
+    // ── Real uploaded image: apply directly ──
+    if (sel.type === "image") {
+      applyBlurToImage(sel, v);
+      return;
+    }
+
+    // ── Shape/text: save JSON, rasterize, apply blur ──
+    const json = JSON.stringify(sel.toObject());
+    blurOriginMap.current.set(uid, json);
+    fc.current.remove(sel);
+    fabric.util.enlivenObjects([JSON.parse(json)], (objs: any[]) => {
+      rasterizeAndBlur(objs[0], left, top, angle, scaleX, scaleY, v);
+    });
   };
 
   const toggleLock = (uid: string) => {
