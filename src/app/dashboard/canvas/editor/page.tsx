@@ -413,7 +413,18 @@ function EditorInner() {
     const obj = fc.current.getObjects().find((o: any) => o.__uid === uid);
     if (!obj) return;
     const locked = !obj.lockMovementX;
-    obj.set({ lockMovementX: locked, lockMovementY: locked, lockRotation: locked, lockScalingX: locked, lockScalingY: locked, selectable: true, evented: true });
+    obj.set({
+      lockMovementX: locked, lockMovementY: locked,
+      lockRotation: locked, lockScalingX: locked, lockScalingY: locked,
+      selectable: !locked,
+      evented: !locked,
+      hoverCursor: locked ? "default" : "move",
+    });
+    // Deselect if currently selected and being locked
+    if (locked && fc.current.getActiveObject() === obj) {
+      fc.current.discardActiveObject();
+      syncSel(null);
+    }
     refreshLayers(fc.current);
     fc.current.requestRenderAll();
   };
