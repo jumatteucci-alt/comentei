@@ -188,6 +188,11 @@ function EditorInner() {
   const [zoom, setZoom] = useState(100);
   const [layers, setLayers] = useState<{ id: string; label: string; locked: boolean }[]>([]);
   const [shapesOpen, setShapesOpen] = useState(false);
+  const [activeTool, setActiveTool] = useState<"select"|"pen">("select");
+  const penPoints = useRef<{x:number;y:number}[]>([]);
+  const penLines = useRef<any[]>([]);
+  const penDots = useRef<any[]>([]);
+  const penCurveHandles = useRef<{x:number;y:number}[][]>([]); // bezier handles per point
 
   // Selected object state — always reflects actual object values
   const [sel, setSel] = useState<any>(null);
@@ -380,6 +385,49 @@ function EditorInner() {
       }
     });
 
+    // ── Pen tool canvas events ──
+    canvas.on("mouse:down", (e: any) => {
+      if (activeTool !== "pen") return;
+      const fabric = (window as any).fabric;
+      const p = canvas.getPointer(e.e);
+      const pts = penPoints.current;
+
+      // Close path if clicking near first point
+      if (pts.length > 1) {
+        const first = pts[0];
+        const dist = Math.hypot(p.x - first.x, p.y - first.y);
+        if (dist < 12) { finalizePen(true); return; }
+      }
+
+      pts.push({ x: p.x, y: p.y });
+
+      // Draw dot
+      const dot = new fabric.Circle({
+        left: p.x - 4, top: p.y - 4, radius: 4,
+        fill: pts.length === 1 ? "#22c55e" : "#4f46e5",
+        stroke: "white", strokeWidth: 1.5,
+        selectable: false, evented: false,
+      });
+      canvas.add(dot);
+      penDots.current.push(dot);
+
+      // Draw preview line to previous point
+      if (pts.length > 1) {
+        const prev = pts[pts.length - 2];
+        const line = new fabric.Line([prev.x, prev.y, p.x, p.y], {
+          stroke: "#4f46e5", strokeWidth: 1.5,
+          strokeDashArray: [4, 3],
+          selectable: false, evented: false,
+        });
+        canvas.add(line);
+        penLines.current.push(line);
+      }
+
+      // Default: symmetric bezier handles (flat = straight line)
+      penCurveHandles.current.push([{ x: p.x, y: p.y }, { x: p.x, y: p.y }]);
+      canvas.requestRenderAll();
+    });
+
     const onKey = (e: KeyboardEvent) => {
       const tag = (document.activeElement as HTMLElement)?.tagName;
       const isInput = tag === "INPUT" || tag === "TEXTAREA";
@@ -429,7 +477,11 @@ function EditorInner() {
         if (e.key==="ArrowDown") obj.set("top", obj.top+s);
         obj.setCoords(); canvas.requestRenderAll();
       }
-      if (e.key === "Escape") { canvas.discardActiveObject(); canvas.requestRenderAll(); }
+      if (e.key === "Escape") {
+        if (activeTool === "pen") { stopPen(); }
+        else { canvas.discardActiveObject(); canvas.requestRenderAll(); }
+      }
+      if (e.key === "Enter" && activeTool === "pen") { finalizePen(true); }
     };
     window.addEventListener("keydown", onKey);
     return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
@@ -964,6 +1016,75 @@ function EditorInner() {
   };
 
 
+
+  // ── Pen tool ────────────────────────────────────────────
+  const finalizePen = (close: boolean) => {
+    if (!fc.current) return;
+    const fabric = (window as any).fabric;
+    const pts = penPoints.current;
+    const handles = penCurveHandles.current;
+    if (pts.length < 2) { cancelPen(); return; }
+
+    // Build SVG path string with bezier curves
+    let d = `M ${pts[0].x} ${pts[0].y}`;
+    for (let i = 1; i < pts.length; i++) {
+      const prev = pts[i - 1];
+      const curr = pts[i];
+      const h1 = handles[i - 1]?.[1] || prev; // exit handle of prev point
+      const h2 = handles[i]?.[0]    || curr; // entry handle of curr point
+      d += ` C ${h1.x} ${h1.y} ${h2.x} ${h2.y} ${curr.x} ${curr.y}`;
+    }
+    if (close && pts.length > 2) {
+      const h1 = handles[pts.length - 1]?.[1] || pts[pts.length - 1];
+      const h2 = handles[0]?.[0] || pts[0];
+      d += ` C ${h1.x} ${h1.y} ${h2.x} ${h2.y} ${pts[0].x} ${pts[0].y} Z`;
+    }
+
+    const path = new fabric.Path(d, {
+      fill: close ? (selFill !== "transparent" ? selFill : "#4f46e5") : "transparent",
+      stroke: "#000000",
+      strokeWidth: 2,
+      strokeUniform: true,
+    });
+    fc.current.add(path);
+    fc.current.setActiveObject(path);
+    syncSel(path);
+    cancelPen();
+    fc.current.requestRenderAll();
+  };
+
+  const cancelPen = () => {
+    if (!fc.current) return;
+    penLines.current.forEach(l => fc.current.remove(l));
+    penDots.current.forEach(d => fc.current.remove(d));
+    penPoints.current = [];
+    penLines.current = [];
+    penDots.current = [];
+    penCurveHandles.current = [];
+    fc.current.requestRenderAll();
+  };
+
+  const startPen = () => {
+    setActiveTool("pen");
+    if (fc.current) {
+      fc.current.defaultCursor = "crosshair";
+      fc.current.hoverCursor = "crosshair";
+      fc.current.selection = false;
+      fc.current.discardActiveObject();
+      fc.current.requestRenderAll();
+    }
+  };
+
+  const stopPen = () => {
+    setActiveTool("select");
+    cancelPen();
+    if (fc.current) {
+      fc.current.defaultCursor = "default";
+      fc.current.hoverCursor = "move";
+      fc.current.selection = true;
+    }
+  };
+
   const deleteSelected = () => {
     if (!fc.current || !sel) return;
     fc.current.remove(sel); syncSel(null);
@@ -1031,61 +1152,94 @@ function EditorInner() {
 
       <div className="flex flex-1 overflow-hidden">
         {/* ── LEFT TOOLBAR ─────────────────────────────── */}
-        <div className="w-52 bg-white border-r border-gray-200 flex flex-col overflow-y-auto flex-shrink-0 text-xs">
+        {/* ── LEFT TOOLBAR — icons ─────────────────────── */}
+        <div className="w-14 bg-white border-r border-gray-200 flex flex-col items-center py-3 gap-1 flex-shrink-0 overflow-y-auto">
+          {/* Select */}
+          <button onClick={() => { stopPen(); }} title="Selecionar (V)"
+            className={`w-10 h-10 rounded-xl flex items-center justify-center transition ${activeTool==="select" ? "bg-indigo-100 text-indigo-700" : "text-gray-500 hover:bg-gray-100"}`}>
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 2l12 7-6 1-3 6L3 2z" fill="currentColor"/></svg>
+          </button>
 
-          {/* Add section */}
-          <div className="p-3 border-b border-gray-100">
-            <p className="font-semibold text-gray-500 mb-2 uppercase tracking-wide" style={{fontSize:10}}>Adicionar</p>
-            <div className="flex flex-col gap-1">
-              <button onClick={addText} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 text-gray-700 transition text-left">
-                <span className="w-4 text-center font-bold">T</span> Texto
+          {/* Pen */}
+          <button onClick={() => activeTool==="pen" ? stopPen() : startPen()} title="Caneta (P)">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition ${activeTool==="pen" ? "bg-indigo-100 text-indigo-700" : "text-gray-500 hover:bg-gray-100"}`}>
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M13 2l3 3-9 9H4v-3L13 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/><path d="M11 4l3 3" stroke="currentColor" strokeWidth="1.5"/></svg>
+            </div>
+          </button>
+
+          <div className="w-8 border-t border-gray-100 my-1" />
+
+          {/* Text */}
+          <button onClick={addText} title="Texto (T)"
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:bg-gray-100 transition font-bold text-base">
+            T
+          </button>
+
+          {/* Rect */}
+          <button onClick={() => addRect(0)} title="Retângulo"
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:bg-gray-100 transition">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="4" width="14" height="10" rx="1" stroke="currentColor" strokeWidth="1.5"/></svg>
+          </button>
+
+          {/* Rounded rect */}
+          <button onClick={() => addRect(14)} title="Retângulo arredondado"
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:bg-gray-100 transition">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="4" width="14" height="10" rx="4" stroke="currentColor" strokeWidth="1.5"/></svg>
+          </button>
+
+          {/* Circle */}
+          <button onClick={addCirc} title="Círculo"
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:bg-gray-100 transition">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="7" stroke="currentColor" strokeWidth="1.5"/></svg>
+          </button>
+
+          {/* Triangle */}
+          <button onClick={addTri} title="Triângulo"
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:bg-gray-100 transition">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 2l8 14H1L9 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>
+          </button>
+
+          {/* Star */}
+          <button onClick={addStar} title="Estrela"
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:bg-gray-100 transition">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 1l2.2 6.6H18l-5.6 4.1 2.1 6.5L9 14l-5.5 4.2 2.1-6.5L0 7.6h6.8L9 1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/></svg>
+          </button>
+
+          {/* Line */}
+          <button onClick={addLine} title="Linha"
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:bg-gray-100 transition">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 16L16 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+          </button>
+
+          {/* Arrow */}
+          <button onClick={addArrow} title="Seta"
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:bg-gray-100 transition">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 9h12M10 5l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </button>
+
+          <div className="w-8 border-t border-gray-100 my-1" />
+
+          {/* Image upload */}
+          <label title="Imagem" className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:bg-gray-100 transition cursor-pointer">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="1" y="3" width="16" height="12" rx="2" stroke="currentColor" strokeWidth="1.5"/><circle cx="6" cy="7" r="1.5" fill="currentColor"/><path d="M1 13l4-4 3 3 3-4 5 5" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/></svg>
+            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImg} />
+          </label>
+
+          {/* Pen: close/finalize if active */}
+          {activeTool === "pen" && penPoints.current.length > 1 && (
+            <div className="mt-2 flex flex-col gap-1 items-center">
+              <button onClick={() => finalizePen(true)} title="Fechar forma (Enter)"
+                className="w-10 h-10 rounded-xl bg-green-100 text-green-700 flex items-center justify-center hover:bg-green-200 transition">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l4 4 6-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
               </button>
-
-              {/* Shapes dropdown */}
-              <div className="relative">
-                <button onClick={() => setShapesOpen(o => !o)} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 text-gray-700 transition text-left">
-                  <span className="w-4 text-center">◻</span> Formas
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className={`ml-auto text-gray-400 transition-transform ${shapesOpen?"rotate-180":""}`}><path d="M2 3l3 4 3-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                </button>
-                {shapesOpen && (
-                  <div className="absolute left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-30 p-2 flex flex-col gap-1">
-                    <button onClick={() => addRect(0)}  className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-indigo-50 text-gray-700">◻ Retângulo</button>
-                    <button onClick={() => addRect(12)} className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-indigo-50 text-gray-700">▢ Retângulo arredondado</button>
-                    <button onClick={addCirc}  className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-indigo-50 text-gray-700">○ Círculo</button>
-                    <button onClick={addTri}   className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-indigo-50 text-gray-700">△ Triângulo</button>
-                    <button onClick={addLine}  className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-indigo-50 text-gray-700">― Linha</button>
-                    <button onClick={addStar}  className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-indigo-50 text-gray-700">★ Estrela</button>
-                    <button onClick={addArrow} className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-indigo-50 text-gray-700">→ Seta</button>
-                  </div>
-                )}
-              </div>
-
-              <label className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 text-gray-700 transition cursor-pointer">
-                <span className="w-4 text-center">🖼</span> Imagem
-                <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImg} />
-              </label>
-            </div>
-          </div>
-
-          {/* Background section */}
-          <div className="p-3 border-b border-gray-100">
-            <p className="font-semibold text-gray-500 mb-2 uppercase tracking-wide" style={{fontSize:10}}>Fundo</p>
-            <ColorPicker value={bgGradient ? bgGradient.c1 : bgSolid} onChange={c => { setBgSolid(c); setBgGradient(null); }} label="" />
-            <div className="mt-2">
-              <GradientEditor value={bgGradient} onChange={g => { if (g) setBgGradient(g); else { setBgGradient(null); } }} />
-            </div>
-          </div>
-
-          {/* Align section — always visible */}
-          {sel && (
-            <div className="p-3 border-b border-gray-100">
-              <p className="font-semibold text-gray-500 mb-2 uppercase tracking-wide" style={{fontSize:10}}>Alinhar</p>
-              <div className="grid grid-cols-3 gap-1">
-                {[["left","⬛←","left"],["hcenter","⬛→←","hcenter"],["right","→⬛","right"],["top","⬛↑","top"],["vcenter","⬛↕","vcenter"],["bottom","↓⬛","bottom"]].map(([dir,icon]) => (
-                  <button key={dir} onClick={() => alignObj(dir)} title={dir}
-                    className="py-1.5 text-center border border-gray-200 rounded-lg hover:bg-indigo-50 hover:border-indigo-300 text-gray-600 transition" style={{fontSize:9}}>{icon}</button>
-                ))}
-              </div>
+              <button onClick={() => finalizePen(false)} title="Finalizar aberto"
+                className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center hover:bg-blue-200 transition">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 13V3l10 5-10 5z" fill="currentColor"/></svg>
+              </button>
+              <button onClick={cancelPen} title="Cancelar (Esc)"
+                className="w-10 h-10 rounded-xl bg-red-100 text-red-500 flex items-center justify-center hover:bg-red-200 transition">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+              </button>
             </div>
           )}
         </div>
@@ -1113,7 +1267,17 @@ function EditorInner() {
               {sel.type !== "image" && (
                 <>
                   <Sec title="Preenchimento" />
-                  <ColorPicker value={selFill} onChange={isText ? updateFillForText : updateFill} label="" />
+                  <div className="flex items-center gap-2 mb-1">
+                    <button
+                      onClick={() => { (isText ? updateFillForText : updateFill)("transparent"); setSelFillGradient(null); }}
+                      title="Sem preenchimento"
+                      className={`relative w-7 h-7 rounded-lg border-2 flex-shrink-0 overflow-hidden transition ${selFill === "transparent" ? "border-indigo-500" : "border-gray-200 hover:border-gray-400"}`}
+                      style={{ background: "#fff" }}>
+                      <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom right, transparent calc(50% - 1px), #ef4444 calc(50% - 1px), #ef4444 calc(50% + 1px), transparent calc(50% + 1px))" }} />
+                    </button>
+                    <span className="text-gray-400" style={{fontSize:10}}>Sem preenchimento</span>
+                  </div>
+                  <ColorPicker value={selFill === "transparent" ? "#4f46e5" : selFill} onChange={isText ? updateFillForText : updateFill} label="" />
                   <GradientEditor value={selFillGradient} onChange={updateFillGradient} />
                 </>
               )}
@@ -1267,12 +1431,23 @@ function EditorInner() {
                 <SliderRow label="" value={selBlur} min={0} max={100} onChange={updateBlur} />
               </>
 
+              {/* Align */}
+              <Sec title="Alinhar" />
+              <div className="grid grid-cols-3 gap-1">
+                {([["left","←□"],["hcenter","□↔"],["right","□→"],["top","↑□"],["vcenter","□↕"],["bottom","□↓"]] as [string,string][]).map(([dir,icon]) => (
+                  <button key={dir} onClick={() => alignObj(dir)} title={dir}
+                    className="py-1.5 text-center border border-gray-200 rounded-lg hover:bg-indigo-50 hover:border-indigo-300 text-gray-500 transition" style={{fontSize:10}}>{icon}</button>
+                ))}
+              </div>
+
               {/* Delete */}
               <button onClick={deleteSelected} className="w-full py-2 mt-1 border border-red-200 text-red-500 rounded-lg hover:bg-red-50 transition">🗑 Remover</button>
             </div>
           ) : (
-            <div className="p-3 border-b border-gray-200">
-              <p className="text-gray-400 text-center py-4">Selecione um elemento para editar</p>
+            <div className="p-3 flex flex-col gap-3 border-b border-gray-200">
+              <p className="font-semibold text-gray-600 uppercase tracking-wide" style={{fontSize:10}}>Fundo do canvas</p>
+              <ColorPicker value={bgGradient ? bgGradient.c1 : bgSolid} onChange={bg => { setBgSolid(bg); setBgGradient(null); }} label="" />
+              <GradientEditor value={bgGradient} onChange={g => { if (g) setBgGradient(g); else setBgGradient(null); }} />
             </div>
           )}
 
