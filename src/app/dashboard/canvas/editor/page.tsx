@@ -15,30 +15,130 @@ const FORMATS: Record<string, { label: string; w: number; h: number }> = {
   landscape: { label: "Horizontal 16:9", w: 1920, h: 1080 },
 };
 
-const COLORS = ["#000000","#ffffff","#ef4444","#f97316","#eab308","#22c55e","#3b82f6","#8b5cf6","#ec4899","#6b7280","#1e293b","#f8fafc"];
+const SWATCHES = ["#000000","#ffffff","#1e293b","#f8fafc","#ef4444","#f97316","#eab308","#22c55e","#3b82f6","#8b5cf6","#ec4899","#6b7280","#0ea5e9","#14b8a6","#84cc16","#f59e0b"];
 
-// Google Fonts to load + display names
 const FONTS = [
-  { name: "Arial",           google: false },
-  { name: "Georgia",         google: false },
-  { name: "Impact",          google: false },
-  { name: "Montserrat",      google: true },
-  { name: "Playfair Display",google: true },
-  { name: "Roboto",          google: true },
-  { name: "Oswald",          google: true },
-  { name: "Lato",            google: true },
-  { name: "Raleway",         google: true },
-  { name: "Pacifico",        google: true },
-  { name: "Dancing Script",  google: true },
-  { name: "Bebas Neue",      google: true },
+  { name: "Arial", google: false }, { name: "Georgia", google: false }, { name: "Impact", google: false },
+  { name: "Montserrat", google: true }, { name: "Playfair Display", google: true }, { name: "Roboto", google: true },
+  { name: "Oswald", google: true }, { name: "Lato", google: true }, { name: "Raleway", google: true },
+  { name: "Pacifico", google: true }, { name: "Dancing Script", google: true }, { name: "Bebas Neue", google: true },
 ];
 
 function loadGoogleFonts() {
-  const googleFonts = FONTS.filter(f => f.google).map(f => f.name.replace(/ /g, "+")).join("|");
-  const link = document.createElement("link");
-  link.rel = "stylesheet";
-  link.href = `https://fonts.googleapis.com/css2?family=${googleFonts.split("|").map(f => f + ":wght@400;700").join("&family=")}&display=swap`;
-  document.head.appendChild(link);
+  if (document.getElementById("cmc-gfonts")) return;
+  const names = FONTS.filter(f => f.google).map(f => f.name.replace(/ /g, "+") + ":wght@400;700").join("&family=");
+  const l = document.createElement("link");
+  l.id = "cmc-gfonts"; l.rel = "stylesheet";
+  l.href = `https://fonts.googleapis.com/css2?family=${names}&display=swap`;
+  document.head.appendChild(l);
+}
+
+// ─── Colour picker component ──────────────────────────────
+function ColorPicker({ value, onChange, label }: { value: string; onChange: (c: string) => void; label: string }) {
+  return (
+    <div>
+      {label && <p className="text-xs text-gray-400 mb-1">{label}</p>}
+      <div className="flex flex-wrap gap-1 mb-1.5">
+        {SWATCHES.map(c => (
+          <button key={c} onClick={() => onChange(c)}
+            style={{ background: c, outline: value === c ? "2px solid #4f46e5" : "1px solid #e4e4e0", outlineOffset: "1px" }}
+            className="w-5 h-5 rounded transition flex-shrink-0" />
+        ))}
+      </div>
+      <div className="flex gap-1.5">
+        <input type="color" value={value.startsWith("#") || value.startsWith("rgb") ? value : "#000000"}
+          onChange={e => onChange(e.target.value)} className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0 flex-shrink-0" />
+        <input type="text" value={value} onChange={e => onChange(e.target.value)}
+          className="flex-1 px-2 py-1 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 min-w-0" />
+      </div>
+    </div>
+  );
+}
+
+// ─── Gradient editor ─────────────────────────────────────
+function GradientEditor({ value, onChange }: { value: { c1: string; c2: string; angle: number } | null; onChange: (g: { c1: string; c2: string; angle: number } | null) => void }) {
+  const [on, setOn] = useState(!!value);
+  const g = value || { c1: "#4f46e5", c2: "#ec4899", angle: 90 };
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-gray-400">Usar gradiente</span>
+        <button onClick={() => { const next = !on; setOn(next); onChange(next ? g : null); }}
+          className={`w-9 h-5 rounded-full transition ${on ? "bg-indigo-500" : "bg-gray-200"}`}>
+          <span className={`block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${on ? "translate-x-4" : ""}`} />
+        </button>
+      </div>
+      {on && (
+        <>
+          <div className="flex gap-2">
+            <div className="flex-1"><p className="text-xs text-gray-400 mb-1">Cor 1</p>
+              <div className="flex gap-1"><input type="color" value={g.c1} onChange={e => onChange({ ...g, c1: e.target.value })} className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0" />
+                <input type="text" value={g.c1} onChange={e => onChange({ ...g, c1: e.target.value })} className="flex-1 px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:border-indigo-400 min-w-0" /></div></div>
+            <div className="flex-1"><p className="text-xs text-gray-400 mb-1">Cor 2</p>
+              <div className="flex gap-1"><input type="color" value={g.c2} onChange={e => onChange({ ...g, c2: e.target.value })} className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0" />
+                <input type="text" value={g.c2} onChange={e => onChange({ ...g, c2: e.target.value })} className="flex-1 px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:border-indigo-400 min-w-0" /></div></div>
+          </div>
+          <div><p className="text-xs text-gray-400 mb-1">Ângulo: {g.angle}°</p>
+            <input type="range" min={0} max={360} value={g.angle} onChange={e => onChange({ ...g, angle: +e.target.value })} className="w-full accent-indigo-600" /></div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Slider row ───────────────────────────────────────────
+function SliderRow({ label, value, min, max, step = 1, unit = "", onChange }: { label: string; value: number; min: number; max: number; step?: number; unit?: string; onChange: (v: number) => void }) {
+  return (
+    <div>
+      <div className="flex justify-between mb-1"><p className="text-xs text-gray-400">{label}</p><span className="text-xs text-gray-500">{value}{unit}</span></div>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(+e.target.value)} className="w-full accent-indigo-600" />
+    </div>
+  );
+}
+
+// ─── Number input row ─────────────────────────────────────
+function NumRow({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (v: number) => void }) {
+  return (
+    <div className="flex items-center gap-2">
+      <p className="text-xs text-gray-400 w-20 flex-shrink-0">{label}</p>
+      <input type="number" value={value} min={min} max={max} onChange={e => onChange(+e.target.value)}
+        className="flex-1 px-2 py-1 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400" />
+    </div>
+  );
+}
+
+// ─── Section header ───────────────────────────────────────
+function Sec({ title }: { title: string }) {
+  return <p className="text-xs font-semibold text-gray-600 pt-2 border-t border-gray-100">{title}</p>;
+}
+
+// ─── Apply gradient to fabric object ─────────────────────
+function applyGradient(fc: any, obj: any, g: { c1: string; c2: string; angle: number }) {
+  const fabric = (window as any).fabric;
+  const rad = (g.angle * Math.PI) / 180;
+  const w = obj.width! * (obj.scaleX || 1);
+  const h = obj.height! * (obj.scaleY || 1);
+  const x1 = (Math.cos(rad + Math.PI) + 1) / 2 * w;
+  const y1 = (Math.sin(rad + Math.PI) + 1) / 2 * h;
+  const x2 = (Math.cos(rad) + 1) / 2 * w;
+  const y2 = (Math.sin(rad) + 1) / 2 * h;
+  const gradient = new fabric.Gradient({
+    type: "linear",
+    coords: { x1, y1, x2, y2 },
+    colorStops: [{ offset: 0, color: g.c1 }, { offset: 1, color: g.c2 }],
+  });
+  obj.set("fill", gradient);
+  fc.requestRenderAll();
+}
+
+function getObjColor(obj: any): string {
+  if (!obj) return "#000000";
+  const fill = obj.fill;
+  if (!fill) return "#000000";
+  if (typeof fill === "string") return fill;
+  // gradient — return first color stop
+  if (fill.colorStops?.length) return fill.colorStops[0].color;
+  return "#000000";
 }
 
 function EditorInner() {
@@ -48,7 +148,7 @@ function EditorInner() {
   const fmt = FORMATS[format] || FORMATS.square;
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const fabricRef = useRef<any>(null);
+  const fc = useRef<any>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const clipboardRef = useRef<any>(null);
   const historyRef = useRef<{ undo: string[]; redo: string[] }>({ undo: [], redo: [] });
@@ -56,15 +156,34 @@ function EditorInner() {
 
   const [site, setSite] = useState<Site | null>(null);
   const [fabricLoaded, setFabricLoaded] = useState(false);
-  const [fillColor, setFillColor] = useState("#3b82f6");
-  const [bgColor, setBgColor] = useState("#ffffff");
-  const [fontSize, setFontSize] = useState(48);
-  const [fontFamily, setFontFamily] = useState("Montserrat");
   const [artName, setArtName] = useState("Minha arte");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [selectedObj, setSelectedObj] = useState<any>(null);
-  const [layers, setLayers] = useState<{ id: string; label: string }[]>([]);
+  const [zoom, setZoom] = useState(100);
+  const [layers, setLayers] = useState<{ id: string; label: string; locked: boolean }[]>([]);
+  const [shapesOpen, setShapesOpen] = useState(false);
+
+  // Selected object state — always reflects actual object values
+  const [sel, setSel] = useState<any>(null);
+  const [selFill, setSelFill] = useState("#000000");
+  const [selOpacity, setSelOpacity] = useState(100);
+  const [selStroke, setSelStroke] = useState("#000000");
+  const [selStrokeW, setSelStrokeW] = useState(0);
+  const [selRadius, setSelRadius] = useState(0);
+  const [selRotation, setSelRotation] = useState(0);
+  const [selShadow, setSelShadow] = useState(false);
+  const [selShadowColor, setSelShadowColor] = useState("rgba(0,0,0,0.5)");
+  const [selShadowBlur, setSelShadowBlur] = useState(10);
+  const [selShadowX, setSelShadowX] = useState(5);
+  const [selShadowY, setSelShadowY] = useState(5);
+  const [selBlur, setSelBlur] = useState(0);
+  const [selFontSize, setSelFontSize] = useState(48);
+  const [selFontFamily, setSelFontFamily] = useState("Montserrat");
+  const [selFillGradient, setSelFillGradient] = useState<{c1:string;c2:string;angle:number}|null>(null);
+
+  // Background
+  const [bgSolid, setBgSolid] = useState("#ffffff");
+  const [bgGradient, setBgGradient] = useState<{c1:string;c2:string;angle:number}|null>(null);
 
   const DISPLAY_W = 540;
   const scale = DISPLAY_W / fmt.w;
@@ -72,12 +191,9 @@ function EditorInner() {
 
   useEffect(() => {
     if (!user) return;
-    getDoc(doc(db, "sites", user.uid)).then(snap => {
-      if (snap.exists()) setSite({ id: snap.id, ...snap.data() } as Site);
-    });
+    getDoc(doc(db, "sites", user.uid)).then(s => { if (s.exists()) setSite({ id: s.id, ...s.data() } as Site); });
   }, [user]);
 
-  // Load fabric + google fonts
   useEffect(() => {
     loadGoogleFonts();
     const script = document.createElement("script");
@@ -87,508 +203,511 @@ function EditorInner() {
     return () => { try { document.head.removeChild(script); } catch {} };
   }, []);
 
-  // Refresh layers list from canvas
-  const refreshLayers = (fc: any) => {
-    const objs = fc.getObjects();
-    setLayers([...objs].reverse().map((o: any, i: number) => ({
-      id: o.__uid || (o.__uid = Math.random().toString(36).slice(2)),
-      label: o.type === "i-text" ? `Texto: "${(o.text || "").slice(0,14)}…"` :
-             o.type === "image" ? "Imagem" :
-             o.type === "rect" ? "Retângulo" :
-             o.type === "circle" ? "Círculo" : o.type,
-    })));
+  const refreshLayers = (canvas: any) => {
+    try {
+      const objs = canvas.getObjects();
+      setLayers([...objs].reverse().map((o: any) => ({
+        id: o.__uid || (o.__uid = Math.random().toString(36).slice(2)),
+        label: o.type === "i-text" ? `T "${(o.text||"").slice(0,12)}"` : o.type === "image" ? "Imagem" : o.type === "rect" ? "Retângulo" : o.type === "circle" ? "Círculo" : o.type === "triangle" ? "Triângulo" : o.type === "line" ? "Linha" : o.type,
+        locked: !!o.lockMovementX,
+      })));
+    } catch {}
   };
 
-  // Init fabric
+  const syncSel = (obj: any) => {
+    if (!obj) { setSel(null); return; }
+    setSel(obj);
+    setSelFill(getObjColor(obj));
+    setSelOpacity(Math.round((obj.opacity ?? 1) * 100));
+    setSelStroke(obj.stroke || "#000000");
+    setSelStrokeW(obj.strokeWidth || 0);
+    setSelRadius(obj.rx || 0);
+    setSelRotation(Math.round(obj.angle || 0));
+    setSelFontSize(Math.round((obj.fontSize || 48) / scale));
+    setSelFontFamily(obj.fontFamily || "Montserrat");
+    const sh = obj.shadow;
+    setSelShadow(!!sh);
+    if (sh) { setSelShadowColor(sh.color||"rgba(0,0,0,0.5)"); setSelShadowBlur(sh.blur||10); setSelShadowX(sh.offsetX||5); setSelShadowY(sh.offsetY||5); }
+    // Blur filter
+    const blurFilter = (obj.filters||[]).find((f: any) => f.type === "Blur");
+    setSelBlur(blurFilter ? Math.round((blurFilter.blur||0)*100) : 0);
+    // Gradient fill
+    const fill = obj.fill;
+    if (fill && fill.colorStops) {
+      const c1 = fill.colorStops[0]?.color || "#000";
+      const c2 = fill.colorStops[1]?.color || "#fff";
+      setSelFillGradient({ c1, c2, angle: 90 });
+    } else { setSelFillGradient(null); }
+  };
+
   useEffect(() => {
     if (!fabricLoaded || !canvasRef.current) return;
-    const fc = new (window as any).fabric.Canvas(canvasRef.current, {
+    const canvas = new (window as any).fabric.Canvas(canvasRef.current, {
       width: DISPLAY_W, height: DISPLAY_H, backgroundColor: "#ffffff", selection: true,
     });
-    fabricRef.current = fc;
+    fc.current = canvas;
 
-    const onSel = (e: any) => { setSelectedObj(e.selected?.[0] || null); };
-    fc.on("selection:created", onSel);
-    fc.on("selection:updated", onSel);
-    fc.on("selection:cleared", () => setSelectedObj(null));
-    // History helpers
     const saveState = () => {
       if (savingHistory.current) return;
-      try {
-        historyRef.current.undo.push(JSON.stringify(fc.toJSON()));
-        historyRef.current.redo = [];
-        if (historyRef.current.undo.length > 50) historyRef.current.undo.shift();
-      } catch {}
+      try { historyRef.current.undo.push(JSON.stringify(canvas.toJSON())); historyRef.current.redo = []; if (historyRef.current.undo.length > 50) historyRef.current.undo.shift(); } catch {}
     };
     const restoreState = (json: string) => {
       savingHistory.current = true;
-      try {
-        fc.loadFromJSON(JSON.parse(json), () => {
-          try { fc.renderAll(); refreshLayers(fc); } catch {}
-          savingHistory.current = false;
-        });
-      } catch { savingHistory.current = false; }
+      try { canvas.loadFromJSON(JSON.parse(json), () => { try { canvas.renderAll(); refreshLayers(canvas); } catch {} savingHistory.current = false; }); } catch { savingHistory.current = false; }
     };
 
-    fc.on("object:added",    () => { if (!savingHistory.current) { saveState(); refreshLayers(fc); } });
-    fc.on("object:removed",  () => { if (!savingHistory.current) refreshLayers(fc); });
-    fc.on("object:modified", () => { if (!savingHistory.current) { saveState(); refreshLayers(fc); } });
+    canvas.on("selection:created", (e: any) => syncSel(e.selected?.[0]));
+    canvas.on("selection:updated", (e: any) => syncSel(e.selected?.[0]));
+    canvas.on("selection:cleared", () => syncSel(null));
+    canvas.on("object:modified", (e: any) => { if (!savingHistory.current) { saveState(); refreshLayers(canvas); syncSel(e.target); } });
+    canvas.on("object:added",    () => { if (!savingHistory.current) { saveState(); refreshLayers(canvas); } });
+    canvas.on("object:removed",  () => { if (!savingHistory.current) refreshLayers(canvas); });
 
-    // Full keyboard shortcuts
-    const onKeyDown = (e: KeyboardEvent) => {
+    const onKey = (e: KeyboardEvent) => {
       const tag = (document.activeElement as HTMLElement)?.tagName;
       const isInput = tag === "INPUT" || tag === "TEXTAREA";
       const ctrl = e.ctrlKey || e.metaKey;
-      const obj = fc.getActiveObject();
+      const obj = canvas.getActiveObject();
 
-      // Delete / Backspace — remove selected (not while editing text)
       if ((e.key === "Delete" || e.key === "Backspace") && !isInput) {
-        if (obj && obj.type !== "i-text") { saveState(); fc.remove(obj); setSelectedObj(null); }
+        if (obj && obj.type !== "i-text" && !obj.lockMovementX) { saveState(); canvas.remove(obj); syncSel(null); }
         return;
       }
-      if (isInput) return; // Don't intercept ctrl shortcuts while in a text field
+      if (isInput) return;
 
       if (ctrl) {
         switch (e.key.toLowerCase()) {
-          case "c": // Copy
-            if (!obj) return;
-            e.preventDefault();
-            obj.clone((cloned: any) => { clipboardRef.current = cloned; });
-            break;
-          case "v": // Paste
-            e.preventDefault();
+          case "c": e.preventDefault(); if (obj) obj.clone((c: any) => { clipboardRef.current = c; }); break;
+          case "v": e.preventDefault();
             if (!clipboardRef.current) return;
-            clipboardRef.current.clone((cloned: any) => {
-              cloned.set({ left: cloned.left + 20, top: cloned.top + 20, evented: true });
-              if (cloned.type === "activeSelection") {
-                cloned.canvas = fc;
-                cloned.forEachObject((o: any) => fc.add(o));
-                cloned.setCoords();
-              } else {
-                fc.add(cloned);
-              }
-              clipboardRef.current.top += 20;
-              clipboardRef.current.left += 20;
-              fc.setActiveObject(cloned);
-              fc.requestRenderAll();
-            });
-            break;
-          case "d": // Duplicate
-            e.preventDefault();
+            clipboardRef.current.clone((c: any) => {
+              c.set({ left: c.left + 20, top: c.top + 20, evented: true });
+              if (c.type === "activeSelection") { c.canvas = canvas; c.forEachObject((o: any) => canvas.add(o)); c.setCoords(); }
+              else canvas.add(c);
+              clipboardRef.current.top += 20; clipboardRef.current.left += 20;
+              canvas.setActiveObject(c); canvas.requestRenderAll();
+            }); break;
+          case "d": e.preventDefault();
             if (!obj) return;
-            obj.clone((cloned: any) => {
-              cloned.set({ left: obj.left + 20, top: obj.top + 20 });
-              fc.add(cloned);
-              fc.setActiveObject(cloned);
-              fc.requestRenderAll();
-            });
+            obj.clone((c: any) => { c.set({ left: obj.left+20, top: obj.top+20 }); canvas.add(c); canvas.setActiveObject(c); canvas.requestRenderAll(); }); break;
+          case "z": e.preventDefault();
+            if (e.shiftKey) { const n = historyRef.current.redo.pop(); if (!n) return; historyRef.current.undo.push(JSON.stringify(canvas.toJSON())); restoreState(n); }
+            else { const p = historyRef.current.undo.pop(); if (!p) return; historyRef.current.redo.push(JSON.stringify(canvas.toJSON())); restoreState(p); }
             break;
-          case "z": // Undo
-            e.preventDefault();
-            if (e.shiftKey) { // Ctrl+Shift+Z = Redo
-              const next = historyRef.current.redo.pop();
-              if (!next) return;
-              historyRef.current.undo.push(JSON.stringify(fc.toJSON()));
-              restoreState(next);
-            } else { // Ctrl+Z = Undo
-              const prev = historyRef.current.undo.pop();
-              if (!prev) return;
-              historyRef.current.redo.push(JSON.stringify(fc.toJSON()));
-              restoreState(prev);
-            }
-            break;
-          case "y": // Redo
-            e.preventDefault();
-            const next = historyRef.current.redo.pop();
-            if (!next) return;
-            historyRef.current.undo.push(JSON.stringify(fc.toJSON()));
-            restoreState(next);
-            break;
-          case "a": // Select all
-            e.preventDefault();
-            fc.discardActiveObject();
-            const sel = new (window as any).fabric.ActiveSelection(fc.getObjects(), { canvas: fc });
-            fc.setActiveObject(sel);
-            fc.requestRenderAll();
-            break;
-          case "g": // Group
-            e.preventDefault();
-            if (obj?.type === "activeSelection") {
-              const group = obj.toGroup();
-              fc.setActiveObject(group);
-              fc.requestRenderAll();
-            }
-            break;
+          case "y": e.preventDefault(); { const n = historyRef.current.redo.pop(); if (!n) return; historyRef.current.undo.push(JSON.stringify(canvas.toJSON())); restoreState(n); } break;
+          case "a": e.preventDefault(); { const all = new (window as any).fabric.ActiveSelection(canvas.getObjects(), { canvas }); canvas.setActiveObject(all); canvas.requestRenderAll(); } break;
+          case "g": e.preventDefault(); if (obj?.type === "activeSelection") { canvas.setActiveObject(obj.toGroup()); canvas.requestRenderAll(); } break;
         }
-        // Arrow nudge with Ctrl = 10px
         return;
       }
-
-      // Arrow keys — nudge selected object
       if (obj && ["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key)) {
-        e.preventDefault();
-        const step = e.shiftKey ? 10 : 1;
-        if (e.key === "ArrowLeft")  obj.set("left", obj.left - step);
-        if (e.key === "ArrowRight") obj.set("left", obj.left + step);
-        if (e.key === "ArrowUp")    obj.set("top",  obj.top  - step);
-        if (e.key === "ArrowDown")  obj.set("top",  obj.top  + step);
-        obj.setCoords();
-        fc.requestRenderAll();
-        return;
+        e.preventDefault(); const s = e.shiftKey ? 10 : 1;
+        if (e.key==="ArrowLeft") obj.set("left", obj.left-s);
+        if (e.key==="ArrowRight") obj.set("left", obj.left+s);
+        if (e.key==="ArrowUp") obj.set("top", obj.top-s);
+        if (e.key==="ArrowDown") obj.set("top", obj.top+s);
+        obj.setCoords(); canvas.requestRenderAll();
       }
-
-      // Escape — deselect
-      if (e.key === "Escape") { fc.discardActiveObject(); fc.requestRenderAll(); }
+      if (e.key === "Escape") { canvas.discardActiveObject(); canvas.requestRenderAll(); }
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => { fc.dispose(); fabricRef.current = null; window.removeEventListener("keydown", onKeyDown); };
+    window.addEventListener("keydown", onKey);
+    return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
   }, [fabricLoaded, DISPLAY_W, DISPLAY_H]);
 
+  // Apply background
   useEffect(() => {
-    if (!fabricRef.current) return;
-    fabricRef.current.setBackgroundColor(bgColor, () => fabricRef.current?.renderAll());
-  }, [bgColor]);
+    if (!fc.current) return;
+    if (bgGradient) {
+      const fab = (window as any).fabric;
+      if (!fab) return;
+      const rad = (bgGradient.angle * Math.PI) / 180;
+      const grad = new fab.Gradient({ type: "linear", coords: { x1: (Math.cos(rad+Math.PI)+1)/2*DISPLAY_W, y1: (Math.sin(rad+Math.PI)+1)/2*DISPLAY_H, x2: (Math.cos(rad)+1)/2*DISPLAY_W, y2: (Math.sin(rad)+1)/2*DISPLAY_H }, colorStops: [{ offset:0, color: bgGradient.c1 },{ offset:1, color: bgGradient.c2 }] });
+      fc.current.setBackgroundColor(grad, () => fc.current?.renderAll());
+    } else {
+      fc.current.setBackgroundColor(bgSolid, () => fc.current?.renderAll());
+    }
+  }, [bgSolid, bgGradient, DISPLAY_W, DISPLAY_H]);
 
-  const addText = () => {
-    if (!fabricRef.current) return;
+  // Apply zoom
+  useEffect(() => {
+    if (!fc.current) return;
+    const z = zoom / 100;
+    fc.current.setZoom(z);
+    fc.current.setWidth(DISPLAY_W * z);
+    fc.current.setHeight(DISPLAY_H * z);
+    fc.current.requestRenderAll();
+  }, [zoom, DISPLAY_W, DISPLAY_H]);
+
+  // ─── Helpers to update selected object ───────────────
+  const upd = (props: Record<string, any>) => {
+    if (!fc.current || !sel) return;
+    sel.set(props); fc.current.requestRenderAll();
+  };
+
+  const updateFill = (color: string) => {
+    setSelFill(color); setSelFillGradient(null);
+    upd({ fill: color });
+  };
+  const updateFillGradient = (g: {c1:string;c2:string;angle:number}|null) => {
+    setSelFillGradient(g);
+    if (!g) { upd({ fill: selFill }); return; }
+    if (fc.current && sel) applyGradient(fc.current, sel, g);
+  };
+  const updateOpacity  = (v: number) => { setSelOpacity(v);  upd({ opacity: v/100 }); };
+  const updateStroke   = (c: string) => { setSelStroke(c);   upd({ stroke: c }); };
+  const updateStrokeW  = (v: number) => { setSelStrokeW(v);  upd({ strokeWidth: v }); };
+  const updateRadius   = (v: number) => { setSelRadius(v);   upd({ rx: v, ry: v }); };
+  const updateRotation = (v: number) => { setSelRotation(v); upd({ angle: v }); };
+  const updateFontSize = (v: number) => { setSelFontSize(v); upd({ fontSize: v * scale }); };
+  const updateFontFamily = (v: string) => { setSelFontFamily(v); upd({ fontFamily: v }); };
+
+  const updateShadow = (on: boolean) => {
+    setSelShadow(on);
+    if (!fc.current || !sel) return;
+    sel.set("shadow", on ? new (window as any).fabric.Shadow({ color: selShadowColor, blur: selShadowBlur, offsetX: selShadowX, offsetY: selShadowY }) : null);
+    fc.current.requestRenderAll();
+  };
+  const applyShadow = (color: string, blur: number, ox: number, oy: number) => {
+    if (!fc.current || !sel || !selShadow) return;
+    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur, offsetX: ox, offsetY: oy }));
+    fc.current.requestRenderAll();
+  };
+
+  const updateBlur = (v: number) => {
+    setSelBlur(v);
+    if (!fc.current || !sel) return;
     const fabric = (window as any).fabric;
-    const t = new fabric.IText("Texto aqui", {
-      left: DISPLAY_W / 2, top: DISPLAY_H / 2,
-      originX: "center", originY: "center",
-      fontSize: fontSize * scale, fontFamily, fill: "#000000",
-    });
-    fabricRef.current.add(t);
-    fabricRef.current.setActiveObject(t);
-    t.enterEditing();
+    const filters = (sel.filters || []).filter((f: any) => f.type !== "Blur");
+    if (v > 0) filters.push(new fabric.Image.filters.Blur({ blur: v / 100 }));
+    sel.filters = filters;
+    sel.applyFilters();
+    fc.current.requestRenderAll();
   };
 
-  const addRect = () => {
-    if (!fabricRef.current) return;
-    const r = new (window as any).fabric.Rect({
-      left: DISPLAY_W/2-75, top: DISPLAY_H/2-50, width: 150, height: 100,
-      fill: fillColor, rx: 4, ry: 4,
-    });
-    fabricRef.current.add(r);
-    fabricRef.current.setActiveObject(r);
+  const toggleLock = (uid: string) => {
+    if (!fc.current) return;
+    const obj = fc.current.getObjects().find((o: any) => o.__uid === uid);
+    if (!obj) return;
+    const locked = !obj.lockMovementX;
+    obj.set({ lockMovementX: locked, lockMovementY: locked, lockRotation: locked, lockScalingX: locked, lockScalingY: locked, selectable: true, evented: true });
+    refreshLayers(fc.current);
+    fc.current.requestRenderAll();
   };
 
-  const addCircle = () => {
-    if (!fabricRef.current) return;
-    const c = new (window as any).fabric.Circle({
-      left: DISPLAY_W/2-60, top: DISPLAY_H/2-60, radius: 60, fill: fillColor,
-    });
-    fabricRef.current.add(c);
-    fabricRef.current.setActiveObject(c);
+  const alignObj = (dir: string) => {
+    if (!fc.current || !sel) return;
+    const canvas = fc.current;
+    const cw = canvas.getWidth() / canvas.getZoom();
+    const ch = canvas.getHeight() / canvas.getZoom();
+    const bw = sel.getBoundingRect().width; const bh = sel.getBoundingRect().height;
+    if (dir === "left")    sel.set({ left: 0 });
+    if (dir === "hcenter") sel.set({ left: (cw - bw) / 2 });
+    if (dir === "right")   sel.set({ left: cw - bw });
+    if (dir === "top")     sel.set({ top: 0 });
+    if (dir === "vcenter") sel.set({ top: (ch - bh) / 2 });
+    if (dir === "bottom")  sel.set({ top: ch - bh });
+    sel.setCoords(); canvas.requestRenderAll();
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // ─── Add elements ─────────────────────────────────────
+  const add = (fn: (fabric: any) => any) => {
+    if (!fc.current) return;
+    const obj = fn((window as any).fabric);
+    fc.current.add(obj); fc.current.setActiveObject(obj); syncSel(obj); setShapesOpen(false);
+  };
+  const addText  = () => add(fab => { const t = new fab.IText("Texto aqui", { left:DISPLAY_W/2, top:DISPLAY_H/2, originX:"center", originY:"center", fontSize:48*scale, fontFamily:"Montserrat", fill:"#000000" }); return t; });
+  const addRect  = (r=0) => add(fab => new fab.Rect({ left:DISPLAY_W/2-75, top:DISPLAY_H/2-50, width:150, height:100, fill:"#3b82f6", rx:r, ry:r }));
+  const addCirc  = () => add(fab => new fab.Circle({ left:DISPLAY_W/2-60, top:DISPLAY_H/2-60, radius:60, fill:"#3b82f6" }));
+  const addTri   = () => add(fab => new fab.Triangle({ left:DISPLAY_W/2-60, top:DISPLAY_H/2-60, width:120, height:120, fill:"#3b82f6" }));
+  const addLine  = () => add(fab => new fab.Line([DISPLAY_W/2-80, DISPLAY_H/2, DISPLAY_W/2+80, DISPLAY_H/2], { stroke:"#000000", strokeWidth:3 }));
+  const addStar  = () => {
+    const points: { x: number; y: number }[] = [];
+    for (let i=0;i<10;i++) { const r = i%2===0?60:24; const a = (Math.PI/5)*i - Math.PI/2; points.push({ x: r*Math.cos(a), y: r*Math.sin(a) }); }
+    add(fab => new fab.Polygon(points, { left:DISPLAY_W/2, top:DISPLAY_H/2, originX:"center", originY:"center", fill:"#eab308" }));
+  };
+  const addArrow = () => {
+    const points: { x: number; y: number }[] = [{ x:0,y:20 },{ x:80,y:20 },{ x:80,y:0 },{ x:120,y:35 },{ x:80,y:70 },{ x:80,y:50 },{ x:0,y:50 }];
+    add(fab => new fab.Polygon(points, { left:DISPLAY_W/2-60, top:DISPLAY_H/2-35, fill:"#3b82f6" }));
+  };
+
+  const handleImg = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !fabricRef.current) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      (window as any).fabric.Image.fromURL(ev.target?.result as string, (img: any) => {
-        const maxW = DISPLAY_W * 0.8;
-        if (img.width > maxW) img.scaleToWidth(maxW);
-        img.set({ left: DISPLAY_W/2, top: DISPLAY_H/2, originX: "center", originY: "center" });
-        fabricRef.current.add(img);
-        fabricRef.current.setActiveObject(img);
-      });
-    };
-    reader.readAsDataURL(file);
-    e.target.value = "";
+    if (!file || !fc.current) return;
+    const r = new FileReader();
+    r.onload = ev => (window as any).fabric.Image.fromURL(ev.target?.result as string, (img: any) => {
+      if (img.width > DISPLAY_W * 0.8) img.scaleToWidth(DISPLAY_W * 0.8);
+      img.set({ left:DISPLAY_W/2, top:DISPLAY_H/2, originX:"center", originY:"center" });
+      fc.current.add(img); fc.current.setActiveObject(img); syncSel(img);
+    });
+    r.readAsDataURL(file); e.target.value = "";
   };
 
   const deleteSelected = () => {
-    if (!fabricRef.current) return;
-    const obj = fabricRef.current.getActiveObject();
-    if (obj) { fabricRef.current.remove(obj); setSelectedObj(null); }
-  };
-
-  const updateSelectedFill = (color: string) => {
-    if (!fabricRef.current || !selectedObj) return;
-    selectedObj.set("fill", color);
-    fabricRef.current.renderAll();
-  };
-
-  const updateSelectedFont = (family: string) => {
-    if (!fabricRef.current || !selectedObj || selectedObj.type !== "i-text") return;
-    selectedObj.set("fontFamily", family);
-    fabricRef.current.renderAll();
-  };
-
-  const updateSelectedFontSize = (size: number) => {
-    if (!fabricRef.current || !selectedObj || selectedObj.type !== "i-text") return;
-    selectedObj.set("fontSize", size * scale);
-    fabricRef.current.renderAll();
-  };
-
-  // Layer ordering
-  const bringForward = () => {
-    if (!fabricRef.current || !selectedObj) return;
-    fabricRef.current.bringForward(selectedObj);
-    refreshLayers(fabricRef.current);
-  };
-  const sendBackward = () => {
-    if (!fabricRef.current || !selectedObj) return;
-    fabricRef.current.sendBackwards(selectedObj);
-    refreshLayers(fabricRef.current);
-  };
-  const bringToFront = () => {
-    if (!fabricRef.current || !selectedObj) return;
-    fabricRef.current.bringToFront(selectedObj);
-    refreshLayers(fabricRef.current);
-  };
-  const sendToBack = () => {
-    if (!fabricRef.current || !selectedObj) return;
-    fabricRef.current.sendToBack(selectedObj);
-    refreshLayers(fabricRef.current);
-  };
-
-  const selectLayerObj = (uid: string) => {
-    if (!fabricRef.current) return;
-    const obj = fabricRef.current.getObjects().find((o: any) => o.__uid === uid);
-    if (obj) { fabricRef.current.setActiveObject(obj); fabricRef.current.renderAll(); setSelectedObj(obj); }
+    if (!fc.current || !sel) return;
+    fc.current.remove(sel); syncSel(null);
   };
 
   const exportDataUrl = () => {
-    const fc = fabricRef.current;
-    const zoom = fmt.w / DISPLAY_W;
-    fc.setZoom(zoom); fc.setWidth(fmt.w); fc.setHeight(fmt.h);
-    const dataUrl = fc.toDataURL({ format: "png", multiplier: 1 });
-    fc.setZoom(1); fc.setWidth(DISPLAY_W); fc.setHeight(DISPLAY_H);
-    fc.renderAll();
+    const canvas = fc.current;
+    const currentZoom = canvas.getZoom();
+    canvas.setZoom(1); canvas.setWidth(DISPLAY_W); canvas.setHeight(DISPLAY_H);
+    const z = fmt.w / DISPLAY_W;
+    canvas.setZoom(z); canvas.setWidth(fmt.w); canvas.setHeight(fmt.h);
+    const dataUrl = canvas.toDataURL({ format:"png", multiplier:1 });
+    canvas.setZoom(currentZoom); canvas.setWidth(DISPLAY_W * currentZoom); canvas.setHeight(DISPLAY_H * currentZoom);
+    canvas.requestRenderAll();
     return dataUrl;
   };
 
   const handleDownload = () => {
-    if (!fabricRef.current) return;
-    const a = document.createElement("a");
-    a.href = exportDataUrl(); a.download = artName + ".png"; a.click();
+    if (!fc.current) return;
+    const a = document.createElement("a"); a.href = exportDataUrl(); a.download = artName+".png"; a.click();
   };
 
   const handleSave = async () => {
-    if (!fabricRef.current || !site) return;
-    setSaving(true);
+    if (!fc.current || !site) return; setSaving(true);
     try {
       const dataUrl = exportDataUrl();
       const path = `canvas/${site.widgetId}/${Date.now()}.png`;
-      const storageRef = ref(storage, path);
-      await uploadString(storageRef, dataUrl, "data_url");
-      const url = await getDownloadURL(storageRef);
-      await addDoc(collection(db, "canvas_arts"), {
-        widgetId: site.widgetId, name: artName, format: fmt.label,
-        url, storagePath: path, createdAt: Date.now(),
-      });
+      const sRef = ref(storage, path);
+      await uploadString(sRef, dataUrl, "data_url");
+      const url = await getDownloadURL(sRef);
+      await addDoc(collection(db, "canvas_arts"), { widgetId:site.widgetId, name:artName, format:fmt.label, url, storagePath:path, createdAt:Date.now() });
       setSaved(true); setTimeout(() => setSaved(false), 2500);
     } finally { setSaving(false); }
   };
 
-  const isText = selectedObj?.type === "i-text";
+  const isText = sel?.type === "i-text";
+  const isShape = sel && ["rect","circle","triangle","polygon"].includes(sel.type);
+  const isRect = sel?.type === "rect";
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="min-h-screen bg-gray-50 flex flex-col" style={{ fontFamily: "system-ui, sans-serif" }}>
       {/* Top bar */}
-      <nav className="bg-white border-b border-gray-200 px-4 h-14 flex items-center justify-between flex-shrink-0">
+      <nav className="bg-white border-b border-gray-200 px-4 h-14 flex items-center justify-between flex-shrink-0 z-20">
         <div className="flex items-center gap-3">
           <Link href="/dashboard/canvas" className="text-sm text-gray-500 hover:text-gray-700">← Canvas</Link>
-          <span className="text-gray-300">|</span>
+          <span className="text-gray-200">|</span>
           <input value={artName} onChange={e => setArtName(e.target.value)}
             className="text-sm font-medium text-gray-900 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-indigo-400 focus:outline-none px-1 py-0.5 w-40" />
-          <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-full">{fmt.label}</span>
+          <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{fmt.label}</span>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={handleDownload} className="px-3 py-1.5 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition">↓ Download</button>
-          <button onClick={handleSave} disabled={saving}
-            className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition disabled:opacity-60">
-            {saving ? "Salvando..." : saved ? "✓ Salvo!" : "Salvar na galeria"}
+          {/* Zoom */}
+          <div className="flex items-center gap-1 border border-gray-200 rounded-lg px-2 py-1">
+            <button onClick={() => setZoom(z => Math.max(25, z-25))} className="text-gray-500 hover:text-gray-800 w-5 text-center text-sm">−</button>
+            <span className="text-xs text-gray-600 w-10 text-center">{zoom}%</span>
+            <button onClick={() => setZoom(z => Math.min(200, z+25))} className="text-gray-500 hover:text-gray-800 w-5 text-center text-sm">+</button>
+          </div>
+          <button onClick={handleDownload} className="px-3 py-1.5 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition">↓ PNG</button>
+          <button onClick={handleSave} disabled={saving} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition disabled:opacity-60">
+            {saving ? "Salvando..." : saved ? "✓ Salvo!" : "Salvar"}
           </button>
         </div>
       </nav>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left toolbar */}
-        <div className="w-56 bg-white border-r border-gray-200 flex flex-col gap-4 p-3 overflow-y-auto flex-shrink-0 text-xs">
+        {/* ── LEFT TOOLBAR ─────────────────────────────── */}
+        <div className="w-52 bg-white border-r border-gray-200 flex flex-col overflow-y-auto flex-shrink-0 text-xs">
 
-          {/* Add elements */}
-          <div>
-            <p className="font-medium text-gray-500 mb-2">Adicionar</p>
-            <div className="flex flex-col gap-1.5">
-              {[
-                { label: "T  Texto", fn: addText },
-                { label: "▭  Retângulo", fn: addRect },
-                { label: "○  Círculo", fn: addCircle },
-                { label: "🖼  Imagem", fn: () => fileRef.current?.click() },
-              ].map(({ label, fn }) => (
-                <button key={label} onClick={fn}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 text-gray-700 transition text-left">
-                  {label}
-                </button>
-              ))}
-              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
-            </div>
-          </div>
-
-          {/* Background */}
-          <div>
-            <p className="font-medium text-gray-500 mb-2">Fundo</p>
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              {COLORS.map(c => (
-                <button key={c} onClick={() => setBgColor(c)}
-                  style={{ background: c, boxSizing:"border-box", border: bgColor === c ? "2px solid #4f46e5" : "1px solid #e4e4e0" }}
-                  className="w-7 h-7 rounded-lg transition" />
-              ))}
-            </div>
-            <div className="flex items-center gap-2">
-              <input type="color" value={bgColor} onChange={e => setBgColor(e.target.value)} className="w-7 h-7 rounded cursor-pointer border border-gray-200 p-0" />
-              <input type="text" value={bgColor} onChange={e => setBgColor(e.target.value)} className="flex-1 px-2 py-1 border border-gray-200 rounded-lg focus:outline-none focus:border-indigo-400" />
-            </div>
-          </div>
-
-          {/* Selected element properties */}
-          {selectedObj && (
-            <div className="border-t border-gray-100 pt-3 flex flex-col gap-3">
-              <p className="font-medium text-gray-500">Elemento selecionado</p>
-
-              {/* Color */}
-              <div>
-                <p className="text-gray-400 mb-1.5">Cor</p>
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {COLORS.map(c => (
-                    <button key={c} onClick={() => { setFillColor(c); updateSelectedFill(c); }}
-                      style={{ background: c, boxSizing:"border-box", border: fillColor === c ? "2px solid #4f46e5" : "1px solid #e4e4e0" }}
-                      className="w-7 h-7 rounded-lg transition" />
-                  ))}
-                </div>
-                <div className="flex items-center gap-2">
-                  <input type="color" value={fillColor} onChange={e => { setFillColor(e.target.value); updateSelectedFill(e.target.value); }} className="w-7 h-7 rounded cursor-pointer border border-gray-200 p-0" />
-                  <input type="text" value={fillColor} onChange={e => setFillColor(e.target.value)} className="flex-1 px-2 py-1 border border-gray-200 rounded-lg focus:outline-none focus:border-indigo-400" />
-                </div>
-              </div>
-
-              {/* Font options — only for text */}
-              {isText && (
-                <div className="flex flex-col gap-2">
-                  <div>
-                    <p className="text-gray-400 mb-1">Fonte</p>
-                    <select value={fontFamily} onChange={e => { setFontFamily(e.target.value); updateSelectedFont(e.target.value); }}
-                      className="w-full px-2 py-1.5 border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-indigo-400">
-                      {FONTS.map(f => <option key={f.name} value={f.name} style={{ fontFamily: f.name }}>{f.name}</option>)}
-                    </select>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-gray-400 whitespace-nowrap">Tamanho</p>
-                    <input type="number" value={fontSize} min={6} max={300}
-                      onChange={e => { setFontSize(+e.target.value); updateSelectedFontSize(+e.target.value); }}
-                      className="flex-1 px-2 py-1 border border-gray-200 rounded-lg focus:outline-none focus:border-indigo-400" />
-                  </div>
-                </div>
-              )}
-
-              {/* Layer controls */}
-              <div>
-                <p className="text-gray-400 mb-1.5">Camada</p>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {[
-                    { label: "▲▲ Frente", fn: bringToFront },
-                    { label: "▲  Acima",  fn: bringForward },
-                    { label: "▼  Abaixo", fn: sendBackward },
-                    { label: "▼▼ Fundo",  fn: sendToBack },
-                  ].map(({ label, fn }) => (
-                    <button key={label} onClick={fn}
-                      className="px-2 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition text-center">
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Delete */}
-              <button onClick={deleteSelected}
-                className="w-full py-2 border border-red-200 text-red-500 rounded-lg hover:bg-red-50 transition">
-                🗑 Remover elemento
+          {/* Add section */}
+          <div className="p-3 border-b border-gray-100">
+            <p className="font-semibold text-gray-500 mb-2 uppercase tracking-wide" style={{fontSize:10}}>Adicionar</p>
+            <div className="flex flex-col gap-1">
+              <button onClick={addText} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 text-gray-700 transition text-left">
+                <span className="w-4 text-center font-bold">T</span> Texto
               </button>
+
+              {/* Shapes dropdown */}
+              <div className="relative">
+                <button onClick={() => setShapesOpen(o => !o)} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 text-gray-700 transition text-left">
+                  <span className="w-4 text-center">◻</span> Formas
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className={`ml-auto text-gray-400 transition-transform ${shapesOpen?"rotate-180":""}`}><path d="M2 3l3 4 3-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                </button>
+                {shapesOpen && (
+                  <div className="absolute left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-30 p-2 flex flex-col gap-1">
+                    <button onClick={() => addRect(0)}  className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-indigo-50 text-gray-700">◻ Retângulo</button>
+                    <button onClick={() => addRect(12)} className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-indigo-50 text-gray-700">▢ Retângulo arredondado</button>
+                    <button onClick={addCirc}  className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-indigo-50 text-gray-700">○ Círculo</button>
+                    <button onClick={addTri}   className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-indigo-50 text-gray-700">△ Triângulo</button>
+                    <button onClick={addLine}  className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-indigo-50 text-gray-700">― Linha</button>
+                    <button onClick={addStar}  className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-indigo-50 text-gray-700">★ Estrela</button>
+                    <button onClick={addArrow} className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-indigo-50 text-gray-700">→ Seta</button>
+                  </div>
+                )}
+              </div>
+
+              <label className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50 text-gray-700 transition cursor-pointer">
+                <span className="w-4 text-center">🖼</span> Imagem
+                <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImg} />
+              </label>
+            </div>
+          </div>
+
+          {/* Background section */}
+          <div className="p-3 border-b border-gray-100">
+            <p className="font-semibold text-gray-500 mb-2 uppercase tracking-wide" style={{fontSize:10}}>Fundo</p>
+            <ColorPicker value={bgGradient ? bgGradient.c1 : bgSolid} onChange={c => { setBgSolid(c); setBgGradient(null); }} label="" />
+            <div className="mt-2">
+              <GradientEditor value={bgGradient} onChange={g => { if (g) setBgGradient(g); else { setBgGradient(null); } }} />
+            </div>
+          </div>
+
+          {/* Align section — always visible */}
+          {sel && (
+            <div className="p-3 border-b border-gray-100">
+              <p className="font-semibold text-gray-500 mb-2 uppercase tracking-wide" style={{fontSize:10}}>Alinhar</p>
+              <div className="grid grid-cols-3 gap-1">
+                {[["left","⬛←","left"],["hcenter","⬛→←","hcenter"],["right","→⬛","right"],["top","⬛↑","top"],["vcenter","⬛↕","vcenter"],["bottom","↓⬛","bottom"]].map(([dir,icon]) => (
+                  <button key={dir} onClick={() => alignObj(dir)} title={dir}
+                    className="py-1.5 text-center border border-gray-200 rounded-lg hover:bg-indigo-50 hover:border-indigo-300 text-gray-600 transition" style={{fontSize:9}}>{icon}</button>
+                ))}
+              </div>
             </div>
           )}
         </div>
 
-        {/* Canvas area */}
+        {/* ── CANVAS ───────────────────────────────────── */}
         <div className="flex-1 overflow-auto flex items-start justify-center p-8 bg-gray-100">
           <div className="shadow-2xl">
             {!fabricLoaded ? (
               <div style={{ width: DISPLAY_W, height: DISPLAY_H }} className="bg-white flex items-center justify-center">
                 <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
               </div>
-            ) : (
-              <canvas ref={canvasRef} />
-            )}
+            ) : <canvas ref={canvasRef} />}
           </div>
         </div>
 
-        {/* Right panel — layers with drag-and-drop */}
-        <div className="w-48 bg-white border-l border-gray-200 flex flex-col flex-shrink-0">
-          <div className="px-3 py-3 border-b border-gray-100">
-            <p className="text-xs font-medium text-gray-500">Camadas</p>
-            <p className="text-xs text-gray-400 mt-0.5">Arraste para reordenar</p>
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {layers.length === 0 ? (
-              <p className="text-xs text-gray-400 p-3">Nenhum elemento ainda.</p>
-            ) : (
-              <div className="flex flex-col divide-y divide-gray-100">
-                {layers.map((layer, index) => {
-                  const isActive = selectedObj?.__uid === layer.id;
-                  return (
-                    <div
-                      key={layer.id}
-                      draggable
-                      onDragStart={e => { e.dataTransfer.setData("layerIndex", String(index)); e.dataTransfer.effectAllowed = "move"; }}
-                      onDragOver={e => e.preventDefault()}
-                      onDrop={e => {
-                        e.preventDefault();
-                        const fromIndex = parseInt(e.dataTransfer.getData("layerIndex"));
-                        if (fromIndex === index || !fabricRef.current) return;
-                        const fc = fabricRef.current;
-                        const objs = [...fc.getObjects()];
-                        const totalObjs = objs.length;
-                        // layers is reversed: index 0 = top = last in objs
-                        const fromObjIndex = totalObjs - 1 - fromIndex;
-                        const toObjIndex   = totalObjs - 1 - index;
-                        const [moving] = objs.splice(fromObjIndex, 1);
-                        objs.splice(toObjIndex, 0, moving);
-                        // Rebuild z-order using fabric API
-                        objs.forEach((obj: any, i: number) => {
-                          fc.remove(obj);
-                          fc.insertAt(obj, i, false);
-                        });
-                        fc.requestRenderAll();
-                        refreshLayers(fc);
-                      }}
-                      onClick={() => selectLayerObj(layer.id)}
-                      className={`flex items-center gap-2 px-3 py-2.5 text-xs cursor-grab active:cursor-grabbing transition select-none ${isActive ? "bg-indigo-50 text-indigo-700 font-medium" : "text-gray-600 hover:bg-gray-50"}`}>
-                      <svg width="10" height="14" viewBox="0 0 10 14" fill="none" className="flex-shrink-0 text-gray-300">
-                        <circle cx="3" cy="3" r="1.2" fill="currentColor"/><circle cx="7" cy="3" r="1.2" fill="currentColor"/>
-                        <circle cx="3" cy="7" r="1.2" fill="currentColor"/><circle cx="7" cy="7" r="1.2" fill="currentColor"/>
-                        <circle cx="3" cy="11" r="1.2" fill="currentColor"/><circle cx="7" cy="11" r="1.2" fill="currentColor"/>
-                      </svg>
-                      <span className="truncate">{layer.label}</span>
-                    </div>
-                  );
-                })}
+        {/* ── RIGHT: PROPERTIES + LAYERS ───────────────── */}
+        <div className="w-56 bg-white border-l border-gray-200 flex flex-col flex-shrink-0 overflow-y-auto text-xs">
+
+          {/* Properties panel */}
+          {sel ? (
+            <div className="p-3 flex flex-col gap-3 border-b border-gray-200">
+              <p className="font-semibold text-gray-600 uppercase tracking-wide" style={{fontSize:10}}>Propriedades</p>
+
+              {/* Fill */}
+              <Sec title="Preenchimento" />
+              <ColorPicker value={selFill} onChange={updateFill} label="" />
+              <GradientEditor value={selFillGradient} onChange={updateFillGradient} />
+
+              {/* Opacity */}
+              <Sec title="Opacidade" />
+              <SliderRow label="" value={selOpacity} min={0} max={100} unit="%" onChange={updateOpacity} />
+
+              {/* Stroke */}
+              <Sec title="Borda" />
+              <ColorPicker value={selStroke} onChange={c => { setSelStroke(c); updateStroke(c); }} label="Cor" />
+              <NumRow label="Espessura" value={selStrokeW} min={0} max={50} onChange={v => { setSelStrokeW(v); updateStrokeW(v); }} />
+
+              {/* Rotation */}
+              <Sec title="Rotação" />
+              <SliderRow label="" value={selRotation} min={0} max={360} unit="°" onChange={updateRotation} />
+
+              {/* Border radius — only for rects */}
+              {isRect && (
+                <>
+                  <Sec title="Arredondamento" />
+                  <SliderRow label="" value={selRadius} min={0} max={200} onChange={v => { setSelRadius(v); updateRadius(v); }} />
+                </>
+              )}
+
+              {/* Font — only for text */}
+              {isText && (
+                <>
+                  <Sec title="Texto" />
+                  <div><p className="text-gray-400 mb-1">Fonte</p>
+                    <select value={selFontFamily} onChange={e => updateFontFamily(e.target.value)}
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-lg bg-white focus:outline-none focus:border-indigo-400">
+                      {FONTS.map(f => <option key={f.name} value={f.name}>{f.name}</option>)}
+                    </select>
+                  </div>
+                  <NumRow label="Tamanho" value={selFontSize} min={6} max={400} onChange={updateFontSize} />
+                </>
+              )}
+
+              {/* Shadow */}
+              <Sec title="Sombra" />
+              <div className="flex items-center justify-between">
+                <span className="text-gray-400">Ativar sombra</span>
+                <button onClick={() => updateShadow(!selShadow)} className={`w-9 h-5 rounded-full transition ${selShadow?"bg-indigo-500":"bg-gray-200"}`}>
+                  <span className={`block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${selShadow?"translate-x-4":""}`} />
+                </button>
               </div>
-            )}
-          </div>
-          <div className="p-3 border-t border-gray-100 flex flex-col gap-1">
-            <p className="text-xs text-gray-400 text-center mb-1">Topo → Fundo</p>
-            <div className="text-xs text-gray-400 space-y-0.5">
-              <p>Ctrl+C  Copiar</p>
-              <p>Ctrl+V  Colar</p>
-              <p>Ctrl+D  Duplicar</p>
-              <p>Ctrl+Z  Desfazer</p>
-              <p>Ctrl+Y  Refazer</p>
-              <p>Ctrl+A  Selec. tudo</p>
-              <p>Del     Remover</p>
-              <p>↑↓←→   Mover 1px</p>
-              <p>Shift+↑  Mover 10px</p>
+              {selShadow && (
+                <div className="flex flex-col gap-2">
+                  <ColorPicker value={selShadowColor} onChange={c => { setSelShadowColor(c); applyShadow(c, selShadowBlur, selShadowX, selShadowY); }} label="Cor" />
+                  <SliderRow label="Blur" value={selShadowBlur} min={0} max={60} onChange={v => { setSelShadowBlur(v); applyShadow(selShadowColor, v, selShadowX, selShadowY); }} />
+                  <SliderRow label="X" value={selShadowX} min={-50} max={50} onChange={v => { setSelShadowX(v); applyShadow(selShadowColor, selShadowBlur, v, selShadowY); }} />
+                  <SliderRow label="Y" value={selShadowY} min={-50} max={50} onChange={v => { setSelShadowY(v); applyShadow(selShadowColor, selShadowBlur, selShadowX, v); }} />
+                </div>
+              )}
+
+              {/* Blur filter — images only */}
+              {sel.type === "image" && (
+                <>
+                  <Sec title="Blur" />
+                  <SliderRow label="" value={selBlur} min={0} max={100} onChange={updateBlur} />
+                </>
+              )}
+
+              {/* Delete */}
+              <button onClick={deleteSelected} className="w-full py-2 mt-1 border border-red-200 text-red-500 rounded-lg hover:bg-red-50 transition">🗑 Remover</button>
+            </div>
+          ) : (
+            <div className="p-3 border-b border-gray-200">
+              <p className="text-gray-400 text-center py-4">Selecione um elemento para editar</p>
+            </div>
+          )}
+
+          {/* Layers panel */}
+          <div className="flex flex-col flex-1">
+            <div className="px-3 py-2 border-b border-gray-100">
+              <p className="font-semibold text-gray-500 uppercase tracking-wide" style={{fontSize:10}}>Camadas</p>
+            </div>
+            <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
+              {layers.length === 0 ? (
+                <p className="text-gray-400 p-3 text-center">Sem elementos</p>
+              ) : layers.map((layer, index) => {
+                const isActive = sel?.__uid === layer.id;
+                return (
+                  <div key={layer.id} draggable
+                    onDragStart={e => e.dataTransfer.setData("li", String(index))}
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => {
+                      e.preventDefault();
+                      const from = parseInt(e.dataTransfer.getData("li"));
+                      if (from === index || !fc.current) return;
+                      const canvas = fc.current;
+                      const objs = [...canvas.getObjects()];
+                      const total = objs.length;
+                      const [moving] = objs.splice(total-1-from, 1);
+                      objs.splice(total-1-index, 0, moving);
+                      objs.forEach((o: any, i: number) => { canvas.remove(o); canvas.insertAt(o, i, false); });
+                      canvas.requestRenderAll(); refreshLayers(canvas);
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-2 cursor-grab active:cursor-grabbing transition select-none ${isActive ? "bg-indigo-50 text-indigo-700 font-medium" : "text-gray-600 hover:bg-gray-50"}`}>
+                    <svg width="8" height="12" viewBox="0 0 8 12" fill="none" className="flex-shrink-0 text-gray-300">
+                      <circle cx="2" cy="2" r="1.2" fill="currentColor"/><circle cx="6" cy="2" r="1.2" fill="currentColor"/>
+                      <circle cx="2" cy="6" r="1.2" fill="currentColor"/><circle cx="6" cy="6" r="1.2" fill="currentColor"/>
+                      <circle cx="2" cy="10" r="1.2" fill="currentColor"/><circle cx="6" cy="10" r="1.2" fill="currentColor"/>
+                    </svg>
+                    <span className="flex-1 truncate text-xs" onClick={() => {
+                      const obj = fc.current?.getObjects().find((o: any) => o.__uid === layer.id);
+                      if (obj) { fc.current.setActiveObject(obj); fc.current.requestRenderAll(); syncSel(obj); }
+                    }}>{layer.label}</span>
+                    <button onClick={() => toggleLock(layer.id)} title={layer.locked ? "Desbloquear" : "Bloquear"}
+                      className={`text-gray-300 hover:text-gray-600 flex-shrink-0 ${layer.locked ? "text-amber-400" : ""}`}>
+                      {layer.locked ? "🔒" : "🔓"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="p-2 border-t border-gray-100 text-gray-400 space-y-0.5" style={{fontSize:9}}>
+              <p>Ctrl+C/V Copiar/Colar &nbsp; Ctrl+D Duplicar</p>
+              <p>Ctrl+Z/Y Desfazer/Refazer &nbsp; Del Remover</p>
+              <p>↑↓←→ Mover 1px &nbsp; Shift+↑ 10px</p>
             </div>
           </div>
         </div>
