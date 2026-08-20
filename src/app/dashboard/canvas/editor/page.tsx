@@ -413,38 +413,6 @@ function EditorInner() {
       fc.current.requestRenderAll();
     };
 
-    // Helper: restore original from JSON and place on canvas
-    const restoreOriginal = (json: string, left: number, top: number, angle: number, scaleX: number, scaleY: number) => {
-      fabric.util.enlivenObjects([JSON.parse(json)], (objs: any[]) => {
-        const original = objs[0];
-        original.set({ left, top, angle, scaleX, scaleY });
-        original.__uid = uid;
-        fc.current.add(original);
-        fc.current.setActiveObject(original);
-        syncSel(original);
-        fc.current.requestRenderAll();
-      });
-    };
-
-    // Helper: rasterize an enlivened object and apply blur
-    const rasterizeAndBlur = (objToRaster: any, left: number, top: number, angle: number, scaleX: number, scaleY: number, blurValue: number) => {
-      // Temporarily add to canvas off-screen to allow toDataURL, then remove
-      objToRaster.set({ left: -9999, top: -9999, angle: 0, scaleX: 1, scaleY: 1 });
-      fc.current.add(objToRaster);
-      const dataURL = objToRaster.toDataURL({ multiplier: 3 }); // high res
-      fc.current.remove(objToRaster);
-
-      fabric.Image.fromURL(dataURL, (img: any) => {
-        img.set({ left, top, angle, scaleX, scaleY, strokeUniform: true });
-        img.__uid = uid;
-        fc.current.add(img);
-        fc.current.setActiveObject(img);
-        syncSel(img);
-        applyBlurToImage(img, blurValue);
-      });
-    };
-
-    // Capture current transform (before removing from canvas)
     const left   = sel.left;
     const top    = sel.top;
     const angle  = sel.angle  || 0;
@@ -456,32 +424,70 @@ function EditorInner() {
       const json = blurOriginMap.current.get(uid)!;
       blurOriginMap.current.delete(uid);
       fc.current.remove(sel);
-      restoreOriginal(json, left, top, angle, scaleX, scaleY);
-      return;
-    }
-
-    // ── Already rasterized: re-rasterize from original JSON at current transform ──
-    if (sel.type === "image" && blurOriginMap.current.has(uid)) {
-      const json = blurOriginMap.current.get(uid)!;
-      fc.current.remove(sel);
       fabric.util.enlivenObjects([JSON.parse(json)], (objs: any[]) => {
-        rasterizeAndBlur(objs[0], left, top, angle, scaleX, scaleY, v);
+        const original = objs[0];
+        original.set({ left, top, angle, scaleX, scaleY });
+        original.__uid = uid;
+        fc.current.add(original);
+        fc.current.setActiveObject(original);
+        syncSel(original);
+        fc.current.requestRenderAll();
       });
       return;
     }
 
     // ── Real uploaded image: apply directly ──
-    if (sel.type === "image") {
+    if (sel.type === "image" && !blurOriginMap.current.has(uid)) {
       applyBlurToImage(sel, v);
       return;
     }
 
-    // ── Shape/text: save JSON, rasterize, apply blur ──
+    // ── Already rasterized: just update blur filter ──
+    if (sel.type === "image" && blurOriginMap.current.has(uid)) {
+      applyBlurToImage(sel, v);
+      return;
+    }
+
+    // ── Shape/text: save JSON, rasterize using a temp off-screen canvas ──
     const json = JSON.stringify(sel.toObject());
     blurOriginMap.current.set(uid, json);
-    fc.current.remove(sel);
-    fabric.util.enlivenObjects([JSON.parse(json)], (objs: any[]) => {
-      rasterizeAndBlur(objs[0], left, top, angle, scaleX, scaleY, v);
+
+    // Use fabric's own toDataURL on the object directly (no multiplier to avoid texture limit)
+    // We must render it on a temporary canvas at display size
+    const objW = sel.getBoundingRect().width;
+    const objH = sel.getBoundingRect().height;
+    const tempCanvas = document.createElement("canvas");
+    tempCanvas.width  = Math.min(objW + 40, 2048);
+    tempCanvas.height = Math.min(objH + 40, 2048);
+    const tempFc = new fabric.StaticCanvas(tempCanvas, { width: tempCanvas.width, height: tempCanvas.height });
+
+    sel.clone((cloned: any) => {
+      cloned.set({ left: tempCanvas.width / 2, top: tempCanvas.height / 2, originX: "center", originY: "center", angle: 0 });
+      tempFc.add(cloned);
+      tempFc.renderAll();
+
+      const dataURL = tempCanvas.toDataURL("image/png");
+      tempFc.dispose();
+
+      fc.current.remove(sel);
+
+      fabric.Image.fromURL(dataURL, (img: any) => {
+        // Scale image so it matches the original rendered size
+        const scaleToW = objW / img.width;
+        img.set({
+          left, top, angle,
+          scaleX: scaleToW * scaleX,
+          scaleY: scaleToW * scaleY,
+          originX: "left",
+          originY: "top",
+          strokeUniform: true,
+        });
+        img.__uid = uid;
+        fc.current.add(img);
+        fc.current.setActiveObject(img);
+        syncSel(img);
+        applyBlurToImage(img, v);
+      });
     });
   };
 
