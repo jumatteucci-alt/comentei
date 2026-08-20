@@ -189,6 +189,9 @@ function EditorInner() {
   const [selBlur, setSelBlur] = useState(0);
   const [selFontSize, setSelFontSize] = useState(48);
   const [selFontFamily, setSelFontFamily] = useState("Montserrat");
+  const [selBold, setSelBold] = useState(false);
+  const [selItalic, setSelItalic] = useState(false);
+  const [selUnderline, setSelUnderline] = useState(false);
   const [selFillGradient, setSelFillGradient] = useState<{c1:string;c2:string;angle:number}|null>(null);
 
   // Background
@@ -235,6 +238,9 @@ function EditorInner() {
     setSelRotation(Math.round(obj.angle || 0));
     setSelFontSize(Math.round((obj.fontSize || 48) / scale));
     setSelFontFamily(obj.fontFamily || "Montserrat");
+    setSelBold(obj.fontWeight === "bold");
+    setSelItalic(obj.fontStyle === "italic");
+    setSelUnderline(!!obj.underline);
     const sh = obj.shadow;
     setSelShadow(!!sh);
     if (sh) { setSelShadowColor(sh.color||"rgba(0,0,0,0.5)"); setSelShadowBlur(sh.blur||10); setSelShadowX(sh.offsetX||5); setSelShadowY(sh.offsetY||5); }
@@ -281,7 +287,11 @@ function EditorInner() {
       const obj = canvas.getActiveObject();
 
       if ((e.key === "Delete" || e.key === "Backspace") && !isInput) {
-        if (obj && obj.type !== "i-text" && !obj.lockMovementX) { saveState(); canvas.remove(obj); syncSel(null); }
+        if (obj && !obj.lockMovementX) {
+          // For text: only delete when not in edit mode
+          if (obj.type === "i-text" && obj.isEditing) return;
+          saveState(); canvas.remove(obj); syncSel(null);
+        }
         return;
       }
       if (isInput) return;
@@ -371,6 +381,9 @@ function EditorInner() {
   const updateRotation = (v: number) => { setSelRotation(v); upd({ angle: v }); };
   const updateFontSize = (v: number) => { setSelFontSize(v); upd({ fontSize: v * scale }); };
   const updateFontFamily = (v: string) => { setSelFontFamily(v); upd({ fontFamily: v }); };
+  const toggleBold      = () => { const n = !selBold;      setSelBold(n);      upd({ fontWeight: n ? "bold" : "normal" }); };
+  const toggleItalic    = () => { const n = !selItalic;    setSelItalic(n);    upd({ fontStyle:  n ? "italic" : "normal" }); };
+  const toggleUnderline = () => { const n = !selUnderline; setSelUnderline(n); upd({ underline: n }); };
 
   const updateShadow = (on: boolean) => {
     setSelShadow(on);
@@ -506,7 +519,7 @@ function EditorInner() {
   const isRect = sel?.type === "rect";
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col" style={{ fontFamily: "system-ui, sans-serif" }}>
+    <div className="h-screen bg-gray-50 flex flex-col overflow-hidden" style={{ fontFamily: "system-ui, sans-serif" }}>
       {/* Top bar */}
       <nav className="bg-white border-b border-gray-200 px-4 h-14 flex items-center justify-between flex-shrink-0 z-20">
         <div className="flex items-center gap-3">
@@ -647,6 +660,23 @@ function EditorInner() {
                     </select>
                   </div>
                   <NumRow label="Tamanho" value={selFontSize} min={6} max={400} onChange={updateFontSize} />
+                  <div>
+                    <p className="text-gray-400 mb-1.5">Formatação</p>
+                    <div className="flex gap-1.5">
+                      <button onClick={toggleBold}
+                        className={`flex-1 py-1.5 rounded-lg border text-sm font-bold transition ${selBold ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+                        B
+                      </button>
+                      <button onClick={toggleItalic}
+                        className={`flex-1 py-1.5 rounded-lg border text-sm italic transition ${selItalic ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+                        I
+                      </button>
+                      <button onClick={toggleUnderline}
+                        className={`flex-1 py-1.5 rounded-lg border text-sm underline transition ${selUnderline ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+                        U
+                      </button>
+                    </div>
+                  </div>
                 </>
               )}
 
@@ -667,13 +697,11 @@ function EditorInner() {
                 </div>
               )}
 
-              {/* Blur filter — images only */}
-              {sel.type === "image" && (
-                <>
-                  <Sec title="Blur" />
-                  <SliderRow label="" value={selBlur} min={0} max={100} onChange={updateBlur} />
-                </>
-              )}
+              {/* Blur filter — all types */}
+              <>
+                <Sec title="Blur" />
+                <SliderRow label="" value={selBlur} min={0} max={100} onChange={updateBlur} />
+              </>
 
               {/* Delete */}
               <button onClick={deleteSelected} className="w-full py-2 mt-1 border border-red-200 text-red-500 rounded-lg hover:bg-red-50 transition">🗑 Remover</button>
