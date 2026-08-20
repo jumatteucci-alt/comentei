@@ -33,7 +33,6 @@ function loadGoogleFonts() {
   document.head.appendChild(l);
 }
 
-// ─── Colour picker component ──────────────────────────────
 function ColorPicker({ value, onChange, label }: { value: string; onChange: (c: string) => void; label: string }) {
   return (
     <div>
@@ -55,7 +54,6 @@ function ColorPicker({ value, onChange, label }: { value: string; onChange: (c: 
   );
 }
 
-// ─── Gradient editor ─────────────────────────────────────
 function GradientEditor({ value, onChange }: { value: { c1: string; c2: string; angle: number } | null; onChange: (g: { c1: string; c2: string; angle: number } | null) => void }) {
   const [on, setOn] = useState(!!value);
   const g = value || { c1: "#4f46e5", c2: "#ec4899", angle: 90 };
@@ -88,7 +86,6 @@ function GradientEditor({ value, onChange }: { value: { c1: string; c2: string; 
             <p className="text-xs text-gray-400 mb-1">Ângulo: {g.angle}°</p>
             <input type="range" min={0} max={360} value={g.angle} onChange={e => onChange({ ...g, angle: +e.target.value })} className="w-full accent-indigo-600" />
           </div>
-          {/* Preview */}
           <div style={{ background: `linear-gradient(${g.angle}deg, ${g.c1}, ${g.c2})`, height: 20, borderRadius: 6 }} />
         </div>
       )}
@@ -96,7 +93,6 @@ function GradientEditor({ value, onChange }: { value: { c1: string; c2: string; 
   );
 }
 
-// ─── Slider row ───────────────────────────────────────────
 function SliderRow({ label, value, min, max, step = 1, unit = "", onChange }: { label: string; value: number; min: number; max: number; step?: number; unit?: string; onChange: (v: number) => void }) {
   return (
     <div>
@@ -106,7 +102,6 @@ function SliderRow({ label, value, min, max, step = 1, unit = "", onChange }: { 
   );
 }
 
-// ─── Number input row ─────────────────────────────────────
 function NumRow({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (v: number) => void }) {
   return (
     <div className="flex items-center gap-2">
@@ -117,12 +112,10 @@ function NumRow({ label, value, min, max, onChange }: { label: string; value: nu
   );
 }
 
-// ─── Section header ───────────────────────────────────────
 function Sec({ title }: { title: string }) {
   return <p className="text-xs font-semibold text-gray-600 pt-2 border-t border-gray-100">{title}</p>;
 }
 
-// ─── Apply gradient to fabric object ─────────────────────
 function applyGradient(fc: any, obj: any, g: { c1: string; c2: string; angle: number }) {
   const fabric = (window as any).fabric;
   const rad = (g.angle * Math.PI) / 180;
@@ -169,9 +162,9 @@ function EditorInner() {
   const clipboardRef = useRef<any>(null);
   const historyRef = useRef<{ undo: string[]; redo: string[] }>({ undo: [], redo: [] });
   const savingHistory = useRef(false);
-  const blurOriginMap = useRef<Map<string, string>>(new Map()); // uid → JSON string of original
-  const blurValueMap  = useRef<Map<string, number>>(new Map()); // uid → current blur value
-  const blurPosMap    = useRef<Map<string, {left:number;top:number;scaleX:number;scaleY:number;angle:number}>>(new Map()); // uid → original position before any blur
+  const blurOriginMap = useRef<Map<string, string>>(new Map());
+  const blurValueMap  = useRef<Map<string, number>>(new Map());
+  const blurPosMap    = useRef<Map<string, {left:number;top:number;scaleX:number;scaleY:number;angle:number}>>(new Map());
   const blurTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rectBeforeScale = useRef<{ rx: number; ry: number } | null>(null);
 
@@ -187,17 +180,25 @@ function EditorInner() {
   const [saved, setSaved] = useState(false);
   const [zoom, setZoom] = useState(100);
   const [layers, setLayers] = useState<{ id: string; label: string; locked: boolean }[]>([]);
-  const [shapesOpen, setShapesOpen] = useState(false);
   const [activeTool, setActiveTool] = useState<"select"|"pen">("select");
   const activeToolRef = useRef<"select"|"pen">("select");
+
+  // Pen tool state & refs
   const penPoints = useRef<{x:number;y:number}[]>([]);
   const penLines = useRef<any[]>([]);
   const penDots = useRef<any[]>([]);
-  const penCurveHandles = useRef<{x:number;y:number}[][]>([]); // bezier handles per point
+  const penCurveHandles = useRef<{x:number;y:number}[][]>([]); // [cp1, cp2]
+  const isPenDragging = useRef(false);
+  const activeHandleLine = useRef<any>(null);
   const finalizePenRef = useRef<(close:boolean)=>void>(() => {});
   const cancelPenRef = useRef<()=>void>(() => {});
 
-  // Selected object state — always reflects actual object values
+  // Path node editing state & refs
+  const [isEditingNodes, setIsEditingNodes] = useState(false);
+  const editingPathRef = useRef<any>(null);
+  const editControlPoints = useRef<any[]>([]);
+
+  // Selected object state
   const [sel, setSel] = useState<any>(null);
   const [selFill, setSelFill] = useState("#000000");
   const [selOpacity, setSelOpacity] = useState(100);
@@ -220,7 +221,7 @@ function EditorInner() {
   const [selCharSpacing, setSelCharSpacing] = useState(0);
   const [selLineHeight, setSelLineHeight] = useState(1.2);
   const [selTextWidth, setSelTextWidth] = useState(300);
-  const [selTextHeight, setSelTextHeight] = useState(0); // 0 = auto
+  const [selTextHeight, setSelTextHeight] = useState(0);
   const [selFillGradient, setSelFillGradient] = useState<{c1:string;c2:string;angle:number}|null>(null);
 
   // Background
@@ -248,7 +249,6 @@ function EditorInner() {
     otScript.onload = () => setOpenTypeLoaded(true);
     document.head.appendChild(otScript);
 
-    // Preload RMBG worker
     try {
       const worker = new Worker("/rmbg-worker.js", { type: "module" });
       worker.postMessage({ type: "preload" });
@@ -263,17 +263,17 @@ function EditorInner() {
 
   const refreshLayers = (canvas: any) => {
     try {
-      const objs = canvas.getObjects();
+      const objs = canvas.getObjects().filter((o: any) => !o.isControlHelper);
       setLayers([...objs].reverse().map((o: any) => ({
         id: o.__uid || (o.__uid = Math.random().toString(36).slice(2)),
-        label: o.type === "i-text" ? `T "${(o.text||"").slice(0,12)}"` : o.type === "image" ? "Imagem" : o.type === "rect" ? "Retângulo" : o.type === "circle" ? "Círculo" : o.type === "triangle" ? "Triângulo" : o.type === "line" ? "Linha" : o.type,
+        label: o.type === "i-text" ? `T "${(o.text||"").slice(0,12)}"` : o.type === "image" ? "Imagem" : o.type === "rect" ? "Retângulo" : o.type === "circle" ? "Círculo" : o.type === "triangle" ? "Triângulo" : o.type === "line" ? "Linha" : o.type === "path" ? "Vetor" : o.type,
         locked: !!o.lockMovementX,
       })));
     } catch {}
   };
 
   const syncSel = (obj: any) => {
-    if (!obj) { setSel(null); return; }
+    if (!obj || obj.isControlHelper) { setSel(null); return; }
     setSel(obj);
     setSelFill(getObjColor(obj));
     setSelOpacity(Math.round((obj.opacity ?? 1) * 100));
@@ -295,18 +295,99 @@ function EditorInner() {
     const sh = obj.shadow;
     setSelShadow(!!sh);
     if (sh) { setSelShadowColor(sh.color||"rgba(0,0,0,0.5)"); setSelShadowBlur(sh.blur||10); setSelShadowX(sh.offsetX||5); setSelShadowY(sh.offsetY||5); }
-    // Blur — read from our own map (native CSS blur not stored in fabric filters)
     const uid = obj.__uid;
     setSelBlur(uid && blurValueMap.current.has(uid) ? blurValueMap.current.get(uid)! : 0);
     const satFilter = (obj.filters||[]).find((f: any) => f.type === "Saturation");
     setSelSaturation(satFilter ? (satFilter.saturation ?? 0) : 0);
-    // Gradient fill
     const fill = obj.fill;
     if (fill && fill.colorStops) {
       const c1 = fill.colorStops[0]?.color || "#000";
       const c2 = fill.colorStops[1]?.color || "#fff";
       setSelFillGradient({ c1, c2, angle: 90 });
     } else { setSelFillGradient(null); }
+  };
+
+  // Node editing handlers
+  const exitEditNodes = () => {
+    if (!fc.current || !editingPathRef.current) return;
+    const canvas = fc.current;
+    editControlPoints.current.forEach(c => canvas.remove(c));
+    editControlPoints.current = [];
+    if (editingPathRef.current) {
+      editingPathRef.current.selectable = true;
+      editingPathRef.current.evented = true;
+      canvas.setActiveObject(editingPathRef.current);
+    }
+    editingPathRef.current = null;
+    setIsEditingNodes(false);
+    canvas.requestRenderAll();
+  };
+
+  const enterEditNodes = (pathObj: any) => {
+    if (!fc.current || !pathObj || pathObj.type !== "path") return;
+    const canvas = fc.current;
+    const fabric = (window as any).fabric;
+    setIsEditingNodes(true);
+    editingPathRef.current = pathObj;
+
+    canvas.discardActiveObject();
+    pathObj.selectable = false;
+    pathObj.evented = false;
+
+    const pathData = pathObj.path;
+    const matrix = pathObj.calcTransformMatrix();
+
+    const helpers: any[] = [];
+    pathData.forEach((cmd: any[], cIdx: number) => {
+      const type = cmd[0];
+      if (type === "M" || type === "L") {
+        const pt = fabric.util.transformPoint({ x: cmd[1], y: cmd[2] }, matrix);
+        const node = new fabric.Circle({
+          left: pt.x, top: pt.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2,
+          originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true
+        });
+        node.on("moving", () => {
+          const inv = fabric.util.invertTransform(pathObj.calcTransformMatrix());
+          const orig = fabric.util.transformPoint({ x: node.left, y: node.top }, inv);
+          cmd[1] = orig.x; cmd[2] = orig.y;
+          pathObj.dirty = true;
+          canvas.requestRenderAll();
+        });
+        helpers.push(node);
+        canvas.add(node);
+      } else if (type === "C") {
+        // Curve: control point 1, control point 2, anchor point
+        const cp1 = fabric.util.transformPoint({ x: cmd[1], y: cmd[2] }, matrix);
+        const cp2 = fabric.util.transformPoint({ x: cmd[3], y: cmd[4] }, matrix);
+        const end = fabric.util.transformPoint({ x: cmd[5], y: cmd[6] }, matrix);
+
+        const nodeCp1 = new fabric.Circle({ left: cp1.x, top: cp1.y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
+        const nodeCp2 = new fabric.Circle({ left: cp2.x, top: cp2.y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
+        const nodeEnd = new fabric.Circle({ left: end.x, top: end.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
+
+        nodeCp1.on("moving", () => {
+          const orig = fabric.util.transformPoint({ x: nodeCp1.left, y: nodeCp1.top }, fabric.util.invertTransform(pathObj.calcTransformMatrix()));
+          cmd[1] = orig.x; cmd[2] = orig.y;
+          pathObj.dirty = true; canvas.requestRenderAll();
+        });
+        nodeCp2.on("moving", () => {
+          const orig = fabric.util.transformPoint({ x: nodeCp2.left, y: nodeCp2.top }, fabric.util.invertTransform(pathObj.calcTransformMatrix()));
+          cmd[3] = orig.x; cmd[4] = orig.y;
+          pathObj.dirty = true; canvas.requestRenderAll();
+        });
+        nodeEnd.on("moving", () => {
+          const orig = fabric.util.transformPoint({ x: nodeEnd.left, y: nodeEnd.top }, fabric.util.invertTransform(pathObj.calcTransformMatrix()));
+          cmd[5] = orig.x; cmd[6] = orig.y;
+          pathObj.dirty = true; canvas.requestRenderAll();
+        });
+
+        helpers.push(nodeCp1, nodeCp2, nodeEnd);
+        canvas.add(nodeCp1, nodeCp2, nodeEnd);
+      }
+    });
+
+    editControlPoints.current = helpers;
+    canvas.requestRenderAll();
   };
 
   useEffect(() => {
@@ -333,7 +414,6 @@ function EditorInner() {
       if (!savingHistory.current) {
         saveState();
         refreshLayers(canvas);
-        // For text objects, object:scaled already handled syncSel with correct fontSize
         const obj = e.target;
         if (obj?.type !== "textbox" && obj?.type !== "i-text") {
           syncSel(obj);
@@ -343,19 +423,21 @@ function EditorInner() {
     canvas.on("object:added",    () => { if (!savingHistory.current) { saveState(); refreshLayers(canvas); } });
     canvas.on("object:removed",  () => { if (!savingHistory.current) refreshLayers(canvas); });
 
-    // When a text/textbox is scaled via handle, bake scale into fontSize so it stays correct
+    canvas.on("mouse:dblclick", (e: any) => {
+      if (e.target && e.target.type === "path") {
+        enterEditNodes(e.target);
+      }
+    });
+
     canvas.on("object:scaling", (e: any) => {
       const obj = e.target;
       if (!obj) return;
-      // Track font size live for text
       if (obj.type === "textbox" || obj.type === "i-text") {
         const newSize = Math.round((obj.fontSize * obj.scaleY) / scale);
         setSelFontSize(newSize);
       }
-      // For rects: bake scale into width/height on every frame so rx stays correct
       if (obj.type === "rect") {
         const storedRx = rectBeforeScale.current?.rx ?? (obj.rx || 0);
-        // visual rx before this frame = storedRx (already in canvas-pixel space)
         const sx = obj.scaleX || 1;
         const sy = obj.scaleY || 1;
         const newW = obj.width * sx;
@@ -367,12 +449,10 @@ function EditorInner() {
         obj.setCoords();
       }
     });
-    // Capture rx BEFORE any transform starts
 
     canvas.on("object:scaled", (e: any) => {
       const obj = e.target;
       if (!obj) return;
-      // Bake font size for text
       if (obj.type === "textbox" || obj.type === "i-text") {
         const newFontSize = Math.round(obj.fontSize * obj.scaleY);
         const newWidth = obj.type === "textbox" ? obj.width * obj.scaleX : obj.width;
@@ -380,7 +460,6 @@ function EditorInner() {
         canvas.requestRenderAll();
         syncSel(obj);
       }
-      // Rect: already baked live in object:scaling, just sync UI and reset capture
       if (obj.type === "rect") {
         rectBeforeScale.current = { rx: obj.rx || 0, ry: obj.ry || 0 };
         canvas.requestRenderAll();
@@ -388,30 +467,30 @@ function EditorInner() {
       }
     });
 
-    // ── Pen tool canvas events ──
+    // ── Pen tool event logic with bezier curve handles ──
     canvas.on("mouse:down:before", (e: any) => {
       if (activeToolRef.current !== "pen") return;
-      // Prevent fabric from selecting/deselecting objects while pen is active
       e.e.stopPropagation?.();
     });
+
     canvas.on("mouse:down", (e: any) => {
       if (activeToolRef.current !== "pen") return;
       const fabric = (window as any).fabric;
       const p = canvas.getPointer(e.e);
       const pts = penPoints.current;
 
-      // Close path if clicking near first point
       if (pts.length > 1) {
         const first = pts[0];
         const dist = Math.hypot(p.x - first.x, p.y - first.y);
         if (dist < 12) { finalizePenRef.current(true); return; }
       }
 
+      isPenDragging.current = true;
       pts.push({ x: p.x, y: p.y });
+      penCurveHandles.current.push([{ x: p.x, y: p.y }, { x: p.x, y: p.y }]);
 
-      // Draw dot
       const dot = new fabric.Circle({
-        left: p.x - 4, top: p.y - 4, radius: 4,
+        left: p.x, top: p.y, radius: 4, originX: "center", originY: "center",
         fill: pts.length === 1 ? "#22c55e" : "#4f46e5",
         stroke: "white", strokeWidth: 1.5,
         selectable: false, evented: false,
@@ -419,21 +498,69 @@ function EditorInner() {
       canvas.add(dot);
       penDots.current.push(dot);
 
-      // Draw preview line to previous point
       if (pts.length > 1) {
         const prev = pts[pts.length - 2];
-        const line = new fabric.Line([prev.x, prev.y, p.x, p.y], {
-          stroke: "#4f46e5", strokeWidth: 1.5,
-          strokeDashArray: [4, 3],
+        const prevHandle = penCurveHandles.current[pts.length - 2][1];
+        const currHandle = penCurveHandles.current[pts.length - 1][0];
+        const curvePath = new fabric.Path(`M ${prev.x} ${prev.y} C ${prevHandle.x} ${prevHandle.y} ${currHandle.x} ${currHandle.y} ${p.x} ${p.y}`, {
+          stroke: "#4f46e5", strokeWidth: 1.5, strokeDashArray: [4, 3], fill: "transparent",
           selectable: false, evented: false,
         });
-        canvas.add(line);
-        penLines.current.push(line);
+        canvas.add(curvePath);
+        penLines.current.push(curvePath);
       }
 
-      // Default: symmetric bezier handles (flat = straight line)
-      penCurveHandles.current.push([{ x: p.x, y: p.y }, { x: p.x, y: p.y }]);
       canvas.requestRenderAll();
+    });
+
+    canvas.on("mouse:move", (e: any) => {
+      if (activeToolRef.current !== "pen" || !isPenDragging.current) return;
+      const fabric = (window as any).fabric;
+      const p = canvas.getPointer(e.e);
+      const pts = penPoints.current;
+      const currIdx = pts.length - 1;
+      const anchor = pts[currIdx];
+
+      // Symmetrical bezier handles
+      const dx = p.x - anchor.x;
+      const dy = p.y - anchor.y;
+
+      penCurveHandles.current[currIdx] = [
+        { x: anchor.x - dx, y: anchor.y - dy }, // entry handle
+        { x: anchor.x + dx, y: anchor.y + dy }  // exit handle
+      ];
+
+      if (activeHandleLine.current) canvas.remove(activeHandleLine.current);
+      activeHandleLine.current = new fabric.Line([anchor.x - dx, anchor.y - dy, anchor.x + dx, anchor.y + dy], {
+        stroke: "#ef4444", strokeWidth: 1, selectable: false, evented: false, strokeDashArray: [2, 2]
+      });
+      canvas.add(activeHandleLine.current);
+
+      if (pts.length > 1) {
+        const prev = pts[pts.length - 2];
+        const prevH = penCurveHandles.current[pts.length - 2][1];
+        const currH = penCurveHandles.current[currIdx][0];
+        const lastLine = penLines.current[penLines.current.length - 1];
+        if (lastLine) canvas.remove(lastLine);
+
+        const newPath = new fabric.Path(`M ${prev.x} ${prev.y} C ${prevH.x} ${prevH.y} ${currH.x} ${currH.y} ${anchor.x} ${anchor.y}`, {
+          stroke: "#4f46e5", strokeWidth: 1.5, strokeDashArray: [4, 3], fill: "transparent", selectable: false, evented: false,
+        });
+        canvas.add(newPath);
+        penLines.current[penLines.current.length - 1] = newPath;
+      }
+
+      canvas.requestRenderAll();
+    });
+
+    canvas.on("mouse:up", () => {
+      if (activeToolRef.current !== "pen") return;
+      isPenDragging.current = false;
+      if (activeHandleLine.current) {
+        canvas.remove(activeHandleLine.current);
+        activeHandleLine.current = null;
+        canvas.requestRenderAll();
+      }
     });
 
     const onKey = (e: KeyboardEvent) => {
@@ -443,8 +570,7 @@ function EditorInner() {
       const obj = canvas.getActiveObject();
 
       if ((e.key === "Delete" || e.key === "Backspace") && !isInput) {
-        if (obj && !obj.lockMovementX) {
-          // For text: only delete when not in edit mode
+        if (obj && !obj.lockMovementX && !obj.isControlHelper) {
           if (obj.type === "i-text" && obj.isEditing) return;
           saveState(); canvas.remove(obj); syncSel(null);
         }
@@ -472,7 +598,7 @@ function EditorInner() {
             else { const p = historyRef.current.undo.pop(); if (!p) return; historyRef.current.redo.push(JSON.stringify(canvas.toJSON())); restoreState(p); }
             break;
           case "y": e.preventDefault(); { const n = historyRef.current.redo.pop(); if (!n) return; historyRef.current.undo.push(JSON.stringify(canvas.toJSON())); restoreState(n); } break;
-          case "a": e.preventDefault(); { const all = new (window as any).fabric.ActiveSelection(canvas.getObjects(), { canvas }); canvas.setActiveObject(all); canvas.requestRenderAll(); } break;
+          case "a": e.preventDefault(); { const all = new (window as any).fabric.ActiveSelection(canvas.getObjects().filter((o: any) => !o.isControlHelper), { canvas }); canvas.setActiveObject(all); canvas.requestRenderAll(); } break;
           case "g": e.preventDefault(); if (obj?.type === "activeSelection") { canvas.setActiveObject(obj.toGroup()); canvas.requestRenderAll(); } break;
         }
         return;
@@ -486,16 +612,27 @@ function EditorInner() {
         obj.setCoords(); canvas.requestRenderAll();
       }
       if (e.key === "Escape") {
-        if (activeToolRef.current === "pen") { cancelPenRef.current(); activeToolRef.current = "select"; setActiveTool("select"); if (fc.current) { fc.current.defaultCursor="default"; fc.current.hoverCursor="move"; fc.current.selection=true; } }
-        else { canvas.discardActiveObject(); canvas.requestRenderAll(); }
+        if (isEditingNodes) {
+          exitEditNodes();
+        } else if (activeToolRef.current === "pen") {
+          cancelPenRef.current(); activeToolRef.current = "select"; setActiveTool("select");
+          if (fc.current) { fc.current.defaultCursor="default"; fc.current.hoverCursor="move"; fc.current.selection=true; }
+        } else {
+          canvas.discardActiveObject(); canvas.requestRenderAll();
+        }
       }
-      if (e.key === "Enter" && activeToolRef.current === "pen") { finalizePenRef.current(true); }
+      if (e.key === "Enter") {
+        if (isEditingNodes) {
+          exitEditNodes();
+        } else if (activeToolRef.current === "pen") {
+          finalizePenRef.current(true);
+        }
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
-  }, [fabricLoaded, DISPLAY_W, DISPLAY_H]);
+  }, [fabricLoaded, DISPLAY_W, DISPLAY_H, isEditingNodes]);
 
-  // Apply background
   useEffect(() => {
     if (!fc.current) return;
     if (bgGradient) {
@@ -509,7 +646,6 @@ function EditorInner() {
     }
   }, [bgSolid, bgGradient, DISPLAY_W, DISPLAY_H]);
 
-  // Apply zoom
   useEffect(() => {
     if (!fc.current) return;
     const z = zoom / 100;
@@ -519,7 +655,6 @@ function EditorInner() {
     fc.current.requestRenderAll();
   }, [zoom, DISPLAY_W, DISPLAY_H]);
 
-  // ─── Helpers to update selected object ───────────────
   const upd = (props: Record<string, any>) => {
     if (!fc.current || !sel) return;
     sel.set(props);
@@ -568,8 +703,6 @@ function EditorInner() {
       fc.current.requestRenderAll();
     } else {
       sel.set({ fontWeight: n ? "bold" : "normal" });
-      // Reinitialize text metrics so charSpacing is recalculated
-      // against the correct glyph widths of the bold/normal variant
       if (sel.initDimensions) sel.initDimensions();
       document.fonts.load(`bold ${sel.fontSize}px "${sel.fontFamily}"`).finally(() => {
         fc.current?.requestRenderAll();
@@ -593,7 +726,6 @@ function EditorInner() {
     } else { upd({ underline: n }); }
   };
   const updateFillForText = (color: string) => {
-    // When editing text with selection, apply color only to selected chars
     if (sel?.isEditing && sel.selectionStart !== sel.selectionEnd) {
       setSelFill(color);
       sel.setSelectionStyles({ fill: color });
@@ -620,14 +752,10 @@ function EditorInner() {
   const updateBlur = (v: number) => {
     setSelBlur(v);
     if (!fc.current || !sel) return;
-
     const uid = sel.__uid;
-
-    // Track value
     if (v > 0) blurValueMap.current.set(uid, v);
     else blurValueMap.current.delete(uid);
 
-    // ── Real uploaded image: fabric filter, no debounce needed ──
     if (sel.type === "image" && !blurOriginMap.current.has(uid)) {
       const fabric = (window as any).fabric;
       const filters = (sel.filters || []).filter((f: any) => f.type !== "Blur");
@@ -639,7 +767,6 @@ function EditorInner() {
       return;
     }
 
-    // Save original position ONCE before first rasterization
     if (!blurPosMap.current.has(uid)) {
       blurPosMap.current.set(uid, {
         left: sel.left, top: sel.top,
@@ -648,19 +775,16 @@ function EditorInner() {
       });
     }
 
-    // Save original object JSON ONCE
     if (!blurOriginMap.current.has(uid) && sel.type !== "image") {
       blurOriginMap.current.set(uid, JSON.stringify(sel.toObject()));
     }
 
-    // Debounce: only rasterize 150ms after slider stops
     if (blurTimer.current) clearTimeout(blurTimer.current);
     blurTimer.current = setTimeout(() => {
       const fabric = (window as any).fabric;
       const currentV = blurValueMap.current.get(uid) ?? 0;
       const pos = blurPosMap.current.get(uid)!;
 
-      // ── Blur = 0: restore original ──
       if (currentV === 0 && blurOriginMap.current.has(uid)) {
         const json = blurOriginMap.current.get(uid)!;
         blurOriginMap.current.delete(uid);
@@ -680,7 +804,6 @@ function EditorInner() {
         return;
       }
 
-      // ── Rasterize from original JSON ──
       const sourceJson = blurOriginMap.current.get(uid)!;
       const current = fc.current.getObjects().find((o: any) => o.__uid === uid);
       if (current) fc.current.remove(current);
@@ -700,7 +823,6 @@ function EditorInner() {
         sourceObj.set({ left: cw / 2, top: ch / 2, originX: "center", originY: "center", angle: 0, scaleX: pos.scaleX, scaleY: pos.scaleY });
         miniCanvas.add(sourceObj);
 
-        // Wait for fonts before rendering so Google Fonts display correctly
         await document.fonts.ready;
         miniCanvas.renderAll();
 
@@ -713,7 +835,6 @@ function EditorInner() {
 
         const dataURL = outEl.toDataURL("image/png");
         fabric.Image.fromURL(dataURL, (img: any) => {
-          // Center image over original position
           img.set({
             left: pos.left + (srcW / 2) - (cw / 2),
             top:  pos.top  + (srcH / 2) - (ch / 2),
@@ -745,7 +866,6 @@ function EditorInner() {
       evented: !locked,
       hoverCursor: locked ? "default" : "move",
     });
-    // Deselect if currently selected and being locked
     if (locked && fc.current.getActiveObject() === obj) {
       fc.current.discardActiveObject();
       syncSel(null);
@@ -772,11 +892,10 @@ function EditorInner() {
     canvas.requestRenderAll();
   };
 
-  // ─── Add elements ─────────────────────────────────────
   const add = (fn: (fabric: any) => any) => {
     if (!fc.current) return;
     const obj = fn((window as any).fabric);
-    fc.current.add(obj); fc.current.setActiveObject(obj); syncSel(obj); setShapesOpen(false);
+    fc.current.add(obj); fc.current.setActiveObject(obj); syncSel(obj);
   };
   const addText = () => {
     if (!fc.current) return;
@@ -823,10 +942,8 @@ function EditorInner() {
     setSelTextHeight(v);
     if (!fc.current || !sel) return;
     if (v === 0) {
-      // Auto height: remove fixed height
       sel.set({ minHeight: undefined, __fixedHeight: false });
       sel.__fixedHeight = false;
-      // Restore natural height by triggering a re-render
       sel.initDimensions?.();
       fc.current.requestRenderAll();
     } else {
@@ -855,7 +972,6 @@ function EditorInner() {
     const r = new FileReader();
     r.onload = ev => (window as any).fabric.Image.fromURL(ev.target?.result as string, (img: any) => {
       if (img.width > DISPLAY_W * 0.8) img.scaleToWidth(DISPLAY_W * 0.8);
-      // Use top-left origin so alignment math is consistent with other objects
       const scaledW = img.getScaledWidth();
       const scaledH = img.getScaledHeight();
       img.set({
@@ -884,7 +1000,6 @@ function EditorInner() {
       const objTop     = sel.top;
       const uid        = sel.__uid;
 
-      // Google Fonts CDN URL for opentype download
       const FONT_URLS: Record<string, string> = {
         "Montserrat":       "https://fonts.gstatic.com/s/montserrat/v29/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCtr6Hw5aXo.woff",
         "Playfair Display": "https://fonts.gstatic.com/s/playfairdisplay/v36/nuFiD-vYSZviVYUb_rj3ij__anPXDTnCjmHKM4nYO7KN_qiTbtA.woff",
@@ -897,22 +1012,17 @@ function EditorInner() {
         "Bebas Neue":       "https://fonts.gstatic.com/s/bebasneue/v14/JTUSjIg69CK48gW7PXoo9WlhyyTh89Y.woff",
       };
 
-      // Load font via opentype — try Google Fonts URL, fall back to system Arial
       const loadFont = async (family: string): Promise<any> => {
         const url = FONT_URLS[family];
         if (url) {
-          try {
-            return await opentype.load(url);
-          } catch {}
+          try { return await opentype.load(url); } catch {}
         }
-        // Fallback: rasterize as image path (can't get system font binary)
         return null;
       };
 
       const font = await loadFont(fontFamily);
 
       if (!font) {
-        // Fallback: convert via SVG rasterization
         const svgData = sel.toSVG();
         const path = new fabric.Path(svgData, {
           left: objLeft, top: objTop,
@@ -927,7 +1037,6 @@ function EditorInner() {
         return;
       }
 
-      // Generate SVG path from opentype
       const svgPath = font.getPath(text, 0, 0, fontSize);
       const pathData = svgPath.toPathData(2);
 
@@ -950,8 +1059,6 @@ function EditorInner() {
     }
   };
 
-
-
   const removeBackgroundLocal = () => {
     if (!fc.current || !sel || sel.type !== "image") return;
     if (!rmbgWorker.current) {
@@ -962,7 +1069,6 @@ function EditorInner() {
     setRmbgProgress("Preparando imagem...");
     const fabric = (window as any).fabric;
 
-    // Rasterize current image to pixel data
     const origW = Math.round(sel.width  * (sel.scaleX || 1));
     const origH = Math.round(sel.height * (sel.scaleY || 1));
     const MAX = 1024;
@@ -982,7 +1088,6 @@ function EditorInner() {
     const angle = sel.angle || 0;
     const uid  = sel.__uid;
     const scaleX = sel.scaleX || 1;
-    const scaleY = sel.scaleY || 1;
 
     const worker = rmbgWorker.current;
 
@@ -997,7 +1102,6 @@ function EditorInner() {
       }
       if (type === "result") {
         worker.removeEventListener("message", handler);
-        // Build PNG from result pixels
         const outCanvas = document.createElement("canvas");
         outCanvas.width = width; outCanvas.height = height;
         const outCtx = outCanvas.getContext("2d")!;
@@ -1023,9 +1127,7 @@ function EditorInner() {
     worker.postMessage({ type: "removebg", imageData: pixelData.data.buffer, width: pw, height: ph }, [pixelData.data.buffer]);
   };
 
-
-
-  // ── Pen tool ────────────────────────────────────────────
+  // ── Pen tool finalization ───────────────────────────────
   const finalizePen = (close: boolean) => {
     if (!fc.current) return;
     const fabric = (window as any).fabric;
@@ -1033,13 +1135,12 @@ function EditorInner() {
     const handles = penCurveHandles.current;
     if (pts.length < 2) { cancelPen(); return; }
 
-    // Build SVG path string with bezier curves
     let d = `M ${pts[0].x} ${pts[0].y}`;
     for (let i = 1; i < pts.length; i++) {
       const prev = pts[i - 1];
       const curr = pts[i];
-      const h1 = handles[i - 1]?.[1] || prev; // exit handle of prev point
-      const h2 = handles[i]?.[0]    || curr; // entry handle of curr point
+      const h1 = handles[i - 1]?.[1] || prev;
+      const h2 = handles[i]?.[0]    || curr;
       d += ` C ${h1.x} ${h1.y} ${h2.x} ${h2.y} ${curr.x} ${curr.y}`;
     }
     if (close && pts.length > 2) {
@@ -1065,14 +1166,17 @@ function EditorInner() {
     if (!fc.current) return;
     penLines.current.forEach(l => fc.current.remove(l));
     penDots.current.forEach(d => fc.current.remove(d));
+    if (activeHandleLine.current) fc.current.remove(activeHandleLine.current);
     penPoints.current = [];
     penLines.current = [];
     penDots.current = [];
     penCurveHandles.current = [];
+    activeHandleLine.current = null;
     fc.current.requestRenderAll();
   };
 
   const startPen = () => {
+    if (isEditingNodes) exitEditNodes();
     setActiveTool("pen"); activeToolRef.current = "pen";
     if (fc.current) {
       fc.current.defaultCursor = "crosshair";
@@ -1093,7 +1197,6 @@ function EditorInner() {
     }
   };
 
-  // Keep refs in sync so canvas event handlers (closures) can call latest versions
   finalizePenRef.current = finalizePen;
   cancelPenRef.current = cancelPen;
 
@@ -1134,7 +1237,7 @@ function EditorInner() {
 
   const isText = sel?.type === "i-text" || sel?.type === "textbox";
   const isTextbox = sel?.type === "textbox";
-  const isShape = sel && ["rect","circle","triangle","polygon"].includes(sel.type);
+  const isPath = sel?.type === "path";
   const isRect = sel?.type === "rect";
 
   return (
@@ -1164,16 +1267,15 @@ function EditorInner() {
 
       <div className="flex flex-1 overflow-hidden">
         {/* ── LEFT TOOLBAR ─────────────────────────────── */}
-        {/* ── LEFT TOOLBAR — icons ─────────────────────── */}
         <div className="w-14 bg-white border-r border-gray-200 flex flex-col items-center py-3 gap-1 flex-shrink-0 overflow-y-auto">
           {/* Select */}
-          <button onClick={() => { stopPen(); }} title="Selecionar (V)"
-            className={`w-10 h-10 rounded-xl flex items-center justify-center transition ${activeTool==="select" ? "bg-indigo-100 text-indigo-700" : "text-gray-500 hover:bg-gray-100"}`}>
+          <button onClick={() => { stopPen(); if (isEditingNodes) exitEditNodes(); }} title="Selecionar (V)"
+            className={`w-10 h-10 rounded-xl flex items-center justify-center transition ${activeTool==="select" && !isEditingNodes ? "bg-indigo-100 text-indigo-700" : "text-gray-500 hover:bg-gray-100"}`}>
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 2l12 7-6 1-3 6L3 2z" fill="currentColor"/></svg>
           </button>
 
           {/* Pen */}
-          <button onClick={() => activeTool==="pen" ? stopPen() : startPen()} title="Caneta (P)">
+          <button onClick={() => activeTool==="pen" ? stopPen() : startPen()} title="Caneta (P) - Clique e arraste para curvas">
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition ${activeTool==="pen" ? "bg-indigo-100 text-indigo-700" : "text-gray-500 hover:bg-gray-100"}`}>
               <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M13 2l3 3-9 9H4v-3L13 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/><path d="M11 4l3 3" stroke="currentColor" strokeWidth="1.5"/></svg>
             </div>
@@ -1237,7 +1339,7 @@ function EditorInner() {
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImg} />
           </label>
 
-          {/* Pen: close/finalize if active */}
+          {/* Pen options when active */}
           {activeTool === "pen" && penPoints.current.length > 1 && (
             <div className="mt-2 flex flex-col gap-1 items-center">
               <button onClick={() => finalizePen(true)} title="Fechar forma (Enter)"
@@ -1270,12 +1372,34 @@ function EditorInner() {
         {/* ── RIGHT: PROPERTIES + LAYERS ───────────────── */}
         <div className="w-56 bg-white border-l border-gray-200 flex flex-col flex-shrink-0 overflow-y-auto text-xs">
 
-          {/* Properties panel */}
+          {isEditingNodes && (
+            <div className="p-3 bg-indigo-50 border-b border-indigo-100 flex flex-col gap-2">
+              <p className="font-semibold text-indigo-900">Modo Edição de Nós</p>
+              <p className="text-[11px] text-indigo-700">Arraste os pontos azuis (âncoras) ou vermelhos (alças de curva) na tela.</p>
+              <button
+                onClick={exitEditNodes}
+                className="w-full py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 transition"
+              >
+                Concluir edição (Enter / Esc)
+              </button>
+            </div>
+          )}
+
           {sel ? (
             <div className="p-3 flex flex-col gap-3 border-b border-gray-200">
               <p className="font-semibold text-gray-600 uppercase tracking-wide" style={{fontSize:10}}>Propriedades</p>
 
-              {/* Fill — hidden for images */}
+              {/* Node edit button for Paths */}
+              {isPath && !isEditingNodes && (
+                <button
+                  onClick={() => enterEditNodes(sel)}
+                  className="w-full py-2 bg-indigo-50 text-indigo-700 font-medium rounded-lg border border-indigo-200 hover:bg-indigo-100 transition"
+                >
+                  ✎ Editar Nós / Pontos
+                </button>
+              )}
+
+              {/* Fill */}
               {sel.type !== "image" && (
                 <>
                   <Sec title="Preenchimento" />
@@ -1298,7 +1422,7 @@ function EditorInner() {
               <Sec title="Opacidade" />
               <SliderRow label="" value={selOpacity} min={0} max={100} unit="%" onChange={updateOpacity} />
 
-              {/* Stroke — hidden for images */}
+              {/* Stroke */}
               {sel.type !== "image" && (
                 <>
                   <Sec title="Borda" />
@@ -1311,7 +1435,7 @@ function EditorInner() {
               <Sec title="Rotação" />
               <SliderRow label="" value={selRotation} min={0} max={360} unit="°" onChange={updateRotation} />
 
-              {/* Border radius — only for rects */}
+              {/* Border radius */}
               {isRect && (
                 <>
                   <Sec title="Arredondamento" />
@@ -1319,7 +1443,7 @@ function EditorInner() {
                 </>
               )}
 
-              {/* Font — only for text */}
+              {/* Text tools */}
               {isText && (
                 <>
                   <Sec title="Texto" />
@@ -1369,23 +1493,14 @@ function EditorInner() {
                   </div>
                   {isTextbox && (
                     <>
-                      <NumRow
-                        label="Largura (px)"
-                        value={selTextWidth}
-                        min={50}
-                        max={Math.round(fmt.w)}
-                        onChange={updateTextWidth}
-                      />
+                      <NumRow label="Largura (px)" value={selTextWidth} min={50} max={Math.round(fmt.w)} onChange={updateTextWidth} />
                       <div>
                         <div className="flex items-center justify-between mb-1">
                           <p className="text-gray-400">Altura (px)</p>
                           <span className="text-xs text-gray-300">0 = automático</span>
                         </div>
                         <input
-                          type="number"
-                          value={selTextHeight}
-                          min={0}
-                          max={Math.round(fmt.h)}
+                          type="number" value={selTextHeight} min={0} max={Math.round(fmt.h)}
                           onChange={e => updateTextHeight(+e.target.value)}
                           className="w-full px-2 py-1 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400"
                         />
@@ -1420,7 +1535,7 @@ function EditorInner() {
                 </div>
               )}
 
-              {/* Saturation — images only */}
+              {/* Image features */}
               {sel.type === "image" && (
                 <>
                   <Sec title="Imagem" />
@@ -1437,7 +1552,7 @@ function EditorInner() {
                 </>
               )}
 
-              {/* Blur filter — all types */}
+              {/* Blur filter */}
               <>
                 <Sec title="Blur" />
                 <SliderRow label="" value={selBlur} min={0} max={100} onChange={updateBlur} />
@@ -1482,7 +1597,7 @@ function EditorInner() {
                       const from = parseInt(e.dataTransfer.getData("li"));
                       if (from === index || !fc.current) return;
                       const canvas = fc.current;
-                      const objs = [...canvas.getObjects()];
+                      const objs = [...canvas.getObjects().filter((o: any) => !o.isControlHelper)];
                       const total = objs.length;
                       const [moving] = objs.splice(total-1-from, 1);
                       objs.splice(total-1-index, 0, moving);
