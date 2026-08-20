@@ -179,6 +179,9 @@ function EditorInner() {
   const [fabricLoaded, setFabricLoaded] = useState(false);
   const [openTypeLoaded, setOpenTypeLoaded] = useState(false);
   const [converting, setConverting] = useState(false);
+  const [removingBg, setRemovingBg] = useState(false);
+  const [rmbgProgress, setRmbgProgress] = useState("");
+  const rmbgWorker = useRef<Worker | null>(null);
   const [artName, setArtName] = useState("Minha arte");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -236,6 +239,13 @@ function EditorInner() {
     otScript.src = "https://cdnjs.cloudflare.com/ajax/libs/opentype.js/1.3.4/opentype.min.js";
     otScript.onload = () => setOpenTypeLoaded(true);
     document.head.appendChild(otScript);
+
+    // Preload RMBG worker
+    try {
+      const worker = new Worker("/rmbg-worker.js", { type: "module" });
+      worker.postMessage({ type: "preload" });
+      rmbgWorker.current = worker;
+    } catch {}
 
     return () => {
       try { document.head.removeChild(script); } catch {}
@@ -334,20 +344,23 @@ function EditorInner() {
         const newSize = Math.round((obj.fontSize * obj.scaleY) / scale);
         setSelFontSize(newSize);
       }
-    });
-    // Capture rx BEFORE any transform starts
-    canvas.on("mouse:down", (e: any) => {
-      const obj = canvas.getActiveObject();
-      if (obj && obj.type === "rect") {
-        // rx is stored relative to the unscaled object.
-        // Visual radius = rx * min(scaleX, scaleY).
-        // We capture the visual radius so after baking (scaleX=1) we restore it exactly.
-        const visualRx = (obj.rx || 0) * Math.min(obj.scaleX || 1, obj.scaleY || 1);
-        rectBeforeScale.current = { rx: visualRx, ry: visualRx };
-      } else {
-        rectBeforeScale.current = null;
+      // For rects: bake scale into width/height on every frame so rx stays correct
+      if (obj.type === "rect") {
+        const storedRx = rectBeforeScale.current?.rx ?? (obj.rx || 0);
+        // visual rx before this frame = storedRx (already in canvas-pixel space)
+        const sx = obj.scaleX || 1;
+        const sy = obj.scaleY || 1;
+        const newW = obj.width * sx;
+        const newH = obj.height * sy;
+        const maxRx = Math.min(newW, newH) / 2;
+        const newRx = Math.min(storedRx, maxRx);
+        obj.set({ width: newW, height: newH, rx: newRx, ry: newRx, scaleX: 1, scaleY: 1 });
+        rectBeforeScale.current = { rx: newRx, ry: newRx };
+        obj.setCoords();
       }
     });
+    // Capture rx BEFORE any transform starts
+
     canvas.on("object:scaled", (e: any) => {
       const obj = e.target;
       if (!obj) return;
@@ -359,16 +372,9 @@ function EditorInner() {
         canvas.requestRenderAll();
         syncSel(obj);
       }
-      // Keep border-radius fixed when scaling rects
+      // Rect: already baked live in object:scaling, just sync UI and reset capture
       if (obj.type === "rect") {
-        const visualRx = rectBeforeScale.current?.rx ?? (obj.rx || 0) * Math.min(obj.scaleX || 1, obj.scaleY || 1);
-        const newW = obj.width  * (obj.scaleX || 1);
-        const newH = obj.height * (obj.scaleY || 1);
-        // After bake scaleX=1, so rx IS the visual radius. Cap to half of shorter side.
-        const maxRx = Math.min(newW, newH) / 2;
-        const newRx = Math.min(visualRx, maxRx);
-        obj.set({ width: newW, height: newH, rx: newRx, ry: newRx, scaleX: 1, scaleY: 1 });
-        rectBeforeScale.current = { rx: newRx, ry: newRx };
+        rectBeforeScale.current = { rx: obj.rx || 0, ry: obj.ry || 0 };
         canvas.requestRenderAll();
         syncSel(obj);
       }
@@ -884,6 +890,129 @@ function EditorInner() {
     }
   };
 
+
+
+  const removeBackgroundLocal = () => {
+    if (!fc.current || !sel || sel.type !== "image") return;
+    if (!rmbgWorker.current) {
+      alert("Worker não disponível. Tente recarregar a página.");
+      return;
+    }
+    setRemovingBg(true);
+    setRmbgProgress("Preparando imagem...");
+    const fabric = (window as any).fabric;
+
+    // Rasterize current image to pixel data
+    const origW = Math.round(sel.width  * (sel.scaleX || 1));
+    const origH = Math.round(sel.height * (sel.scaleY || 1));
+    const MAX = 1024;
+    const ratio = Math.min(MAX / origW, MAX / origH, 1);
+    const pw = Math.round(origW * ratio);
+    const ph = Math.round(origH * ratio);
+
+    const tmpCanvas = document.createElement("canvas");
+    tmpCanvas.width = pw; tmpCanvas.height = ph;
+    const ctx = tmpCanvas.getContext("2d")!;
+    const imgEl = (sel as any)._element as HTMLImageElement;
+    ctx.drawImage(imgEl, 0, 0, pw, ph);
+    const pixelData = ctx.getImageData(0, 0, pw, ph);
+
+    const left = sel.left;
+    const top  = sel.top;
+    const angle = sel.angle || 0;
+    const uid  = sel.__uid;
+    const scaleX = sel.scaleX || 1;
+    const scaleY = sel.scaleY || 1;
+
+    const worker = rmbgWorker.current;
+
+    const handler = (e: MessageEvent) => {
+      const { type, message, imageData, width, height } = e.data;
+      if (type === "progress") { setRmbgProgress(message); return; }
+      if (type === "error") {
+        setRemovingBg(false); setRmbgProgress("");
+        alert("Erro: " + message);
+        worker.removeEventListener("message", handler);
+        return;
+      }
+      if (type === "result") {
+        worker.removeEventListener("message", handler);
+        // Build PNG from result pixels
+        const outCanvas = document.createElement("canvas");
+        outCanvas.width = width; outCanvas.height = height;
+        const outCtx = outCanvas.getContext("2d")!;
+        const outImgData = new ImageData(new Uint8ClampedArray(imageData), width, height);
+        outCtx.putImageData(outImgData, 0, 0);
+        const dataURL = outCanvas.toDataURL("image/png");
+        fc.current.remove(sel);
+        fabric.Image.fromURL(dataURL, (img: any) => {
+          const scaleToW = (origW / img.width) * (scaleX);
+          img.set({ left, top, angle, scaleX: scaleToW, scaleY: scaleToW, strokeUniform: true });
+          img.__uid = uid;
+          fc.current.add(img);
+          fc.current.setActiveObject(img);
+          syncSel(img);
+          fc.current.requestRenderAll();
+          setRemovingBg(false);
+          setRmbgProgress("");
+        });
+      }
+    };
+
+    worker.addEventListener("message", handler);
+    worker.postMessage({ type: "removebg", imageData: pixelData.data.buffer, width: pw, height: ph }, [pixelData.data.buffer]);
+  };
+
+  const removeBackground = async () => {
+    if (!fc.current || !sel || sel.type !== "image") return;
+    const apiKey = prompt("Cole sua chave da API do remove.bg (gratuito em remove.bg/dashboard):");
+    if (!apiKey) return;
+    setRemovingBg(true);
+    try {
+      const fabric = (window as any).fabric;
+      // Get image as blob
+      const dataUrl = sel.toDataURL({ format: "png", multiplier: 1 / (sel.scaleX || 1) });
+      const res = await fetch(dataUrl);
+      const blob = await res.blob();
+      // Call remove.bg API
+      const formData = new FormData();
+      formData.append("image_file", blob, "image.png");
+      formData.append("size", "auto");
+      const apiRes = await fetch("https://api.remove.bg/v1.0/removebg", {
+        method: "POST",
+        headers: { "X-Api-Key": apiKey },
+        body: formData,
+      });
+      if (!apiRes.ok) {
+        const err = await apiRes.json().catch(() => ({}));
+        alert("Erro: " + (err?.errors?.[0]?.title || apiRes.statusText));
+        return;
+      }
+      const resultBlob = await apiRes.blob();
+      const url = URL.createObjectURL(resultBlob);
+      const left = sel.left;
+      const top = sel.top;
+      const scaleX = sel.scaleX || 1;
+      const scaleY = sel.scaleY || 1;
+      const angle = sel.angle || 0;
+      const uid = sel.__uid;
+      fc.current.remove(sel);
+      fabric.Image.fromURL(url, (img: any) => {
+        img.set({ left, top, scaleX, scaleY, angle, strokeUniform: true });
+        img.__uid = uid;
+        fc.current.add(img);
+        fc.current.setActiveObject(img);
+        syncSel(img);
+        fc.current.requestRenderAll();
+        URL.revokeObjectURL(url);
+      });
+    } catch (err) {
+      alert("Erro ao remover fundo: " + String(err));
+    } finally {
+      setRemovingBg(false);
+    }
+  };
+
   const deleteSelected = () => {
     if (!fc.current || !sel) return;
     fc.current.remove(sel); syncSel(null);
@@ -1167,6 +1296,21 @@ function EditorInner() {
               {/* Saturation — images only */}
               {sel.type === "image" && (
                 <>
+                  <Sec title="Imagem" />
+                  <button
+                    onClick={removeBackgroundLocal}
+                    disabled={removingBg}
+                    className="w-full py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition text-xs disabled:opacity-50 font-medium"
+                  >
+                    {removingBg ? rmbgProgress || "Processando..." : "✂ Remover fundo (local)"}
+                  </button>
+                  <button
+                    onClick={removeBackground}
+                    disabled={removingBg}
+                    className="w-full py-2 border border-gray-200 text-gray-500 rounded-lg hover:bg-gray-50 transition text-xs disabled:opacity-50"
+                  >
+                    ✂ Remover fundo (remove.bg)
+                  </button>
                   <Sec title="Saturação" />
                   <SliderRow label="" value={Math.round(selSaturation * 100)} min={-100} max={100} unit="%" onChange={v => updateSaturation(v / 100)} />
                   <div className="flex justify-between text-gray-300 mt-0.5" style={{fontSize:9}}><span>P&amp;B</span><span>Normal</span><span>Vivo</span></div>
