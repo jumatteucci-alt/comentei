@@ -164,6 +164,7 @@ function EditorInner() {
   const historyRef = useRef<{ undo: string[]; redo: string[] }>({ undo: [], redo: [] });
   const savingHistory = useRef(false);
   const blurOriginMap = useRef<Map<string, string>>(new Map()); // uid → JSON string of original
+  const blurValueMap  = useRef<Map<string, number>>(new Map()); // uid → current blur value
 
   const [site, setSite] = useState<Site | null>(null);
   const [fabricLoaded, setFabricLoaded] = useState(false);
@@ -245,9 +246,9 @@ function EditorInner() {
     const sh = obj.shadow;
     setSelShadow(!!sh);
     if (sh) { setSelShadowColor(sh.color||"rgba(0,0,0,0.5)"); setSelShadowBlur(sh.blur||10); setSelShadowX(sh.offsetX||5); setSelShadowY(sh.offsetY||5); }
-    // Blur filter
-    const blurFilter = (obj.filters||[]).find((f: any) => f.type === "Blur");
-    setSelBlur(blurFilter ? Math.round((blurFilter.blur||0)*100) : 0);
+    // Blur — read from our own map (native CSS blur not stored in fabric filters)
+    const uid = obj.__uid;
+    setSelBlur(uid && blurValueMap.current.has(uid) ? blurValueMap.current.get(uid)! : 0);
     // Gradient fill
     const fill = obj.fill;
     if (fill && fill.colorStops) {
@@ -404,13 +405,17 @@ function EditorInner() {
     const fabric = (window as any).fabric;
     const uid = sel.__uid;
 
+    // Track value so syncSel can read it back
+    if (v > 0) blurValueMap.current.set(uid, v);
+    else blurValueMap.current.delete(uid);
+
     const left   = sel.left;
     const top    = sel.top;
     const angle  = sel.angle  || 0;
     const scaleX = sel.scaleX || 1;
     const scaleY = sel.scaleY || 1;
 
-    // ── Real uploaded image: use fabric blur filter directly ──
+    // ── Real uploaded image: fabric filter works fine ──
     if (sel.type === "image" && !blurOriginMap.current.has(uid)) {
       const filters = (sel.filters || []).filter((f: any) => f.type !== "Blur");
       if (v > 0) filters.push(new fabric.Image.filters.Blur({ blur: v / 100 }));
@@ -427,94 +432,79 @@ function EditorInner() {
       blurOriginMap.current.delete(uid);
       fc.current.remove(sel);
       fabric.util.enlivenObjects([JSON.parse(json)], (objs: any[]) => {
-        const original = objs[0];
-        original.set({ left, top, angle, scaleX, scaleY });
-        original.__uid = uid;
-        fc.current.add(original);
-        fc.current.setActiveObject(original);
-        syncSel(original);
+        const orig = objs[0];
+        orig.set({ left, top, angle, scaleX, scaleY });
+        orig.__uid = uid;
+        fc.current.add(orig);
+        fc.current.setActiveObject(orig);
+        setSel(orig);
         fc.current.requestRenderAll();
       });
       return;
     }
 
-    // ── Already rasterized with blur: update via re-rasterize from JSON ──
-    // ── OR first time blur on shape/text ──
-    const doRasterize = (sourceJson: string) => {
-      fabric.util.enlivenObjects([JSON.parse(sourceJson)], (objs: any[]) => {
-        const sourceObj = objs[0];
-
-        // Get rendered size at display scale
-        const br = sel.type === "image" ? sel.getBoundingRect() : (() => {
-          // temporarily render source to get size
-          sourceObj.set({ left: 0, top: 0, scaleX: 1, scaleY: 1, angle: 0 });
-          const w = sourceObj.width  * (sourceObj.scaleX || 1) + 20;
-          const h = sourceObj.height * (sourceObj.scaleY || 1) + 20;
-          return { width: w, height: h };
-        })();
-
-        const pad = v > 0 ? Math.round(v * 1.5) : 0;
-        const cw = Math.min(Math.ceil(br.width)  + pad * 2, 2048);
-        const ch = Math.min(Math.ceil(br.height) + pad * 2, 2048);
-
-        // Draw on native canvas with CSS blur
-        const tempEl = document.createElement("canvas");
-        tempEl.width  = cw;
-        tempEl.height = ch;
-        const ctx = tempEl.getContext("2d")!;
-
-        // Render source object to a tiny fabric canvas, then draw with blur
-        const miniEl = document.createElement("canvas");
-        miniEl.width  = cw;
-        miniEl.height = ch;
-        const miniCanvas = new fabric.StaticCanvas(miniEl, { width: cw, height: ch, enableRetinaScaling: false });
-        sourceObj.set({ left: cw / 2, top: ch / 2, originX: "center", originY: "center", angle: 0, scaleX: scaleX, scaleY: scaleY });
-        miniCanvas.add(sourceObj);
-        miniCanvas.renderAll();
-
-        // Apply blur using native 2D filter
-        if (v > 0) {
-          const blurPx = Math.round(v * 0.3);
-          ctx.filter = `blur(${blurPx}px)`;
-        }
-        ctx.drawImage(miniEl, 0, 0);
-        miniCanvas.dispose();
-
-        const dataURL = tempEl.toDataURL("image/png");
-
-        if (sel.type !== "image") fc.current.remove(sel);
-        else fc.current.remove(sel);
-
-        fabric.Image.fromURL(dataURL, (img: any) => {
-          img.set({
-            left,
-            top,
-            angle,
-            scaleX: 1,
-            scaleY: 1,
-            originX: "left",
-            originY: "top",
-            strokeUniform: true,
-          });
-          img.__uid = uid;
-          fc.current.add(img);
-          fc.current.setActiveObject(img);
-          syncSel(img);
-          fc.current.requestRenderAll();
-        });
-      });
-    };
-
-    if (sel.type === "image" && blurOriginMap.current.has(uid)) {
-      // Re-rasterize from original JSON
-      doRasterize(blurOriginMap.current.get(uid)!);
-      return;
+    // ── Save JSON on first blur ──
+    if (!blurOriginMap.current.has(uid)) {
+      blurOriginMap.current.set(uid, JSON.stringify(sel.toObject()));
     }
 
-    // First time: save JSON and rasterize
-    const json = JSON.stringify(sel.toObject());
-    blurOriginMap.current.set(uid, json);
-    doRasterize(json);
+    // Remove current from canvas (whether shape or previously rasterized image)
+    fc.current.remove(sel);
+
+    // Enliven source from saved JSON
+    const sourceJson = blurOriginMap.current.get(uid)!;
+    fabric.util.enlivenObjects([JSON.parse(sourceJson)], (objs: any[]) => {
+      const sourceObj = objs[0];
+
+      // Measure source at scale
+      const srcW = (sourceObj.width  || 100) * scaleX;
+      const srcH = (sourceObj.height || 100) * scaleY;
+      const blurPx = Math.max(1, Math.round(v * 0.3));
+      const pad = blurPx * 4; // enough room for blur to spread
+
+      const cw = Math.min(Math.ceil(srcW) + pad * 2, 1800);
+      const ch = Math.min(Math.ceil(srcH) + pad * 2, 1800);
+
+      // Render into mini fabric canvas
+      const miniEl = document.createElement("canvas");
+      miniEl.width = cw; miniEl.height = ch;
+      const miniCanvas = new fabric.StaticCanvas(miniEl, {
+        width: cw, height: ch, enableRetinaScaling: false,
+      });
+      sourceObj.set({
+        left: cw / 2, top: ch / 2,
+        originX: "center", originY: "center",
+        angle: 0, scaleX, scaleY,
+      });
+      miniCanvas.add(sourceObj);
+      miniCanvas.renderAll();
+
+      // Apply native CSS blur onto a second canvas
+      const outEl = document.createElement("canvas");
+      outEl.width = cw; outEl.height = ch;
+      const ctx = outEl.getContext("2d")!;
+      ctx.filter = `blur(${blurPx}px)`;
+      ctx.drawImage(miniEl, 0, 0);
+      miniCanvas.dispose();
+
+      const dataURL = outEl.toDataURL("image/png");
+
+      fabric.Image.fromURL(dataURL, (img: any) => {
+        img.set({
+          left: left - pad,
+          top:  top  - pad,
+          angle,
+          scaleX: 1, scaleY: 1,
+          originX: "left", originY: "top",
+          strokeUniform: true,
+        });
+        img.__uid = uid;
+        fc.current.add(img);
+        fc.current.setActiveObject(img);
+        setSel(img);
+        fc.current.requestRenderAll();
+      });
+    });
   };
 
   const toggleLock = (uid: string) => {
