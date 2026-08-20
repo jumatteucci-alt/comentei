@@ -50,6 +50,9 @@ function EditorInner() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<any>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const clipboardRef = useRef<any>(null);
+  const historyRef = useRef<{ undo: string[]; redo: string[] }>({ undo: [], redo: [] });
+  const savingHistory = useRef(false);
 
   const [site, setSite] = useState<Site | null>(null);
   const [fabricLoaded, setFabricLoaded] = useState(false);
@@ -108,16 +111,131 @@ function EditorInner() {
     fc.on("selection:created", onSel);
     fc.on("selection:updated", onSel);
     fc.on("selection:cleared", () => setSelectedObj(null));
-    fc.on("object:added", () => refreshLayers(fc));
-    fc.on("object:removed", () => refreshLayers(fc));
-    fc.on("object:modified", () => refreshLayers(fc));
+    // History helpers
+    const saveState = () => {
+      if (savingHistory.current) return;
+      historyRef.current.undo.push(JSON.stringify(fc.toJSON()));
+      historyRef.current.redo = [];
+      if (historyRef.current.undo.length > 50) historyRef.current.undo.shift();
+    };
+    const restoreState = (json: string) => {
+      savingHistory.current = true;
+      fc.loadFromJSON(JSON.parse(json), () => {
+        fc.renderAll();
+        refreshLayers(fc);
+        savingHistory.current = false;
+      });
+    };
 
-    // Delete key handler
+    fc.on("object:added", () => { saveState(); refreshLayers(fc); });
+    fc.on("object:removed", () => { refreshLayers(fc); });
+    fc.on("object:modified", () => { saveState(); refreshLayers(fc); });
+
+    // Full keyboard shortcuts
     const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.key === "Delete" || e.key === "Backspace") && document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
-        const obj = fc.getActiveObject();
-        if (obj && obj.type !== "i-text") { fc.remove(obj); setSelectedObj(null); }
+      const tag = (document.activeElement as HTMLElement)?.tagName;
+      const isInput = tag === "INPUT" || tag === "TEXTAREA";
+      const ctrl = e.ctrlKey || e.metaKey;
+      const obj = fc.getActiveObject();
+
+      // Delete / Backspace — remove selected (not while editing text)
+      if ((e.key === "Delete" || e.key === "Backspace") && !isInput) {
+        if (obj && obj.type !== "i-text") { saveState(); fc.remove(obj); setSelectedObj(null); }
+        return;
       }
+      if (isInput) return; // Don't intercept ctrl shortcuts while in a text field
+
+      if (ctrl) {
+        switch (e.key.toLowerCase()) {
+          case "c": // Copy
+            if (!obj) return;
+            e.preventDefault();
+            obj.clone((cloned: any) => { clipboardRef.current = cloned; });
+            break;
+          case "v": // Paste
+            e.preventDefault();
+            if (!clipboardRef.current) return;
+            clipboardRef.current.clone((cloned: any) => {
+              cloned.set({ left: cloned.left + 20, top: cloned.top + 20, evented: true });
+              if (cloned.type === "activeSelection") {
+                cloned.canvas = fc;
+                cloned.forEachObject((o: any) => fc.add(o));
+                cloned.setCoords();
+              } else {
+                fc.add(cloned);
+              }
+              clipboardRef.current.top += 20;
+              clipboardRef.current.left += 20;
+              fc.setActiveObject(cloned);
+              fc.requestRenderAll();
+            });
+            break;
+          case "d": // Duplicate
+            e.preventDefault();
+            if (!obj) return;
+            obj.clone((cloned: any) => {
+              cloned.set({ left: obj.left + 20, top: obj.top + 20 });
+              fc.add(cloned);
+              fc.setActiveObject(cloned);
+              fc.requestRenderAll();
+            });
+            break;
+          case "z": // Undo
+            e.preventDefault();
+            if (e.shiftKey) { // Ctrl+Shift+Z = Redo
+              const next = historyRef.current.redo.pop();
+              if (!next) return;
+              historyRef.current.undo.push(JSON.stringify(fc.toJSON()));
+              restoreState(next);
+            } else { // Ctrl+Z = Undo
+              const prev = historyRef.current.undo.pop();
+              if (!prev) return;
+              historyRef.current.redo.push(JSON.stringify(fc.toJSON()));
+              restoreState(prev);
+            }
+            break;
+          case "y": // Redo
+            e.preventDefault();
+            const next = historyRef.current.redo.pop();
+            if (!next) return;
+            historyRef.current.undo.push(JSON.stringify(fc.toJSON()));
+            restoreState(next);
+            break;
+          case "a": // Select all
+            e.preventDefault();
+            fc.discardActiveObject();
+            const sel = new (window as any).fabric.ActiveSelection(fc.getObjects(), { canvas: fc });
+            fc.setActiveObject(sel);
+            fc.requestRenderAll();
+            break;
+          case "g": // Group
+            e.preventDefault();
+            if (obj?.type === "activeSelection") {
+              const group = obj.toGroup();
+              fc.setActiveObject(group);
+              fc.requestRenderAll();
+            }
+            break;
+        }
+        // Arrow nudge with Ctrl = 10px
+        return;
+      }
+
+      // Arrow keys — nudge selected object
+      if (obj && ["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key)) {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;
+        if (e.key === "ArrowLeft")  obj.set("left", obj.left - step);
+        if (e.key === "ArrowRight") obj.set("left", obj.left + step);
+        if (e.key === "ArrowUp")    obj.set("top",  obj.top  - step);
+        if (e.key === "ArrowDown")  obj.set("top",  obj.top  + step);
+        obj.setCoords();
+        fc.requestRenderAll();
+        return;
+      }
+
+      // Escape — deselect
+      if (e.key === "Escape") { fc.discardActiveObject(); fc.requestRenderAll(); }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => { fc.dispose(); fabricRef.current = null; window.removeEventListener("keydown", onKeyDown); };
@@ -403,30 +521,72 @@ function EditorInner() {
           </div>
         </div>
 
-        {/* Right panel — layers */}
+        {/* Right panel — layers with drag-and-drop */}
         <div className="w-48 bg-white border-l border-gray-200 flex flex-col flex-shrink-0">
           <div className="px-3 py-3 border-b border-gray-100">
             <p className="text-xs font-medium text-gray-500">Camadas</p>
+            <p className="text-xs text-gray-400 mt-0.5">Arraste para reordenar</p>
           </div>
           <div className="flex-1 overflow-y-auto">
             {layers.length === 0 ? (
               <p className="text-xs text-gray-400 p-3">Nenhum elemento ainda.</p>
             ) : (
               <div className="flex flex-col divide-y divide-gray-100">
-                {layers.map(layer => {
+                {layers.map((layer, index) => {
                   const isActive = selectedObj?.__uid === layer.id;
                   return (
-                    <button key={layer.id} onClick={() => selectLayerObj(layer.id)}
-                      className={`text-left px-3 py-2.5 text-xs transition ${isActive ? "bg-indigo-50 text-indigo-700 font-medium" : "text-gray-600 hover:bg-gray-50"}`}>
-                      {layer.label}
-                    </button>
+                    <div
+                      key={layer.id}
+                      draggable
+                      onDragStart={e => { e.dataTransfer.setData("layerIndex", String(index)); e.dataTransfer.effectAllowed = "move"; }}
+                      onDragOver={e => e.preventDefault()}
+                      onDrop={e => {
+                        e.preventDefault();
+                        const fromIndex = parseInt(e.dataTransfer.getData("layerIndex"));
+                        if (fromIndex === index || !fabricRef.current) return;
+                        const fc = fabricRef.current;
+                        const objs = fc.getObjects();
+                        // layers is reversed so index 0 = top = last in objs array
+                        const totalObjs = objs.length;
+                        const fromObjIndex = totalObjs - 1 - fromIndex;
+                        const toObjIndex   = totalObjs - 1 - index;
+                        const moving = objs[fromObjIndex];
+                        // Remove and reinsert at target position
+                        fc.remove(moving);
+                        const newObjs = fc.getObjects();
+                        const insertAt = toObjIndex > fromObjIndex ? toObjIndex - 1 : toObjIndex;
+                        newObjs.splice(insertAt, 0, moving);
+                        fc._objects = newObjs;
+                        fc.requestRenderAll();
+                        refreshLayers(fc);
+                      }}
+                      onClick={() => selectLayerObj(layer.id)}
+                      className={`flex items-center gap-2 px-3 py-2.5 text-xs cursor-grab active:cursor-grabbing transition select-none ${isActive ? "bg-indigo-50 text-indigo-700 font-medium" : "text-gray-600 hover:bg-gray-50"}`}>
+                      <svg width="10" height="14" viewBox="0 0 10 14" fill="none" className="flex-shrink-0 text-gray-300">
+                        <circle cx="3" cy="3" r="1.2" fill="currentColor"/><circle cx="7" cy="3" r="1.2" fill="currentColor"/>
+                        <circle cx="3" cy="7" r="1.2" fill="currentColor"/><circle cx="7" cy="7" r="1.2" fill="currentColor"/>
+                        <circle cx="3" cy="11" r="1.2" fill="currentColor"/><circle cx="7" cy="11" r="1.2" fill="currentColor"/>
+                      </svg>
+                      <span className="truncate">{layer.label}</span>
+                    </div>
                   );
                 })}
               </div>
             )}
           </div>
-          <div className="p-2 border-t border-gray-100 text-xs text-gray-400 text-center">
-            Do topo ao fundo
+          <div className="p-3 border-t border-gray-100 flex flex-col gap-1">
+            <p className="text-xs text-gray-400 text-center mb-1">Topo → Fundo</p>
+            <div className="text-xs text-gray-400 space-y-0.5">
+              <p>Ctrl+C  Copiar</p>
+              <p>Ctrl+V  Colar</p>
+              <p>Ctrl+D  Duplicar</p>
+              <p>Ctrl+Z  Desfazer</p>
+              <p>Ctrl+Y  Refazer</p>
+              <p>Ctrl+A  Selec. tudo</p>
+              <p>Del     Remover</p>
+              <p>↑↓←→   Mover 1px</p>
+              <p>Shift+↑  Mover 10px</p>
+            </div>
           </div>
         </div>
       </div>
