@@ -114,22 +114,25 @@ function EditorInner() {
     // History helpers
     const saveState = () => {
       if (savingHistory.current) return;
-      historyRef.current.undo.push(JSON.stringify(fc.toJSON()));
-      historyRef.current.redo = [];
-      if (historyRef.current.undo.length > 50) historyRef.current.undo.shift();
+      try {
+        historyRef.current.undo.push(JSON.stringify(fc.toJSON()));
+        historyRef.current.redo = [];
+        if (historyRef.current.undo.length > 50) historyRef.current.undo.shift();
+      } catch {}
     };
     const restoreState = (json: string) => {
       savingHistory.current = true;
-      fc.loadFromJSON(JSON.parse(json), () => {
-        fc.renderAll();
-        refreshLayers(fc);
-        savingHistory.current = false;
-      });
+      try {
+        fc.loadFromJSON(JSON.parse(json), () => {
+          try { fc.renderAll(); refreshLayers(fc); } catch {}
+          savingHistory.current = false;
+        });
+      } catch { savingHistory.current = false; }
     };
 
-    fc.on("object:added", () => { saveState(); refreshLayers(fc); });
-    fc.on("object:removed", () => { refreshLayers(fc); });
-    fc.on("object:modified", () => { saveState(); refreshLayers(fc); });
+    fc.on("object:added",    () => { if (!savingHistory.current) { saveState(); refreshLayers(fc); } });
+    fc.on("object:removed",  () => { if (!savingHistory.current) refreshLayers(fc); });
+    fc.on("object:modified", () => { if (!savingHistory.current) { saveState(); refreshLayers(fc); } });
 
     // Full keyboard shortcuts
     const onKeyDown = (e: KeyboardEvent) => {
@@ -545,18 +548,18 @@ function EditorInner() {
                         const fromIndex = parseInt(e.dataTransfer.getData("layerIndex"));
                         if (fromIndex === index || !fabricRef.current) return;
                         const fc = fabricRef.current;
-                        const objs = fc.getObjects();
-                        // layers is reversed so index 0 = top = last in objs array
+                        const objs = [...fc.getObjects()];
                         const totalObjs = objs.length;
+                        // layers is reversed: index 0 = top = last in objs
                         const fromObjIndex = totalObjs - 1 - fromIndex;
                         const toObjIndex   = totalObjs - 1 - index;
-                        const moving = objs[fromObjIndex];
-                        // Remove and reinsert at target position
-                        fc.remove(moving);
-                        const newObjs = fc.getObjects();
-                        const insertAt = toObjIndex > fromObjIndex ? toObjIndex - 1 : toObjIndex;
-                        newObjs.splice(insertAt, 0, moving);
-                        fc._objects = newObjs;
+                        const [moving] = objs.splice(fromObjIndex, 1);
+                        objs.splice(toObjIndex, 0, moving);
+                        // Rebuild z-order using fabric API
+                        objs.forEach((obj: any, i: number) => {
+                          fc.remove(obj);
+                          fc.insertAt(obj, i, false);
+                        });
                         fc.requestRenderAll();
                         refreshLayers(fc);
                       }}
