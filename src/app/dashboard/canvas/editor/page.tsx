@@ -176,6 +176,8 @@ function EditorInner() {
 
   const [site, setSite] = useState<Site | null>(null);
   const [fabricLoaded, setFabricLoaded] = useState(false);
+  const [openTypeLoaded, setOpenTypeLoaded] = useState(false);
+  const [converting, setConverting] = useState(false);
   const [artName, setArtName] = useState("Minha arte");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -227,7 +229,16 @@ function EditorInner() {
     script.src = "https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js";
     script.onload = () => setFabricLoaded(true);
     document.head.appendChild(script);
-    return () => { try { document.head.removeChild(script); } catch {} };
+
+    const otScript = document.createElement("script");
+    otScript.src = "https://cdnjs.cloudflare.com/ajax/libs/opentype.js/1.3.4/opentype.min.js";
+    otScript.onload = () => setOpenTypeLoaded(true);
+    document.head.appendChild(otScript);
+
+    return () => {
+      try { document.head.removeChild(script); } catch {}
+      try { document.head.removeChild(otScript); } catch {}
+    };
   }, []);
 
   const refreshLayers = (canvas: any) => {
@@ -735,6 +746,87 @@ function EditorInner() {
     r.readAsDataURL(file); e.target.value = "";
   };
 
+  const convertTextToPath = async () => {
+    if (!fc.current || !sel || !isText) return;
+    const opentype = (window as any).opentype;
+    if (!opentype) { alert("opentype.js ainda carregando, tente novamente."); return; }
+    setConverting(true);
+    try {
+      const fabric = (window as any).fabric;
+      const fontFamily = sel.fontFamily || "Arial";
+      const fontSize   = sel.fontSize   || 48;
+      const fillColor  = typeof sel.fill === "string" ? sel.fill : "#000000";
+      const text       = sel.text || "";
+      const objLeft    = sel.left;
+      const objTop     = sel.top;
+      const uid        = sel.__uid;
+
+      // Google Fonts CDN URL for opentype download
+      const FONT_URLS: Record<string, string> = {
+        "Montserrat":       "https://fonts.gstatic.com/s/montserrat/v29/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCtr6Hw5aXo.woff",
+        "Playfair Display": "https://fonts.gstatic.com/s/playfairdisplay/v36/nuFiD-vYSZviVYUb_rj3ij__anPXDTnCjmHKM4nYO7KN_qiTbtA.woff",
+        "Roboto":           "https://fonts.gstatic.com/s/roboto/v32/KFOmCnqEu92Fr1Mu4mxKKTU1Kg.woff",
+        "Oswald":           "https://fonts.gstatic.com/s/oswald/v53/TK3_WkUHHAIjg75cFRf3bXL8LICs13NvgUFoZAaRliE.woff",
+        "Lato":             "https://fonts.gstatic.com/s/lato/v24/S6uyw4BMUTPHjx4wXiWtFCc.woff",
+        "Raleway":          "https://fonts.gstatic.com/s/raleway/v34/1Ptxg8zYS_SKggPN4iEgvnHyvveLxVsEpYCP.woff",
+        "Pacifico":         "https://fonts.gstatic.com/s/pacifico/v22/FwZY7-Qmy14u9lezJ96A4sijpFu_.woff",
+        "Dancing Script":   "https://fonts.gstatic.com/s/dancingscript/v25/If2cXTr6YS-zF4S-kcSWSVi_sxjsohD9F50Ruu7BMSo3ROp6.woff",
+        "Bebas Neue":       "https://fonts.gstatic.com/s/bebasneue/v14/JTUSjIg69CK48gW7PXoo9WlhyyTh89Y.woff",
+      };
+
+      // Load font via opentype — try Google Fonts URL, fall back to system Arial
+      const loadFont = async (family: string): Promise<any> => {
+        const url = FONT_URLS[family];
+        if (url) {
+          try {
+            return await opentype.load(url);
+          } catch {}
+        }
+        // Fallback: rasterize as image path (can't get system font binary)
+        return null;
+      };
+
+      const font = await loadFont(fontFamily);
+
+      if (!font) {
+        // Fallback: convert via SVG rasterization
+        const svgData = sel.toSVG();
+        const path = new fabric.Path(svgData, {
+          left: objLeft, top: objTop,
+          fill: fillColor, strokeUniform: true,
+        });
+        path.__uid = uid;
+        fc.current.remove(sel);
+        fc.current.add(path);
+        fc.current.setActiveObject(path);
+        syncSel(path);
+        fc.current.requestRenderAll();
+        return;
+      }
+
+      // Generate SVG path from opentype
+      const svgPath = font.getPath(text, 0, 0, fontSize);
+      const pathData = svgPath.toPathData(2);
+
+      const path = new fabric.Path(pathData, {
+        left: objLeft,
+        top:  objTop,
+        fill: fillColor,
+        strokeUniform: true,
+        scaleX: sel.scaleX || 1,
+        scaleY: sel.scaleY || 1,
+      });
+      path.__uid = uid;
+      fc.current.remove(sel);
+      fc.current.add(path);
+      fc.current.setActiveObject(path);
+      syncSel(path);
+      fc.current.requestRenderAll();
+    } finally {
+      setConverting(false);
+    }
+  };
+
   const deleteSelected = () => {
     if (!fc.current || !sel) return;
     fc.current.remove(sel); syncSel(null);
@@ -987,6 +1079,14 @@ function EditorInner() {
                       </div>
                     </>
                   )}
+                  <button
+                    onClick={convertTextToPath}
+                    disabled={converting || !openTypeLoaded}
+                    className="w-full py-2 border border-indigo-200 text-indigo-600 rounded-lg hover:bg-indigo-50 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Converte o texto em vetor editável como forma"
+                  >
+                    {converting ? "Convertendo..." : "⟳ Converter em vetor"}
+                  </button>
                 </>
               )}
 
