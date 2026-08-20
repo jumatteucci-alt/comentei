@@ -183,20 +183,25 @@ function EditorInner() {
   const [activeTool, setActiveTool] = useState<"select"|"pen">("select");
   const activeToolRef = useRef<"select"|"pen">("select");
 
-  // Pen tool state & refs
+  // Pen tool state
   const penPoints = useRef<{x:number;y:number}[]>([]);
   const penLines = useRef<any[]>([]);
   const penDots = useRef<any[]>([]);
-  const penCurveHandles = useRef<{x:number;y:number}[][]>([]); // [cp1, cp2]
+  const penCurveHandles = useRef<{x:number;y:number}[][]>([]);
   const isPenDragging = useRef(false);
   const activeHandleLine = useRef<any>(null);
   const finalizePenRef = useRef<(close:boolean)=>void>(() => {});
   const cancelPenRef = useRef<()=>void>(() => {});
 
-  // Path node editing state & refs
+  // Node editing state
   const [isEditingNodes, setIsEditingNodes] = useState(false);
-  const editingPathRef = useRef<any>(null);
-  const editControlPoints = useRef<any[]>([]);
+  const editingData = useRef<{
+    originalPathObj: any;
+    commands: any[];
+    helpers: any[];
+    handleLines: any[];
+    previewObj: any;
+  } | null>(null);
 
   // Selected object state
   const [sel, setSel] = useState<any>(null);
@@ -263,7 +268,7 @@ function EditorInner() {
 
   const refreshLayers = (canvas: any) => {
     try {
-      const objs = canvas.getObjects().filter((o: any) => !o.isControlHelper);
+      const objs = canvas.getObjects().filter((o: any) => !o.isControlHelper && !o.isEditPreview);
       setLayers([...objs].reverse().map((o: any) => ({
         id: o.__uid || (o.__uid = Math.random().toString(36).slice(2)),
         label: o.type === "i-text" ? `T "${(o.text||"").slice(0,12)}"` : o.type === "image" ? "Imagem" : o.type === "rect" ? "Retângulo" : o.type === "circle" ? "Círculo" : o.type === "triangle" ? "Triângulo" : o.type === "line" ? "Linha" : o.type === "path" ? "Vetor" : o.type,
@@ -273,7 +278,7 @@ function EditorInner() {
   };
 
   const syncSel = (obj: any) => {
-    if (!obj || obj.isControlHelper) { setSel(null); return; }
+    if (!obj || obj.isControlHelper || obj.isEditPreview) { setSel(null); return; }
     setSel(obj);
     setSelFill(getObjColor(obj));
     setSelOpacity(Math.round((obj.opacity ?? 1) * 100));
@@ -309,18 +314,44 @@ function EditorInner() {
 
   // Node editing handlers
   const exitEditNodes = () => {
-    if (!fc.current || !editingPathRef.current) return;
+    if (!fc.current || !editingData.current) return;
     const canvas = fc.current;
-    editControlPoints.current.forEach(c => canvas.remove(c));
-    editControlPoints.current = [];
-    if (editingPathRef.current) {
-      editingPathRef.current.selectable = true;
-      editingPathRef.current.evented = true;
-      canvas.setActiveObject(editingPathRef.current);
-    }
-    editingPathRef.current = null;
+    const fabric = (window as any).fabric;
+    const { originalPathObj, commands, helpers, handleLines, previewObj } = editingData.current;
+
+    helpers.forEach(h => canvas.remove(h));
+    handleLines.forEach(l => canvas.remove(l));
+    if (previewObj) canvas.remove(previewObj);
+
+    // Constrói SVG path final
+    let d = "";
+    commands.forEach(c => {
+      if (c.type === "M") d += `M ${c.x} ${c.y} `;
+      else if (c.type === "L") d += `L ${c.x} ${c.y} `;
+      else if (c.type === "C") d += `C ${c.cp1x} ${c.cp1y} ${c.cp2x} ${c.cp2y} ${c.x} ${c.y} `;
+      else if (c.type === "Z") d += `Z `;
+    });
+
+    const newPath = new fabric.Path(d.trim(), {
+      fill: originalPathObj.fill,
+      stroke: originalPathObj.stroke,
+      strokeWidth: originalPathObj.strokeWidth,
+      strokeUniform: originalPathObj.strokeUniform ?? true,
+      opacity: originalPathObj.opacity ?? 1,
+    });
+    newPath.__uid = originalPathObj.__uid;
+
+    const idx = canvas.getObjects().indexOf(originalPathObj);
+    canvas.remove(originalPathObj);
+    if (idx >= 0) canvas.insertAt(newPath, idx, false);
+    else canvas.add(newPath);
+
+    canvas.setActiveObject(newPath);
+    syncSel(newPath);
+    editingData.current = null;
     setIsEditingNodes(false);
     canvas.requestRenderAll();
+    refreshLayers(canvas);
   };
 
   const enterEditNodes = (pathObj: any) => {
@@ -328,102 +359,128 @@ function EditorInner() {
     const canvas = fc.current;
     const fabric = (window as any).fabric;
     setIsEditingNodes(true);
-    editingPathRef.current = pathObj;
 
     canvas.discardActiveObject();
+    pathObj.opacity = 0.3; // Deixa o original translúcido de fundo
     pathObj.selectable = false;
     pathObj.evented = false;
 
-    // Converte path original para coordenadas absolutas na tela
+    // Converte todos os comandos do Path para coordenadas absolutas de tela
     const matrix = pathObj.calcTransformMatrix();
-    const globalCommands: any[] = [];
+    const parsedPath = pathObj.path;
+    const commands: any[] = [];
 
-    pathObj.path.forEach((cmd: any[]) => {
+    // O Fabric centraliza os pontos internos em relação a pathOffset
+    const poX = pathObj.pathOffset ? pathObj.pathOffset.x : 0;
+    const poY = pathObj.pathOffset ? pathObj.pathOffset.y : 0;
+
+    parsedPath.forEach((cmd: any[]) => {
       const type = cmd[0];
       if (type === "M" || type === "L") {
-        const pt = fabric.util.transformPoint({ x: cmd[1], y: cmd[2] }, matrix);
-        globalCommands.push({ type, x: pt.x, y: pt.y });
+        const pt = fabric.util.transformPoint({ x: cmd[1] - poX, y: cmd[2] - poY }, matrix);
+        commands.push({ type, x: pt.x, y: pt.y });
       } else if (type === "C") {
-        const cp1 = fabric.util.transformPoint({ x: cmd[1], y: cmd[2] }, matrix);
-        const cp2 = fabric.util.transformPoint({ x: cmd[3], y: cmd[4] }, matrix);
-        const end = fabric.util.transformPoint({ x: cmd[5], y: cmd[6] }, matrix);
-        globalCommands.push({ type: "C", cp1x: cp1.x, cp1y: cp1.y, cp2x: cp2.x, cp2y: cp2.y, x: end.x, y: end.y });
+        const cp1 = fabric.util.transformPoint({ x: cmd[1] - poX, y: cmd[2] - poY }, matrix);
+        const cp2 = fabric.util.transformPoint({ x: cmd[3] - poX, y: cmd[4] - poY }, matrix);
+        const end = fabric.util.transformPoint({ x: cmd[5] - poX, y: cmd[6] - poY }, matrix);
+        commands.push({ type: "C", cp1x: cp1.x, cp1y: cp1.y, cp2x: cp2.x, cp2y: cp2.y, x: end.x, y: end.y });
       } else if (type === "Z" || type === "z") {
-        globalCommands.push({ type: "Z" });
+        commands.push({ type: "Z" });
       }
     });
 
-    const rebuildPath = () => {
+    const helpers: any[] = [];
+    const handleLines: any[] = [];
+    let previewObj: any = null;
+
+    const updatePreview = () => {
+      if (previewObj) canvas.remove(previewObj);
       let d = "";
-      globalCommands.forEach((c) => {
+      commands.forEach(c => {
         if (c.type === "M") d += `M ${c.x} ${c.y} `;
         else if (c.type === "L") d += `L ${c.x} ${c.y} `;
         else if (c.type === "C") d += `C ${c.cp1x} ${c.cp1y} ${c.cp2x} ${c.cp2y} ${c.x} ${c.y} `;
         else if (c.type === "Z") d += `Z `;
       });
-
-      const parsed = fabric.util.parsePath(d);
-      pathObj.set({
-        path: parsed,
-        left: 0,
-        top: 0,
-        scaleX: 1,
-        scaleY: 1,
-        angle: 0,
-        originX: "left",
-        originY: "top"
+      previewObj = new fabric.Path(d.trim(), {
+        fill: pathObj.fill,
+        stroke: pathObj.stroke,
+        strokeWidth: pathObj.strokeWidth,
+        strokeUniform: true,
+        selectable: false,
+        evented: false,
+        isEditPreview: true,
       });
-      if (pathObj._setPath) {
-        pathObj._setPath(parsed);
-      }
-      pathObj.setCoords();
+      canvas.add(previewObj);
+      canvas.sendToBack(previewObj);
+      if (editingData.current) editingData.current.previewObj = previewObj;
       canvas.requestRenderAll();
     };
 
-    const helpers: any[] = [];
-
-    globalCommands.forEach((cmd) => {
+    commands.forEach((cmd, idx) => {
       if (cmd.type === "M" || cmd.type === "L") {
         const node = new fabric.Circle({
-          left: cmd.x, top: cmd.y, radius: 6, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2,
+          left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2,
           originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true
         });
         node.on("moving", () => {
           cmd.x = node.left;
           cmd.y = node.top;
-          rebuildPath();
+          updatePreview();
         });
         helpers.push(node);
         canvas.add(node);
       } else if (cmd.type === "C") {
+        const prevCmd = commands[idx - 1];
+        const line1 = new fabric.Line([prevCmd ? prevCmd.x : cmd.cp1x, prevCmd ? prevCmd.y : cmd.cp1y, cmd.cp1x, cmd.cp1y], {
+          stroke: "#f87171", strokeWidth: 1, strokeDashArray: [2, 2], selectable: false, evented: false, isControlHelper: true
+        });
+        const line2 = new fabric.Line([cmd.x, cmd.y, cmd.cp2x, cmd.cp2y], {
+          stroke: "#f87171", strokeWidth: 1, strokeDashArray: [2, 2], selectable: false, evented: false, isControlHelper: true
+        });
+        handleLines.push(line1, line2);
+        canvas.add(line1);
+        canvas.add(line2);
+
         const nodeCp1 = new fabric.Circle({ left: cmd.cp1x, top: cmd.cp1y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
         const nodeCp2 = new fabric.Circle({ left: cmd.cp2x, top: cmd.cp2y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
-        const nodeEnd = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 6, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
+        const nodeEnd = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
 
         nodeCp1.on("moving", () => {
           cmd.cp1x = nodeCp1.left;
           cmd.cp1y = nodeCp1.top;
-          rebuildPath();
+          line1.set({ x2: nodeCp1.left, y2: nodeCp1.top });
+          updatePreview();
         });
         nodeCp2.on("moving", () => {
           cmd.cp2x = nodeCp2.left;
           cmd.cp2y = nodeCp2.top;
-          rebuildPath();
+          line2.set({ x2: nodeCp2.left, y2: nodeCp2.top });
+          updatePreview();
         });
         nodeEnd.on("moving", () => {
           cmd.x = nodeEnd.left;
           cmd.y = nodeEnd.top;
-          rebuildPath();
+          line2.set({ x1: nodeEnd.left, y1: nodeEnd.top });
+          updatePreview();
         });
 
         helpers.push(nodeCp1, nodeCp2, nodeEnd);
-        canvas.add(nodeCp1, nodeCp2, nodeEnd);
+        canvas.add(nodeCp1);
+        canvas.add(nodeCp2);
+        canvas.add(nodeEnd);
       }
     });
 
-    rebuildPath();
-    editControlPoints.current = helpers;
-    canvas.requestRenderAll();
+    editingData.current = {
+      originalPathObj: pathObj,
+      commands,
+      helpers,
+      handleLines,
+      previewObj: null,
+    };
+
+    updatePreview();
   };
 
   useEffect(() => {
@@ -503,7 +560,7 @@ function EditorInner() {
       }
     });
 
-    // ── Pen tool event logic with bezier curve handles ──
+    // ── Pen tool event logic ──
     canvas.on("mouse:down:before", (e: any) => {
       if (activeToolRef.current !== "pen") return;
       e.e.stopPropagation?.();
@@ -605,7 +662,7 @@ function EditorInner() {
       const obj = canvas.getActiveObject();
 
       if ((e.key === "Delete" || e.key === "Backspace") && !isInput) {
-        if (obj && !obj.lockMovementX && !obj.isControlHelper) {
+        if (obj && !obj.lockMovementX && !obj.isControlHelper && !obj.isEditPreview) {
           if (obj.type === "i-text" && obj.isEditing) return;
           saveState(); canvas.remove(obj); syncSel(null);
         }
@@ -633,7 +690,7 @@ function EditorInner() {
             else { const p = historyRef.current.undo.pop(); if (!p) return; historyRef.current.redo.push(JSON.stringify(canvas.toJSON())); restoreState(p); }
             break;
           case "y": e.preventDefault(); { const n = historyRef.current.redo.pop(); if (!n) return; historyRef.current.undo.push(JSON.stringify(canvas.toJSON())); restoreState(n); } break;
-          case "a": e.preventDefault(); { const all = new (window as any).fabric.ActiveSelection(canvas.getObjects().filter((o: any) => !o.isControlHelper), { canvas }); canvas.setActiveObject(all); canvas.requestRenderAll(); } break;
+          case "a": e.preventDefault(); { const all = new (window as any).fabric.ActiveSelection(canvas.getObjects().filter((o: any) => !o.isControlHelper && !o.isEditPreview), { canvas }); canvas.setActiveObject(all); canvas.requestRenderAll(); } break;
           case "g": e.preventDefault(); if (obj?.type === "activeSelection") { canvas.setActiveObject(obj.toGroup()); canvas.requestRenderAll(); } break;
         }
         return;
@@ -1374,7 +1431,7 @@ function EditorInner() {
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImg} />
           </label>
 
-          {/* Pen options when active */}
+          {/* Pen options */}
           {activeTool === "pen" && penPoints.current.length > 1 && (
             <div className="mt-2 flex flex-col gap-1 items-center">
               <button onClick={() => finalizePen(true)} title="Fechar forma (Enter)"
@@ -1410,7 +1467,7 @@ function EditorInner() {
           {isEditingNodes && (
             <div className="p-3 bg-indigo-50 border-b border-indigo-100 flex flex-col gap-2">
               <p className="font-semibold text-indigo-900">Modo Edição de Nós</p>
-              <p className="text-[11px] text-indigo-700">Arraste os pontos azuis (âncoras) ou vermelhos (alças de curva) na tela.</p>
+              <p className="text-[11px] text-indigo-700">Arraste os pontos azuis ou vermelhos para mudar curvas e vértices.</p>
               <button
                 onClick={exitEditNodes}
                 className="w-full py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 transition"
@@ -1632,7 +1689,7 @@ function EditorInner() {
                       const from = parseInt(e.dataTransfer.getData("li"));
                       if (from === index || !fc.current) return;
                       const canvas = fc.current;
-                      const objs = [...canvas.getObjects().filter((o: any) => !o.isControlHelper)];
+                      const objs = [...canvas.getObjects().filter((o: any) => !o.isControlHelper && !o.isEditPreview)];
                       const total = objs.length;
                       const [moving] = objs.splice(total-1-from, 1);
                       objs.splice(total-1-index, 0, moving);
