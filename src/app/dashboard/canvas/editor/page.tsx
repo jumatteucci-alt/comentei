@@ -963,55 +963,6 @@ function EditorInner() {
     worker.postMessage({ type: "removebg", imageData: pixelData.data.buffer, width: pw, height: ph }, [pixelData.data.buffer]);
   };
 
-  const removeBackground = async () => {
-    if (!fc.current || !sel || sel.type !== "image") return;
-    const apiKey = prompt("Cole sua chave da API do remove.bg (gratuito em remove.bg/dashboard):");
-    if (!apiKey) return;
-    setRemovingBg(true);
-    try {
-      const fabric = (window as any).fabric;
-      // Get image as blob
-      const dataUrl = sel.toDataURL({ format: "png", multiplier: 1 / (sel.scaleX || 1) });
-      const res = await fetch(dataUrl);
-      const blob = await res.blob();
-      // Call remove.bg API
-      const formData = new FormData();
-      formData.append("image_file", blob, "image.png");
-      formData.append("size", "auto");
-      const apiRes = await fetch("https://api.remove.bg/v1.0/removebg", {
-        method: "POST",
-        headers: { "X-Api-Key": apiKey },
-        body: formData,
-      });
-      if (!apiRes.ok) {
-        const err = await apiRes.json().catch(() => ({}));
-        alert("Erro: " + (err?.errors?.[0]?.title || apiRes.statusText));
-        return;
-      }
-      const resultBlob = await apiRes.blob();
-      const url = URL.createObjectURL(resultBlob);
-      const left = sel.left;
-      const top = sel.top;
-      const scaleX = sel.scaleX || 1;
-      const scaleY = sel.scaleY || 1;
-      const angle = sel.angle || 0;
-      const uid = sel.__uid;
-      fc.current.remove(sel);
-      fabric.Image.fromURL(url, (img: any) => {
-        img.set({ left, top, scaleX, scaleY, angle, strokeUniform: true });
-        img.__uid = uid;
-        fc.current.add(img);
-        fc.current.setActiveObject(img);
-        syncSel(img);
-        fc.current.requestRenderAll();
-        URL.revokeObjectURL(url);
-      });
-    } catch (err) {
-      alert("Erro ao remover fundo: " + String(err));
-    } finally {
-      setRemovingBg(false);
-    }
-  };
 
   const deleteSelected = () => {
     if (!fc.current || !sel) return;
@@ -1302,14 +1253,7 @@ function EditorInner() {
                     disabled={removingBg}
                     className="w-full py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition text-xs disabled:opacity-50 font-medium"
                   >
-                    {removingBg ? rmbgProgress || "Processando..." : "✂ Remover fundo (local)"}
-                  </button>
-                  <button
-                    onClick={removeBackground}
-                    disabled={removingBg}
-                    className="w-full py-2 border border-gray-200 text-gray-500 rounded-lg hover:bg-gray-50 transition text-xs disabled:opacity-50"
-                  >
-                    ✂ Remover fundo (remove.bg)
+                    {removingBg ? rmbgProgress || "Processando..." : "✂ Remover fundo"}
                   </button>
                   <Sec title="Saturação" />
                   <SliderRow label="" value={Math.round(selSaturation * 100)} min={-100} max={100} unit="%" onChange={v => updateSaturation(v / 100)} />
