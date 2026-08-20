@@ -199,6 +199,7 @@ function EditorInner() {
   const [selShadowX, setSelShadowX] = useState(5);
   const [selShadowY, setSelShadowY] = useState(5);
   const [selBlur, setSelBlur] = useState(0);
+  const [selSaturation, setSelSaturation] = useState(0);
   const [selFontSize, setSelFontSize] = useState(48);
   const [selFontFamily, setSelFontFamily] = useState("Montserrat");
   const [selBold, setSelBold] = useState(false);
@@ -278,6 +279,8 @@ function EditorInner() {
     // Blur — read from our own map (native CSS blur not stored in fabric filters)
     const uid = obj.__uid;
     setSelBlur(uid && blurValueMap.current.has(uid) ? blurValueMap.current.get(uid)! : 0);
+    const satFilter = (obj.filters||[]).find((f: any) => f.type === "Saturation");
+    setSelSaturation(satFilter ? (satFilter.saturation ?? 0) : 0);
     // Gradient fill
     const fill = obj.fill;
     if (fill && fill.colorStops) {
@@ -307,7 +310,17 @@ function EditorInner() {
     canvas.on("selection:created", (e: any) => syncSel(e.selected?.[0]));
     canvas.on("selection:updated", (e: any) => syncSel(e.selected?.[0]));
     canvas.on("selection:cleared", () => syncSel(null));
-    canvas.on("object:modified", (e: any) => { if (!savingHistory.current) { saveState(); refreshLayers(canvas); syncSel(e.target); } });
+    canvas.on("object:modified", (e: any) => {
+      if (!savingHistory.current) {
+        saveState();
+        refreshLayers(canvas);
+        // For text objects, object:scaled already handled syncSel with correct fontSize
+        const obj = e.target;
+        if (obj?.type !== "textbox" && obj?.type !== "i-text") {
+          syncSel(obj);
+        }
+      }
+    });
     canvas.on("object:added",    () => { if (!savingHistory.current) { saveState(); refreshLayers(canvas); } });
     canvas.on("object:removed",  () => { if (!savingHistory.current) refreshLayers(canvas); });
 
@@ -320,18 +333,25 @@ function EditorInner() {
     });
     canvas.on("object:scaled", (e: any) => {
       const obj = e.target;
-      if (!obj || (obj.type !== "textbox" && obj.type !== "i-text")) return;
-      const newFontSize = Math.round(obj.fontSize * obj.scaleY);
-      const newWidth = obj.type === "textbox" ? obj.width * obj.scaleX : obj.width;
-      obj.set({
-        fontSize: newFontSize,
-        width: newWidth,
-        scaleX: 1,
-        scaleY: 1,
-      });
-      if (obj.type === "textbox") setSelTextWidth(Math.round(newWidth / scale));
-      setSelFontSize(Math.round(newFontSize / scale));
-      canvas.requestRenderAll();
+      if (!obj) return;
+      // Bake font size for text
+      if (obj.type === "textbox" || obj.type === "i-text") {
+        const newFontSize = Math.round(obj.fontSize * obj.scaleY);
+        const newWidth = obj.type === "textbox" ? obj.width * obj.scaleX : obj.width;
+        obj.set({ fontSize: newFontSize, width: newWidth, scaleX: 1, scaleY: 1 });
+        canvas.requestRenderAll();
+        syncSel(obj);
+      }
+      // Keep border-radius proportional for rects
+      if (obj.type === "rect" && (obj.rx || obj.ry)) {
+        const newW = obj.width  * (obj.scaleX || 1);
+        const newH = obj.height * (obj.scaleY || 1);
+        const minScale = Math.min(obj.scaleX || 1, obj.scaleY || 1);
+        const newRx = (obj.rx || 0) * minScale;
+        obj.set({ width: newW, height: newH, rx: newRx, ry: newRx, scaleX: 1, scaleY: 1 });
+        canvas.requestRenderAll();
+        syncSel(obj);
+      }
     });
 
     const onKey = (e: KeyboardEvent) => {
@@ -647,15 +667,13 @@ function EditorInner() {
     const cw = canvas.getWidth() / zoom;
     const ch = canvas.getHeight() / zoom;
     sel.setCoords();
-    const br = sel.getBoundingRect(true); // true = use object coords, not viewport
-    const bw = br.width;
-    const bh = br.height;
-    if (dir === "left")    sel.set({ left: 0 });
-    if (dir === "hcenter") sel.set({ left: (cw - bw) / 2 });
-    if (dir === "right")   sel.set({ left: cw - bw });
-    if (dir === "top")     sel.set({ top: 0 });
-    if (dir === "vcenter") sel.set({ top: (ch - bh) / 2 });
-    if (dir === "bottom")  sel.set({ top: ch - bh });
+    const br = sel.getBoundingRect(true);
+    if (dir === "left")    sel.set({ left: sel.left - br.left });
+    if (dir === "hcenter") sel.set({ left: sel.left - br.left + (cw - br.width) / 2 });
+    if (dir === "right")   sel.set({ left: sel.left - br.left + cw - br.width });
+    if (dir === "top")     sel.set({ top: sel.top - br.top });
+    if (dir === "vcenter") sel.set({ top: sel.top - br.top + (ch - br.height) / 2 });
+    if (dir === "bottom")  sel.set({ top: sel.top - br.top + ch - br.height });
     sel.setCoords();
     canvas.requestRenderAll();
   };
@@ -689,6 +707,17 @@ function EditorInner() {
       fc.current.requestRenderAll();
       t.enterEditing();
     });
+  };
+
+  const updateSaturation = (v: number) => {
+    setSelSaturation(v);
+    if (!fc.current || !sel) return;
+    const fabric = (window as any).fabric;
+    const filters = (sel.filters || []).filter((f: any) => f.type !== "Saturation");
+    filters.push(new fabric.Image.filters.Saturation({ saturation: v }));
+    sel.filters = filters;
+    sel.applyFilters();
+    fc.current.requestRenderAll();
   };
 
   const updateTextWidth = (v: number) => {
@@ -1105,6 +1134,15 @@ function EditorInner() {
                   <SliderRow label="X" value={selShadowX} min={-50} max={50} onChange={v => { setSelShadowX(v); applyShadow(selShadowColor, selShadowBlur, v, selShadowY); }} />
                   <SliderRow label="Y" value={selShadowY} min={-50} max={50} onChange={v => { setSelShadowY(v); applyShadow(selShadowColor, selShadowBlur, selShadowX, v); }} />
                 </div>
+              )}
+
+              {/* Saturation — images only */}
+              {sel.type === "image" && (
+                <>
+                  <Sec title="Saturação" />
+                  <SliderRow label="" value={Math.round(selSaturation * 100)} min={-100} max={100} unit="%" onChange={v => updateSaturation(v / 100)} />
+                  <div className="flex justify-between text-gray-300 mt-0.5" style={{fontSize:9}}><span>P&amp;B</span><span>Normal</span><span>Vivo</span></div>
+                </>
               )}
 
               {/* Blur filter — all types */}
