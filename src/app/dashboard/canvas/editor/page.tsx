@@ -339,8 +339,11 @@ function EditorInner() {
     canvas.on("mouse:down", (e: any) => {
       const obj = canvas.getActiveObject();
       if (obj && obj.type === "rect") {
-        console.log("[debug] mouse:down rect rx=", obj.rx, "scaleX=", obj.scaleX, "width=", obj.width);
-        rectBeforeScale.current = { rx: obj.rx || 0, ry: obj.ry || 0 };
+        // rx is stored relative to the unscaled object.
+        // Visual radius = rx * min(scaleX, scaleY).
+        // We capture the visual radius so after baking (scaleX=1) we restore it exactly.
+        const visualRx = (obj.rx || 0) * Math.min(obj.scaleX || 1, obj.scaleY || 1);
+        rectBeforeScale.current = { rx: visualRx, ry: visualRx };
       } else {
         rectBeforeScale.current = null;
       }
@@ -358,16 +361,14 @@ function EditorInner() {
       }
       // Keep border-radius fixed when scaling rects
       if (obj.type === "rect") {
-        const origRx = rectBeforeScale.current?.rx ?? 0;
+        const visualRx = rectBeforeScale.current?.rx ?? (obj.rx || 0) * Math.min(obj.scaleX || 1, obj.scaleY || 1);
         const newW = obj.width  * (obj.scaleX || 1);
         const newH = obj.height * (obj.scaleY || 1);
-        // origRx is already in absolute pixels relative to the pre-scale object.
-        // After baking (scaleX=1), rx is used as-is against the new dimensions.
-        // Cap only to prevent overflow when object shrinks too small.
+        // After bake scaleX=1, so rx IS the visual radius. Cap to half of shorter side.
         const maxRx = Math.min(newW, newH) / 2;
-        const newRx = origRx > 0 ? Math.min(origRx, maxRx) : 0;
+        const newRx = Math.min(visualRx, maxRx);
         obj.set({ width: newW, height: newH, rx: newRx, ry: newRx, scaleX: 1, scaleY: 1 });
-        rectBeforeScale.current = { rx: newRx, ry: newRx }; // update for next drag
+        rectBeforeScale.current = { rx: newRx, ry: newRx };
         canvas.requestRenderAll();
         syncSel(obj);
       }
