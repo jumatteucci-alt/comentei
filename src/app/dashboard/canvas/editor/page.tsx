@@ -204,6 +204,7 @@ function EditorInner() {
   const [selUnderline, setSelUnderline] = useState(false);
   const [selCharSpacing, setSelCharSpacing] = useState(0);
   const [selLineHeight, setSelLineHeight] = useState(1.2);
+  const [selTextWidth, setSelTextWidth] = useState(300);
   const [selFillGradient, setSelFillGradient] = useState<{c1:string;c2:string;angle:number}|null>(null);
 
   // Background
@@ -255,6 +256,7 @@ function EditorInner() {
     setSelUnderline(!!obj.underline);
     setSelCharSpacing(obj.charSpacing ?? 0);
     setSelLineHeight(obj.lineHeight ?? 1.2);
+    if (obj.type === "textbox") setSelTextWidth(Math.round((obj.width || 300) / scale));
     const sh = obj.shadow;
     setSelShadow(!!sh);
     if (sh) { setSelShadowColor(sh.color||"rgba(0,0,0,0.5)"); setSelShadowBlur(sh.blur||10); setSelShadowX(sh.offsetX||5); setSelShadowY(sh.offsetY||5); }
@@ -396,8 +398,9 @@ function EditorInner() {
   const updateFontSize = (v: number) => { setSelFontSize(v); upd({ fontSize: v * scale }); };
   const updateFontFamily = (v: string) => {
     setSelFontFamily(v);
-    upd({ fontFamily: v });
-    document.fonts.ready.then(() => fc.current?.requestRenderAll());
+    document.fonts.load(`${selFontSize * scale}px "${v}"`).finally(() => {
+      upd({ fontFamily: v });
+    });
   };
   const toggleBold      = () => { const n = !selBold;      setSelBold(n);      upd({ fontWeight: n ? "bold" : "normal" }); };
   const toggleItalic    = () => { const n = !selItalic;    setSelItalic(n);    upd({ fontStyle:  n ? "italic" : "normal" }); };
@@ -580,7 +583,35 @@ function EditorInner() {
     const obj = fn((window as any).fabric);
     fc.current.add(obj); fc.current.setActiveObject(obj); syncSel(obj); setShapesOpen(false);
   };
-  const addText  = () => add(fab => { const t = new fab.IText("Texto aqui", { left:DISPLAY_W/2, top:DISPLAY_H/2, originX:"center", originY:"center", fontSize:48*scale, fontFamily:"Montserrat", fill:"#000000", strokeUniform:true }); document.fonts.ready.then(() => fc.current?.requestRenderAll()); return t; });
+  const addText = () => {
+    if (!fc.current) return;
+    const fab = (window as any).fabric;
+    const fontToLoad = `${selFontSize * scale}px "${selFontFamily}"`;
+    document.fonts.load(fontToLoad).finally(() => {
+      const t = new fab.Textbox("Texto aqui", {
+        left: DISPLAY_W / 2,
+        top: DISPLAY_H / 2,
+        originX: "center",
+        originY: "center",
+        width: 300 * scale,
+        fontSize: selFontSize * scale,
+        fontFamily: selFontFamily,
+        fill: "#000000",
+        strokeUniform: true,
+        splitByGrapheme: false,
+      });
+      fc.current.add(t);
+      fc.current.setActiveObject(t);
+      syncSel(t);
+      fc.current.requestRenderAll();
+      t.enterEditing();
+    });
+  };
+
+  const updateTextWidth = (v: number) => {
+    setSelTextWidth(v);
+    upd({ width: v * scale });
+  };
   const addRect  = (r=0) => add(fab => new fab.Rect({ left:DISPLAY_W/2-75, top:DISPLAY_H/2-50, width:150, height:100, fill:"#3b82f6", rx:r, ry:r, strokeUniform:true }));
   const addCirc  = () => add(fab => new fab.Circle({ left:DISPLAY_W/2-60, top:DISPLAY_H/2-60, radius:60, fill:"#3b82f6", strokeUniform:true }));
   const addTri   = () => add(fab => new fab.Triangle({ left:DISPLAY_W/2-60, top:DISPLAY_H/2-60, width:120, height:120, fill:"#3b82f6", strokeUniform:true }));
@@ -650,7 +681,8 @@ function EditorInner() {
     } finally { setSaving(false); }
   };
 
-  const isText = sel?.type === "i-text";
+  const isText = sel?.type === "i-text" || sel?.type === "textbox";
+  const isTextbox = sel?.type === "textbox";
   const isShape = sel && ["rect","circle","triangle","polygon"].includes(sel.type);
   const isRect = sel?.type === "rect";
 
@@ -833,6 +865,15 @@ function EditorInner() {
                       className="w-full accent-indigo-600" />
                     <div className="flex justify-between text-gray-300 mt-0.5" style={{fontSize:9}}><span>0.1</span><span>1.0</span><span>4.0</span></div>
                   </div>
+                  {isTextbox && (
+                    <NumRow
+                      label="Largura (px)"
+                      value={selTextWidth}
+                      min={50}
+                      max={Math.round(fmt.w)}
+                      onChange={updateTextWidth}
+                    />
+                  )}
                 </>
               )}
 
