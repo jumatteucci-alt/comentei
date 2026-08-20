@@ -404,22 +404,24 @@ function EditorInner() {
     const fabric = (window as any).fabric;
     const uid = sel.__uid;
 
-    const applyBlurToImage = (img: any, blurValue: number) => {
-      const filters = (img.filters || []).filter((f: any) => f.type !== "Blur");
-      if (blurValue > 0) filters.push(new fabric.Image.filters.Blur({ blur: blurValue / 100 }));
-      img.filters = filters;
-      img.set({ padding: blurValue > 0 ? Math.round(blurValue * 0.8) : 0 });
-      img.applyFilters();
-      fc.current.requestRenderAll();
-    };
-
     const left   = sel.left;
     const top    = sel.top;
     const angle  = sel.angle  || 0;
     const scaleX = sel.scaleX || 1;
     const scaleY = sel.scaleY || 1;
 
-    // ── Blur = 0: restore original ──
+    // ── Real uploaded image: use fabric blur filter directly ──
+    if (sel.type === "image" && !blurOriginMap.current.has(uid)) {
+      const filters = (sel.filters || []).filter((f: any) => f.type !== "Blur");
+      if (v > 0) filters.push(new fabric.Image.filters.Blur({ blur: v / 100 }));
+      sel.filters = filters;
+      sel.set({ padding: v > 0 ? Math.round(v * 0.8) : 0 });
+      sel.applyFilters();
+      fc.current.requestRenderAll();
+      return;
+    }
+
+    // ── Blur = 0: restore original shape/text ──
     if (v === 0 && blurOriginMap.current.has(uid)) {
       const json = blurOriginMap.current.get(uid)!;
       blurOriginMap.current.delete(uid);
@@ -436,59 +438,83 @@ function EditorInner() {
       return;
     }
 
-    // ── Real uploaded image: apply directly ──
-    if (sel.type === "image" && !blurOriginMap.current.has(uid)) {
-      applyBlurToImage(sel, v);
-      return;
-    }
+    // ── Already rasterized with blur: update via re-rasterize from JSON ──
+    // ── OR first time blur on shape/text ──
+    const doRasterize = (sourceJson: string) => {
+      fabric.util.enlivenObjects([JSON.parse(sourceJson)], (objs: any[]) => {
+        const sourceObj = objs[0];
 
-    // ── Already rasterized: just update blur filter ──
+        // Get rendered size at display scale
+        const br = sel.type === "image" ? sel.getBoundingRect() : (() => {
+          // temporarily render source to get size
+          sourceObj.set({ left: 0, top: 0, scaleX: 1, scaleY: 1, angle: 0 });
+          const w = sourceObj.width  * (sourceObj.scaleX || 1) + 20;
+          const h = sourceObj.height * (sourceObj.scaleY || 1) + 20;
+          return { width: w, height: h };
+        })();
+
+        const pad = v > 0 ? Math.round(v * 1.5) : 0;
+        const cw = Math.min(Math.ceil(br.width)  + pad * 2, 2048);
+        const ch = Math.min(Math.ceil(br.height) + pad * 2, 2048);
+
+        // Draw on native canvas with CSS blur
+        const tempEl = document.createElement("canvas");
+        tempEl.width  = cw;
+        tempEl.height = ch;
+        const ctx = tempEl.getContext("2d")!;
+
+        // Render source object to a tiny fabric canvas, then draw with blur
+        const miniEl = document.createElement("canvas");
+        miniEl.width  = cw;
+        miniEl.height = ch;
+        const miniCanvas = new fabric.StaticCanvas(miniEl, { width: cw, height: ch, enableRetinaScaling: false });
+        sourceObj.set({ left: cw / 2, top: ch / 2, originX: "center", originY: "center", angle: 0, scaleX: scaleX, scaleY: scaleY });
+        miniCanvas.add(sourceObj);
+        miniCanvas.renderAll();
+
+        // Apply blur using native 2D filter
+        if (v > 0) {
+          const blurPx = Math.round(v * 0.3);
+          ctx.filter = `blur(${blurPx}px)`;
+        }
+        ctx.drawImage(miniEl, 0, 0);
+        miniCanvas.dispose();
+
+        const dataURL = tempEl.toDataURL("image/png");
+
+        if (sel.type !== "image") fc.current.remove(sel);
+        else fc.current.remove(sel);
+
+        fabric.Image.fromURL(dataURL, (img: any) => {
+          img.set({
+            left,
+            top,
+            angle,
+            scaleX: 1,
+            scaleY: 1,
+            originX: "left",
+            originY: "top",
+            strokeUniform: true,
+          });
+          img.__uid = uid;
+          fc.current.add(img);
+          fc.current.setActiveObject(img);
+          syncSel(img);
+          fc.current.requestRenderAll();
+        });
+      });
+    };
+
     if (sel.type === "image" && blurOriginMap.current.has(uid)) {
-      applyBlurToImage(sel, v);
+      // Re-rasterize from original JSON
+      doRasterize(blurOriginMap.current.get(uid)!);
       return;
     }
 
-    // ── Shape/text: save JSON, rasterize using a temp off-screen canvas ──
+    // First time: save JSON and rasterize
     const json = JSON.stringify(sel.toObject());
     blurOriginMap.current.set(uid, json);
-
-    // Use fabric's own toDataURL on the object directly (no multiplier to avoid texture limit)
-    // We must render it on a temporary canvas at display size
-    const objW = sel.getBoundingRect().width;
-    const objH = sel.getBoundingRect().height;
-    const tempCanvas = document.createElement("canvas");
-    tempCanvas.width  = Math.min(objW + 40, 2048);
-    tempCanvas.height = Math.min(objH + 40, 2048);
-    const tempFc = new fabric.StaticCanvas(tempCanvas, { width: tempCanvas.width, height: tempCanvas.height });
-
-    sel.clone((cloned: any) => {
-      cloned.set({ left: tempCanvas.width / 2, top: tempCanvas.height / 2, originX: "center", originY: "center", angle: 0 });
-      tempFc.add(cloned);
-      tempFc.renderAll();
-
-      const dataURL = tempCanvas.toDataURL("image/png");
-      tempFc.dispose();
-
-      fc.current.remove(sel);
-
-      fabric.Image.fromURL(dataURL, (img: any) => {
-        // Scale image so it matches the original rendered size
-        const scaleToW = objW / img.width;
-        img.set({
-          left, top, angle,
-          scaleX: scaleToW * scaleX,
-          scaleY: scaleToW * scaleY,
-          originX: "left",
-          originY: "top",
-          strokeUniform: true,
-        });
-        img.__uid = uid;
-        fc.current.add(img);
-        fc.current.setActiveObject(img);
-        syncSel(img);
-        applyBlurToImage(img, v);
-      });
-    });
+    doRasterize(json);
   };
 
   const toggleLock = (uid: string) => {
