@@ -300,6 +300,29 @@ function EditorInner() {
     canvas.on("object:added",    () => { if (!savingHistory.current) { saveState(); refreshLayers(canvas); } });
     canvas.on("object:removed",  () => { if (!savingHistory.current) refreshLayers(canvas); });
 
+    // When a text/textbox is scaled via handle, bake scale into fontSize so it stays correct
+    canvas.on("object:scaling", (e: any) => {
+      const obj = e.target;
+      if (!obj || (obj.type !== "textbox" && obj.type !== "i-text")) return;
+      const newSize = Math.round((obj.fontSize * obj.scaleY) / scale);
+      setSelFontSize(newSize);
+    });
+    canvas.on("object:scaled", (e: any) => {
+      const obj = e.target;
+      if (!obj || (obj.type !== "textbox" && obj.type !== "i-text")) return;
+      const newFontSize = Math.round(obj.fontSize * obj.scaleY);
+      const newWidth = obj.type === "textbox" ? obj.width * obj.scaleX : obj.width;
+      obj.set({
+        fontSize: newFontSize,
+        width: newWidth,
+        scaleX: 1,
+        scaleY: 1,
+      });
+      if (obj.type === "textbox") setSelTextWidth(Math.round(newWidth / scale));
+      setSelFontSize(Math.round(newFontSize / scale));
+      canvas.requestRenderAll();
+    });
+
     const onKey = (e: KeyboardEvent) => {
       const tag = (document.activeElement as HTMLElement)?.tagName;
       const isInput = tag === "INPUT" || tag === "TEXTAREA";
@@ -406,16 +429,54 @@ function EditorInner() {
   const updateStrokeW  = (v: number) => { setSelStrokeW(v);  upd({ strokeWidth: v, strokeUniform: true }); };
   const updateRadius   = (v: number) => { setSelRadius(v);   upd({ rx: v, ry: v }); };
   const updateRotation = (v: number) => { setSelRotation(v); upd({ angle: v }); };
-  const updateFontSize = (v: number) => { setSelFontSize(v); upd({ fontSize: v * scale }); };
+  const updateFontSize = (v: number) => {
+    setSelFontSize(v);
+    if (!fc.current || !sel) return;
+    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      sel.setSelectionStyles({ fontSize: v * scale });
+      fc.current.requestRenderAll();
+    } else { upd({ fontSize: v * scale }); }
+  };
   const updateFontFamily = (v: string) => {
     setSelFontFamily(v);
     document.fonts.load(`${selFontSize * scale}px "${v}"`).finally(() => {
       upd({ fontFamily: v });
     });
   };
-  const toggleBold      = () => { const n = !selBold;      setSelBold(n);      upd({ fontWeight: n ? "bold" : "normal" }); };
-  const toggleItalic    = () => { const n = !selItalic;    setSelItalic(n);    upd({ fontStyle:  n ? "italic" : "normal" }); };
-  const toggleUnderline = () => { const n = !selUnderline; setSelUnderline(n); upd({ underline: n }); };
+  const toggleBold = () => {
+    const n = !selBold; setSelBold(n);
+    if (!fc.current || !sel) return;
+    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      sel.setSelectionStyles({ fontWeight: n ? "bold" : "normal" });
+      fc.current.requestRenderAll();
+    } else { upd({ fontWeight: n ? "bold" : "normal" }); }
+  };
+  const toggleItalic = () => {
+    const n = !selItalic; setSelItalic(n);
+    if (!fc.current || !sel) return;
+    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      sel.setSelectionStyles({ fontStyle: n ? "italic" : "normal" });
+      fc.current.requestRenderAll();
+    } else { upd({ fontStyle: n ? "italic" : "normal" }); }
+  };
+  const toggleUnderline = () => {
+    const n = !selUnderline; setSelUnderline(n);
+    if (!fc.current || !sel) return;
+    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      sel.setSelectionStyles({ underline: n });
+      fc.current.requestRenderAll();
+    } else { upd({ underline: n }); }
+  };
+  const updateFillForText = (color: string) => {
+    // When editing text with selection, apply color only to selected chars
+    if (sel?.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      setSelFill(color);
+      sel.setSelectionStyles({ fill: color });
+      fc.current?.requestRenderAll();
+    } else {
+      updateFill(color);
+    }
+  };
   const updateCharSpacing = (v: number) => { setSelCharSpacing(v); upd({ charSpacing: v }); };
   const updateLineHeight  = (v: number) => { setSelLineHeight(v);  upd({ lineHeight: v }); };
 
@@ -823,7 +884,7 @@ function EditorInner() {
               {sel.type !== "image" && (
                 <>
                   <Sec title="Preenchimento" />
-                  <ColorPicker value={selFill} onChange={updateFill} label="" />
+                  <ColorPicker value={selFill} onChange={isText ? updateFillForText : updateFill} label="" />
                   <GradientEditor value={selFillGradient} onChange={updateFillGradient} />
                 </>
               )}
