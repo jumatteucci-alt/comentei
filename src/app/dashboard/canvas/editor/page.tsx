@@ -173,6 +173,7 @@ function EditorInner() {
   const blurValueMap  = useRef<Map<string, number>>(new Map()); // uid → current blur value
   const blurPosMap    = useRef<Map<string, {left:number;top:number;scaleX:number;scaleY:number;angle:number}>>(new Map()); // uid → original position before any blur
   const blurTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rectBeforeScale = useRef<{ rx: number; ry: number } | null>(null);
 
   const [site, setSite] = useState<Site | null>(null);
   const [fabricLoaded, setFabricLoaded] = useState(false);
@@ -327,15 +328,22 @@ function EditorInner() {
     // When a text/textbox is scaled via handle, bake scale into fontSize so it stays correct
     canvas.on("object:scaling", (e: any) => {
       const obj = e.target;
-      if (!obj || (obj.type !== "textbox" && obj.type !== "i-text")) return;
-      const newSize = Math.round((obj.fontSize * obj.scaleY) / scale);
-      setSelFontSize(newSize);
+      if (!obj) return;
+      // Track font size live for text
+      if (obj.type === "textbox" || obj.type === "i-text") {
+        const newSize = Math.round((obj.fontSize * obj.scaleY) / scale);
+        setSelFontSize(newSize);
+      }
     });
-    
+    canvas.on("before:transform", (e: any) => {
+      const obj = e.transform?.target;
+      if (obj && obj.type === "rect") {
+        rectBeforeScale.current = { rx: obj.rx || 0, ry: obj.ry || 0 };
+      }
+    });
     canvas.on("object:scaled", (e: any) => {
       const obj = e.target;
       if (!obj) return;
-      
       // Bake font size for text
       if (obj.type === "textbox" || obj.type === "i-text") {
         const newFontSize = Math.round(obj.fontSize * obj.scaleY);
@@ -343,36 +351,20 @@ function EditorInner() {
         obj.set({ fontSize: newFontSize, width: newWidth, scaleX: 1, scaleY: 1 });
         canvas.requestRenderAll();
         syncSel(obj);
-        return;
       }
-      
-      // Keep border-radius proportional for rects - CORRIGIDO
-      if (obj.type === "rect" && (obj.rx || obj.ry)) {
-        // Salvar o raio original se ainda não foi salvo
-        if (!obj._originalRx) {
-          obj._originalRx = obj.rx || 0;
-        }
-        
-        const newW = obj.width * (obj.scaleX || 1);
+      // Keep border-radius proportional for rects
+      if (obj.type === "rect") {
+        const origRx = rectBeforeScale.current?.rx ?? obj.rx ?? 0;
+        const newW = obj.width  * (obj.scaleX || 1);
         const newH = obj.height * (obj.scaleY || 1);
-        
-        // Calcular novo raio baseado na média das escalas
-        const avgScale = ((obj.scaleX || 1) + (obj.scaleY || 1)) / 2;
-        let newRx = obj._originalRx * avgScale;
-        
-        // Limitar para não ultrapassar metade do menor lado
-        const minDimension = Math.min(newW, newH);
-        newRx = Math.min(newRx, minDimension / 2);
-        
-        obj.set({ 
-          width: newW, 
-          height: newH, 
-          rx: newRx, 
-          ry: newRx, 
-          scaleX: 1, 
-          scaleY: 1 
-        });
-        
+        // Scale rx proportionally to the smaller dimension change
+        const scaleForRadius = Math.min(
+          newW / (obj.width  || 1),
+          newH / (obj.height || 1)
+        );
+        const newRx = origRx * scaleForRadius;
+        obj.set({ width: newW, height: newH, rx: newRx, ry: newRx, scaleX: 1, scaleY: 1 });
+        rectBeforeScale.current = null;
         canvas.requestRenderAll();
         syncSel(obj);
       }
@@ -504,7 +496,15 @@ function EditorInner() {
     if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
       sel.setSelectionStyles({ fontWeight: n ? "bold" : "normal" });
       fc.current.requestRenderAll();
-    } else { upd({ fontWeight: n ? "bold" : "normal" }); }
+    } else {
+      sel.set({ fontWeight: n ? "bold" : "normal" });
+      // Reinitialize text metrics so charSpacing is recalculated
+      // against the correct glyph widths of the bold/normal variant
+      if (sel.initDimensions) sel.initDimensions();
+      document.fonts.load(`bold ${sel.fontSize}px "${sel.fontFamily}"`).finally(() => {
+        fc.current?.requestRenderAll();
+      });
+    }
   };
   const toggleItalic = () => {
     const n = !selItalic; setSelItalic(n);
