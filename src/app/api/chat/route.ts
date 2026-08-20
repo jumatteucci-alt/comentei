@@ -58,7 +58,9 @@ export async function POST(req: NextRequest) {
         ).join("\n\n")}`
       : "\n\nNenhum produto cadastrado ainda.";
 
-    const systemInstruction = (config.systemPrompt || "Você é um assistente de vendas prestativo e simpático. Responda de forma clara e objetiva. Sempre que possível, direcione o usuário para os produtos relevantes.") + productContext;
+    const systemInstruction = (config.systemPrompt || "Você é um assistente de vendas prestativo e simpático. Responda de forma clara e objetiva. Sempre que possível, direcione o usuário para os produtos relevantes.") + 
+      "\n\nFORMATAÇÃO: Use **negrito** para destacar informações importantes. Quando mencionar links, use SEMPRE o formato markdown [texto do link](url) — por exemplo: [Comprar agora](https://site.com). Nunca cole a URL solta no texto." +
+      productContext;
 
     // Call Gemini API
     const geminiRes = await fetch(

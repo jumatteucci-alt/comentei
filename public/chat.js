@@ -18,6 +18,24 @@
 
   function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 
+  function renderMarkdown(text) {
+    var escaped = esc(text);
+    return escaped
+      // **negrito**
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      // Links markdown [texto](url)
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;font-weight:500">$1</a>')
+      // URLs soltas — converte em "Clique aqui" clicável, evita duplicar links já processados
+      .replace(/(^|[\s\(])(https?:\/\/[^\s\)<>"]+)/g, function(match, pre, url) {
+        return pre + '<a href="' + url + '" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;font-weight:500">Clique aqui</a>';
+      })
+      // *item de lista*
+      .replace(/^\*\s+(.+)$/gm, "<li>$1</li>")
+      .replace(/(<li>.*<\/li>)/s, "<ul style='margin:6px 0 6px 16px;padding:0;list-style:disc'>$1</ul>")
+      // Quebras de linha
+      .replace(/\n/g, "<br>");
+  }
+
   function ComenteiChat() {
     this._cfg = null;
     this._remoteCfg = null;
@@ -92,7 +110,7 @@
         '<div class="cmc-head-av">'+esc(this._name[0].toUpperCase())+'</div>' +
         '<div><div class="cmc-head-name">'+esc(this._name)+'</div><div class="cmc-head-sub">Chat IA</div></div>' +
       '</div>' +
-      '<div class="cmc-msgs" id="cmc-msgs-'+id+'"><div class="cmc-msg bot">'+esc(this._welcome)+'</div></div>' +
+      '<div class="cmc-msgs" id="cmc-msgs-'+id+'"><div class="cmc-msg bot">'+renderMarkdown(this._welcome)+'</div></div>' +
       '<div class="cmc-footer">' +
         '<textarea class="cmc-input" id="cmc-input-'+id+'" placeholder="Digite sua mensagem..." rows="1"></textarea>' +
         '<button class="cmc-send" id="cmc-send-'+id+'">' +
@@ -188,7 +206,7 @@
       self._messages.push({ role: "assistant", text: reply });
       var botEl = document.createElement("div");
       botEl.className = "cmc-msg bot";
-      botEl.textContent = reply;
+      botEl.innerHTML = renderMarkdown(reply);
       msgs.appendChild(botEl);
       msgs.scrollTop = msgs.scrollHeight;
     })
