@@ -339,6 +339,7 @@ function EditorInner() {
     canvas.on("mouse:down", (e: any) => {
       const obj = canvas.getActiveObject();
       if (obj && obj.type === "rect") {
+        console.log("[debug] mouse:down rect rx=", obj.rx, "scaleX=", obj.scaleX, "width=", obj.width);
         rectBeforeScale.current = { rx: obj.rx || 0, ry: obj.ry || 0 };
       } else {
         rectBeforeScale.current = null;
@@ -355,19 +356,18 @@ function EditorInner() {
         canvas.requestRenderAll();
         syncSel(obj);
       }
-      // Keep border-radius proportional for rects
+      // Keep border-radius fixed when scaling rects
       if (obj.type === "rect") {
         const origRx = rectBeforeScale.current?.rx ?? 0;
-        const sx = obj.scaleX || 1;
-        const sy = obj.scaleY || 1;
-        const newW = obj.width * sx;
-        const newH = obj.height * sy;
-        // origRx is the radius BEFORE scaling — keep it absolute (pixel-fixed)
-        // only shrink it if the object becomes smaller than the radius allows
+        const newW = obj.width  * (obj.scaleX || 1);
+        const newH = obj.height * (obj.scaleY || 1);
+        // origRx is already in absolute pixels relative to the pre-scale object.
+        // After baking (scaleX=1), rx is used as-is against the new dimensions.
+        // Cap only to prevent overflow when object shrinks too small.
         const maxRx = Math.min(newW, newH) / 2;
-        const newRx = Math.min(origRx, maxRx);
+        const newRx = origRx > 0 ? Math.min(origRx, maxRx) : 0;
         obj.set({ width: newW, height: newH, rx: newRx, ry: newRx, scaleX: 1, scaleY: 1 });
-        rectBeforeScale.current = null;
+        rectBeforeScale.current = { rx: newRx, ry: newRx }; // update for next drag
         canvas.requestRenderAll();
         syncSel(obj);
       }
