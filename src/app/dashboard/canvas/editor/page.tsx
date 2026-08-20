@@ -335,10 +335,13 @@ function EditorInner() {
         setSelFontSize(newSize);
       }
     });
-    canvas.on("before:transform", (e: any) => {
-      const obj = e.transform?.target;
+    // Capture rx BEFORE any transform starts
+    canvas.on("mouse:down", (e: any) => {
+      const obj = canvas.getActiveObject();
       if (obj && obj.type === "rect") {
         rectBeforeScale.current = { rx: obj.rx || 0, ry: obj.ry || 0 };
+      } else {
+        rectBeforeScale.current = null;
       }
     });
     canvas.on("object:scaled", (e: any) => {
@@ -355,14 +358,13 @@ function EditorInner() {
       // Keep border-radius proportional for rects
       if (obj.type === "rect") {
         const origRx = rectBeforeScale.current?.rx ?? obj.rx ?? 0;
-        const newW = obj.width  * (obj.scaleX || 1);
-        const newH = obj.height * (obj.scaleY || 1);
-        // Scale rx proportionally to the smaller dimension change
-        const scaleForRadius = Math.min(
-          newW / (obj.width  || 1),
-          newH / (obj.height || 1)
-        );
-        const newRx = origRx * scaleForRadius;
+        const sx = obj.scaleX || 1;
+        const sy = obj.scaleY || 1;
+        const newW = obj.width * sx;
+        const newH = obj.height * sy;
+        // The visual corner radius = origRx * min(sx, sy)
+        // This keeps the radius anchored to the shorter dimension
+        const newRx = origRx * Math.min(sx, sy);
         obj.set({ width: newW, height: newH, rx: newRx, ry: newRx, scaleX: 1, scaleY: 1 });
         rectBeforeScale.current = null;
         canvas.requestRenderAll();
