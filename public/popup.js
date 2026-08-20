@@ -9,6 +9,16 @@
 
   var API = "https://comentei.vercel.app/api/popups";
 
+
+  // ── Analytics tracker ──
+  function track(widgetId, popupId, event) {
+    fetch("https://comentei.vercel.app/api/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ widgetId: widgetId, popupId: popupId, event: event })
+    }).catch(function () {});
+  }
+
   function ComenteiPopup() { this._widgetId = null; }
 
   ComenteiPopup.prototype.init = function (opts) {
@@ -164,6 +174,7 @@
     modal.appendChild(body);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
+    track(self._widgetId, popup.id, "view");
 
     if (popup.showOncePerSession) sessionStorage.setItem(key, "1");
   };
@@ -203,6 +214,7 @@
         var btn = document.createElement("a");
         btn.href = block.url; btn.textContent = block.label;
         if (block.openInNewTab) btn.target = "_blank";
+        btn.addEventListener("click", function () { track((ctx || {}).widgetId, (ctx || {}).popupId, "click"); });
         btn.style.cssText = [
           "display:" + (block.fullWidth ? "block" : "inline-block"),
           "background:" + block.backgroundColor,
