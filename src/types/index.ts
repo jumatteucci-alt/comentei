@@ -156,3 +156,23 @@ export interface Popup {
   createdAt: number;
   updatedAt: number;
 }
+
+// ── Chat AI types ──
+
+export interface ChatProduct {
+  id: string;
+  name: string;
+  description: string;
+  price: string;
+  link: string;
+  createdAt: number;
+}
+
+export interface ChatConfig {
+  geminiKey: string;
+  assistantName: string;
+  welcomeMessage: string;
+  primaryColor: string;
+  mode: "floating" | "inline";
+  systemPrompt: string;
+}

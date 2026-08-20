@@ -32,6 +32,14 @@ const NAV: NavGroup[] = [
       { href: "/dashboard/leads", label: "Leads capturados" },
     ],
   },
+  {
+    label: "Chat IA",
+    icon: <svg width="15" height="15" fill="none" viewBox="0 0 16 16"><path d="M2 3a1 1 0 011-1h10a1 1 0 011 1v7a1 1 0 01-1 1H9l-3 2.5V11H3a1 1 0 01-1-1V3z" fill="currentColor"/><circle cx="5" cy="7" r="1" fill="white"/><circle cx="8" cy="7" r="1" fill="white"/><circle cx="11" cy="7" r="1" fill="white"/></svg>,
+    items: [
+      { href: "/dashboard/chat/produtos", label: "Produtos" },
+      { href: "/dashboard/chat/configuracoes", label: "Configurações" },
+    ],
+  },
 ];
 
 export default function Sidebar({ siteName }: { siteName?: string }) {
