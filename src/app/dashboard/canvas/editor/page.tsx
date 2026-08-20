@@ -141,13 +141,19 @@ function applyGradient(fc: any, obj: any, g: { c1: string; c2: string; angle: nu
   fc.requestRenderAll();
 }
 
+function rgbToHex(rgb: string): string {
+  if (rgb.startsWith("#")) return rgb;
+  const m = rgb.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+  if (!m) return "#000000";
+  return "#" + [m[1], m[2], m[3]].map(n => parseInt(n).toString(16).padStart(2, "0")).join("");
+}
+
 function getObjColor(obj: any): string {
   if (!obj) return "#000000";
   const fill = obj.fill;
   if (!fill) return "#000000";
-  if (typeof fill === "string") return fill;
-  // gradient — return first color stop
-  if (fill.colorStops?.length) return fill.colorStops[0].color;
+  if (typeof fill === "string") return rgbToHex(fill);
+  if (fill.colorStops?.length) return rgbToHex(fill.colorStops[0].color);
   return "#000000";
 }
 
@@ -479,12 +485,12 @@ function EditorInner() {
       miniCanvas.add(sourceObj);
       miniCanvas.renderAll();
 
-      // Apply native CSS blur onto a second canvas
+      // Apply native CSS blur onto a second canvas WITH padding for blur spread
       const outEl = document.createElement("canvas");
-      outEl.width = cw; outEl.height = ch;
+      outEl.width = cw + pad * 2; outEl.height = ch + pad * 2;
       const ctx = outEl.getContext("2d")!;
       ctx.filter = `blur(${blurPx}px)`;
-      ctx.drawImage(miniEl, 0, 0);
+      ctx.drawImage(miniEl, pad, pad);
       miniCanvas.dispose();
 
       const dataURL = outEl.toDataURL("image/png");
@@ -502,6 +508,7 @@ function EditorInner() {
         fc.current.add(img);
         fc.current.setActiveObject(img);
         setSel(img);
+        setSelBlur(v);
         fc.current.requestRenderAll();
       });
     });
