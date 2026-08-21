@@ -1740,7 +1740,6 @@ function EditorInner() {
     const shape = objects.find((o: any) => o.type !== "image");
     if (!image || !shape) { alert("Selecione uma imagem e uma forma juntas."); return; }
 
-    // Desfaz a seleção temporariamente para pegar coordenadas absolutas
     canvas.discardActiveObject();
     canvas.requestRenderAll();
 
@@ -1749,23 +1748,24 @@ function EditorInner() {
     const absImageLeft = image.left;
     const absImageTop = image.top;
 
-    console.log("absShape:", absShapeLeft, absShapeTop);
-    console.log("absImage:", absImageLeft, absImageTop);
+    const imgW = image.width * (image.scaleX || 1);
+    const imgH = image.height * (image.scaleY || 1);
+    const imgCX = absImageLeft + imgW / 2;
+    const imgCY = absImageTop + imgH / 2;
 
     shape.clone((clippedShape: any) => {
       clippedShape.set({
-        left: absShapeLeft,
-        top: absShapeTop,
+        left: absShapeLeft - imgCX,
+        top: absShapeTop - imgCY,
         scaleX: shape.scaleX || 1,
         scaleY: shape.scaleY || 1,
         angle: shape.angle || 0,
-        absolutePositioned: true,
+        absolutePositioned: false,
       });
-      image.set({ left: absImageLeft, top: absImageTop });
       image.clipPath = clippedShape;
+      image.__hasMask = true;
       image.setCoords();
       canvas.remove(shape);
-      canvas.discardActiveObject();
       canvas.setActiveObject(image);
       syncSel(image);
       canvas.requestRenderAll();
@@ -2001,6 +2001,18 @@ function EditorInner() {
                 <button onClick={createMask}
                   className="w-full py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition text-xs font-medium">
                   ✂ Criar máscara
+                </button>
+              )}
+
+              {(sel as any)?.__hasMask && (
+                <button onClick={() => {
+                  if (!fc.current || !sel) return;
+                  sel.clipPath = undefined;
+                  (sel as any).__hasMask = false;
+                  fc.current.requestRenderAll();
+                }}
+                  className="w-full py-2 border border-purple-200 text-purple-600 rounded-lg hover:bg-purple-50 transition text-xs">
+                  ✂ Remover máscara
                 </button>
               )}
 
