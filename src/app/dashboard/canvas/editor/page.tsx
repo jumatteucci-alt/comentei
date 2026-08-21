@@ -818,8 +818,14 @@ function EditorInner() {
             nc2.set({ opacity: 1 });
             l1.set({ opacity: 1 });
             l2.set({ opacity: 1 });
-            const prevCmd = commands[commands.indexOf(cmd) - 1];
-            if (prevCmd?.__line2) prevCmd.__line2.set({ opacity: 1 });
+            // Procura o segmento C anterior para mostrar sua linha cp2→endpoint
+            const cmdIdx = commands.indexOf(cmd);
+            for (let i = cmdIdx - 1; i >= 0; i--) {
+              if (commands[i].type === "C") {
+                if (commands[i].__line2) commands[i].__line2.set({ opacity: 1 });
+                break;
+              }
+            }
             // Mostra também as handles do próximo segmento
             const nextCmd = commands[commands.indexOf(cmd) + 1];
             if (nextCmd?.__line1) nextCmd.__line1.set({ opacity: 1 });
@@ -832,8 +838,14 @@ function EditorInner() {
             nc2.set({ opacity: 0 });
             l1.set({ opacity: 0 });
             l2.set({ opacity: 0 });
-            const prevCmd = commands[commands.indexOf(cmd) - 1];
-            if (prevCmd?.__line2) prevCmd.__line2.set({ opacity: 0 });
+            // Procura o segmento C anterior para mostrar sua linha cp2→endpoint
+            const cmdIdx = commands.indexOf(cmd);
+            for (let i = cmdIdx - 1; i >= 0; i--) {
+              if (commands[i].type === "C") {
+                if (commands[i].__line2) commands[i].__line2.set({ opacity: 0 });
+                break;
+              }
+            }
             const nextCmd = commands[commands.indexOf(cmd) + 1];
             if (nextCmd?.__line1) nextCmd.__line1.set({ opacity: 0 });
             canvas.requestRenderAll();
