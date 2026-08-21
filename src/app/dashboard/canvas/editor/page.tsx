@@ -424,8 +424,8 @@ function EditorInner() {
 
       // fabric.Path auto-centers around pathOffset — compensate by shifting left/top
       tmp.set({
-        left: tmp.pathOffset.x,
-        top: tmp.pathOffset.y,
+        left: tmp.pathOffset.x - (tmp.width / 2),
+        top: tmp.pathOffset.y - (tmp.height / 2),
       });
 
       canvas.add(tmp);
