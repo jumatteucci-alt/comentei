@@ -1731,7 +1731,6 @@ function EditorInner() {
   cancelPenRef.current = cancelPen;
 
   const createMask = () => {
-
     if (!fc.current) return;
     const canvas = fc.current;
     const active = canvas.getActiveObject();
@@ -1739,22 +1738,31 @@ function EditorInner() {
     const objects = (active as any).getObjects();
     const image = objects.find((o: any) => o.type === "image");
     const shape = objects.find((o: any) => o.type !== "image");
-
-    console.log("image:", image.left, image.top, image.width, image.height, image.scaleX, image.scaleY);
-    console.log("shape:", shape.left, shape.top, shape.width, shape.height, shape.scaleX, shape.scaleY);
-    
     if (!image || !shape) { alert("Selecione uma imagem e uma forma juntas."); return; }
+
+    // Converte coordenadas do activeSelection para absolutas do canvas
+    const selLeft = active.left;
+    const selTop = active.top;
+    const absShapeLeft = selLeft + shape.left;
+    const absShapeTop = selTop + shape.top;
+    const absImageLeft = selLeft + image.left;
+    const absImageTop = selTop + image.top;
+
+    console.log("absShape:", absShapeLeft, absShapeTop);
+    console.log("absImage:", absImageLeft, absImageTop);
 
     shape.clone((clippedShape: any) => {
       clippedShape.set({
-        left: shape.left,
-        top: shape.top,
+        left: absShapeLeft,
+        top: absShapeTop,
         scaleX: shape.scaleX || 1,
         scaleY: shape.scaleY || 1,
         angle: shape.angle || 0,
         absolutePositioned: true,
       });
+      image.set({ left: absImageLeft, top: absImageTop });
       image.clipPath = clippedShape;
+      image.setCoords();
       canvas.remove(shape);
       canvas.discardActiveObject();
       canvas.setActiveObject(image);
