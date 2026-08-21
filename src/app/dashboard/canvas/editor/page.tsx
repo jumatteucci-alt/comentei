@@ -158,6 +158,7 @@ function EditorInner() {
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fc = useRef<any>(null);
+  const updatePreviewRef = useRef<(() => void) | null>(null);
   const isEditingNodesRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const clipboardRef = useRef<any>(null);
@@ -445,12 +446,16 @@ function EditorInner() {
       console.log("pathOffset:", tmp.pathOffset, "left:", tmp.left, "top:", tmp.top, "path:", d.trim().slice(0, 80));
     };
 
+    updatePreviewRef.current = updatePreview;
+
     commands.forEach((cmd, idx) => {
       if (cmd.type === "M" || cmd.type === "L") {
         const node = new fabric.Circle({
           left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2,
           originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true
         });
+        node.__cmd = cmd;
+        node.on("mousedown", () => { selectedNodeRef.current = node; });
         node.on("moving", () => {
           cmd.x = node.left;
           cmd.y = node.top;
@@ -471,8 +476,14 @@ function EditorInner() {
         canvas.add(line2);
 
         const nodeCp1 = new fabric.Circle({ left: cmd.cp1x, top: cmd.cp1y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
+        nodeCp1.__cmd = cmd;
+        nodeCp1.on("mousedown", () => { selectedNodeRef.current = nodeCp1; })
         const nodeCp2 = new fabric.Circle({ left: cmd.cp2x, top: cmd.cp2y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
+        nodeCp2.__cmd = cmd;
+        nodeCp2.on("mousedown", () => { selectedNodeRef.current = nodeCp2; });
         const nodeEnd = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
+        nodeEnd.__cmd = cmd;
+        nodeEnd.on("mousedown", () => { selectedNodeRef.current = nodeEnd; });
 
         nodeCp1.on("moving", () => {
           cmd.cp1x = nodeCp1.left;
@@ -545,7 +556,8 @@ function EditorInner() {
     canvas.on("object:removed",  () => { if (!savingHistory.current) refreshLayers(canvas); });
 
     canvas.on("mouse:dblclick", (e: any) => {
-      if (e.target && e.target.type === "path") {
+      if (isEditingNodesRef.current) return;
+      if (e.target && e.target.type === "path" && !e.target.isControlHelper) {
         enterEditNodes(e.target);
       }
     });
@@ -596,6 +608,7 @@ function EditorInner() {
 
     canvas.on("mouse:down", (e: any) => {
       if (activeToolRef.current !== "pen") return;
+      if (isEditingNodesRef.current) return;
       const fabric = (window as any).fabric;
       const p = canvas.getPointer(e.e);
       const pts = penPoints.current;
@@ -683,6 +696,40 @@ function EditorInner() {
       }
     });
 
+    const selectedNodeRef = { current: null as any };
+
+    const toggleNodeSmooth = () => {
+      const node = selectedNodeRef.current;
+      if (!node || !editingData.current) return;
+      const { commands } = editingData.current;
+      const cmd = commands.find((c: any) => c === node.__cmd);
+      if (!cmd || cmd.type !== "C") return;
+      // Toggle: se handles estão simétricos, zera (ângulo); se zerados, restaura simétrico
+      const isSmooth = cmd.cp1x !== cmd.x || cmd.cp1y !== cmd.y;
+      if (isSmooth) {
+        cmd.cp1x = cmd.x; cmd.cp1y = cmd.y;
+        cmd.cp2x = cmd.x; cmd.cp2y = cmd.y;
+      } else {
+        cmd.cp1x = cmd.x - 40; cmd.cp2x = cmd.x + 40;
+      }
+      updatePreviewRef.current?.();
+    };
+
+    const deleteSelectedNode = () => {
+      const node = selectedNodeRef.current;
+      if (!node || !editingData.current) return;
+      const { commands, helpers, handleLines } = editingData.current;
+      const idx = commands.findIndex((c: any) => c === node.__cmd);
+      if (idx < 0 || idx === 0) return; // não remove M inicial
+      commands.splice(idx, 1);
+      helpers.forEach((h: any) => canvas.remove(h));
+      handleLines.forEach((l: any) => canvas.remove(l));
+      editingData.current.helpers = [];
+      editingData.current.handleLines = [];
+      // Rebuild handles
+      enterEditNodes(editingData.current.originalPathObj);
+    };
+
     const onKey = (e: KeyboardEvent) => {
       const tag = (document.activeElement as HTMLElement)?.tagName;
       const isInput = tag === "INPUT" || tag === "TEXTAREA";
@@ -746,6 +793,18 @@ function EditorInner() {
           exitEditNodes();
         } else if (activeToolRef.current === "pen") {
           finalizePenRef.current(true);
+        }
+      }
+      if (isEditingNodesRef.current) {
+        // D — converte ponto em curva/ângulo (toggle smooth)
+        if (e.key === "d" || e.key === "D") {
+          e.preventDefault();
+          toggleNodeSmooth();
+        }
+        // Delete/Backspace — remove ponto selecionado
+        if ((e.key === "Delete" || e.key === "Backspace") && !isInput) {
+          e.preventDefault();
+          deleteSelectedNode();
         }
       }
     };
