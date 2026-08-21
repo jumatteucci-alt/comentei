@@ -685,8 +685,12 @@ function EditorInner() {
       if (!isEditingNodesRef.current) return;
       if (!editingData.current) return;
       // Só adiciona ponto se clicou no path original (borda)
+      // Verifica se clicou próximo ao path original
+      const pathObj = editingData.current.originalPathObj;
+      pathObj.evented = true;
       const target = canvas.findTarget(e.e, false);
-      if (!target || target !== editingData.current.originalPathObj) return;
+      pathObj.evented = false;
+      if (!target || target !== pathObj) return;
 
       const fabric = (window as any).fabric;
       const p = canvas.getPointer(e.e);
