@@ -1731,6 +1731,7 @@ function EditorInner() {
   cancelPenRef.current = cancelPen;
 
   const createMask = () => {
+
     if (!fc.current) return;
     const canvas = fc.current;
     const active = canvas.getActiveObject();
@@ -1738,34 +1739,24 @@ function EditorInner() {
     const objects = (active as any).getObjects();
     const image = objects.find((o: any) => o.type === "image");
     const shape = objects.find((o: any) => o.type !== "image");
+
+    console.log("image:", image.left, image.top, image.width, image.height, image.scaleX, image.scaleY);
+    console.log("shape:", shape.left, shape.top, shape.width, shape.height, shape.scaleX, shape.scaleY);
+    
     if (!image || !shape) { alert("Selecione uma imagem e uma forma juntas."); return; }
-
-    canvas.discardActiveObject();
-    canvas.requestRenderAll();
-
-    const absShapeLeft = shape.left;
-    const absShapeTop = shape.top;
-    const absImageLeft = image.left;
-    const absImageTop = image.top;
-
-    const imgW = image.width * (image.scaleX || 1);
-    const imgH = image.height * (image.scaleY || 1);
-    const imgCX = absImageLeft + imgW / 2;
-    const imgCY = absImageTop + imgH / 2;
 
     shape.clone((clippedShape: any) => {
       clippedShape.set({
-        left: absShapeLeft - imgCX,
-        top: absShapeTop - imgCY,
+        left: shape.left,
+        top: shape.top,
         scaleX: shape.scaleX || 1,
         scaleY: shape.scaleY || 1,
         angle: shape.angle || 0,
-        absolutePositioned: false,
+        absolutePositioned: true,
       });
       image.clipPath = clippedShape;
-      image.__hasMask = true;
-      image.setCoords();
       canvas.remove(shape);
+      canvas.discardActiveObject();
       canvas.setActiveObject(image);
       syncSel(image);
       canvas.requestRenderAll();
@@ -2001,18 +1992,6 @@ function EditorInner() {
                 <button onClick={createMask}
                   className="w-full py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition text-xs font-medium">
                   ✂ Criar máscara
-                </button>
-              )}
-
-              {(sel as any)?.__hasMask && (
-                <button onClick={() => {
-                  if (!fc.current || !sel) return;
-                  sel.clipPath = undefined;
-                  (sel as any).__hasMask = false;
-                  fc.current.requestRenderAll();
-                }}
-                  className="w-full py-2 border border-purple-200 text-purple-600 rounded-lg hover:bg-purple-50 transition text-xs">
-                  ✂ Remover máscara
                 </button>
               )}
 
