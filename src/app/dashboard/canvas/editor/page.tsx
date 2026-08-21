@@ -1741,12 +1741,16 @@ function EditorInner() {
     if (!image || !shape) { alert("Selecione uma imagem e uma forma juntas."); return; }
 
     shape.clone((clippedShape: any) => {
-      // Converte coordenadas da forma para o espaço da imagem
+      // clipPath usa coordenadas relativas ao centro da imagem
+      const imgCenterX = image.left + (image.width * (image.scaleX || 1)) / 2;
+      const imgCenterY = image.top + (image.height * (image.scaleY || 1)) / 2;
       clippedShape.set({
-        left: shape.left - image.left,
-        top: shape.top - image.top,
-        originX: "left",
-        originY: "top",
+        left: shape.left - imgCenterX,
+        top: shape.top - imgCenterY,
+        scaleX: shape.scaleX || 1,
+        scaleY: shape.scaleY || 1,
+        angle: shape.angle || 0,
+        absolutePositioned: false,
       });
       image.clipPath = clippedShape;
       canvas.remove(shape);
