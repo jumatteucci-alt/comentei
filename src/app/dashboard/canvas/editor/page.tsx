@@ -542,9 +542,8 @@ function EditorInner() {
       centeredRotation: true,
     });
     fc.current = canvas;
-    canvasElRef.current = canvas.getElement();
-    const canvasEl = canvas.getElement();
-    console.log("canvasEl:", canvasElRef.current, "tabindex:", canvasElRef.current?.getAttribute("tabindex"));
+    const canvasEl = canvas.getUpperCanvasEl();
+    canvasElRef.current = canvasEl;
     canvasEl.setAttribute("tabindex", "0");
     canvasEl.addEventListener("keydown", (e: KeyboardEvent) => {
       if (!isEditingNodesRef.current) return;
