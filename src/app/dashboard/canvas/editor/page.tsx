@@ -156,6 +156,10 @@ function EditorInner() {
   const format = searchParams.get("format") || "square";
   const fmt = FORMATS[format] || FORMATS.square;
 
+  // Dimensões dinâmicas do Canvas
+  const [canvasWidth, setCanvasWidth] = useState(fmt.w);
+  const [canvasHeight, setCanvasHeight] = useState(fmt.h);
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasElRef = useRef<HTMLElement | null>(null);
   const fc = useRef<any>(null);
@@ -186,7 +190,6 @@ function EditorInner() {
   const [activeTool, setActiveTool] = useState<"select"|"pen"|"brush">("select");
   const activeToolRef = useRef<"select"|"pen"|"brush">("select");
 
-  // Pen tool state
   const penPoints = useRef<{x:number;y:number}[]>([]);
   const penLines = useRef<any[]>([]);
   const penDots = useRef<any[]>([]);
@@ -196,7 +199,6 @@ function EditorInner() {
   const finalizePenRef = useRef<(close:boolean)=>void>(() => {});
   const cancelPenRef = useRef<()=>void>(() => {});
 
-  // Node editing state
   const [isEditingNodes, setIsEditingNodes] = useState(false);
   const editingData = useRef<{
     originalPathObj: any;
@@ -206,7 +208,6 @@ function EditorInner() {
     previewObj: any;
   } | null>(null);
 
-  // Selected object state
   const [sel, setSel] = useState<any>(null);
   const [selFill, setSelFill] = useState("#000000");
   const [selOpacity, setSelOpacity] = useState(100);
@@ -232,13 +233,12 @@ function EditorInner() {
   const [selTextHeight, setSelTextHeight] = useState(0);
   const [selFillGradient, setSelFillGradient] = useState<{c1:string;c2:string;angle:number}|null>(null);
 
-  // Background
   const [bgSolid, setBgSolid] = useState("#ffffff");
   const [bgGradient, setBgGradient] = useState<{c1:string;c2:string;angle:number}|null>(null);
 
   const DISPLAY_W = 540;
-  const scale = DISPLAY_W / fmt.w;
-  const DISPLAY_H = Math.round(fmt.h * scale);
+  const scale = DISPLAY_W / canvasWidth;
+  const DISPLAY_H = Math.round(canvasHeight * scale);
 
   useEffect(() => {
     if (!user) return;
@@ -315,7 +315,6 @@ function EditorInner() {
     } else { setSelFillGradient(null); }
   };
 
-  // Node editing handlers & helpers
   const exitEditNodes = () => {
     if (!fc.current || !editingData.current) return;
     const canvas = fc.current;
@@ -427,7 +426,6 @@ function EditorInner() {
           cmd.x = node.left;
           cmd.y = node.top;
 
-          // Se o próximo comando for uma curva, move a alça de controle cp1 junto com o vértice
           const nextCmd = commands[idx + 1];
           if (nextCmd && nextCmd.type === "C") {
             nextCmd.cp1x += dx;
@@ -498,13 +496,11 @@ function EditorInner() {
           cmd.x = nodeEnd.left;
           cmd.y = nodeEnd.top;
 
-          // 1. Move a alça de entrada deste vértice (cp2)
           cmd.cp2x += dx;
           cmd.cp2y += dy;
           nodeCp2.set({ left: cmd.cp2x, top: cmd.cp2y });
           line2.set({ x1: nodeEnd.left, y1: nodeEnd.top, x2: nodeCp2.left, y2: nodeCp2.top });
 
-          // 2. Move a alça de saída do próximo segmento (cp1) e reposiciona a linha guia conectada
           const nextCmd = commands[idx + 1];
           if (nextCmd && nextCmd.type === "C") {
             nextCmd.cp1x += dx;
@@ -612,6 +608,7 @@ function EditorInner() {
     renderEditControls();
   };
 
+  // Inicialização do Fabric Canvas
   useEffect(() => {
     if (!fabricLoaded || !canvasRef.current) return;
     const canvas = new (window as any).fabric.Canvas(canvasRef.current, {
@@ -693,14 +690,12 @@ function EditorInner() {
       }
     });
 
-    // ── Pen tool event logic & Mesh vertex insertion ──
     canvas.on("mouse:down:before", (e: any) => {
       if (activeToolRef.current !== "pen") return;
       e.e.stopPropagation?.();
     });
 
     canvas.on("mouse:down", (e: any) => {
-      // Inserção de novos nós no Mesh durante o modo de edição
       if (isEditingNodesRef.current && editingData.current) {
         const p = canvas.getPointer(e.e);
         const target = canvas.findTarget(e.e, false);
@@ -709,7 +704,7 @@ function EditorInner() {
         if (!isTargetHelper) {
           const { commands } = editingData.current;
           let closestIdx = -1;
-          let closestDist = 25; // raio de proximidade para clicar sobre o contorno
+          let closestDist = 25;
 
           for (let i = 1; i < commands.length; i++) {
             const cmd = commands[i];
@@ -743,7 +738,6 @@ function EditorInner() {
             const c2y = nextCmd.type === "C" ? nextCmd.cp2y : nextCmd.y;
             const p2x = nextCmd.x, p2y = nextCmd.y;
 
-            // De Casteljau subdivision
             const m1x = p1x + (c1x - p1x) * t, m1y = p1y + (c1y - p1y) * t;
             const m2x = c1x + (c2x - c1x) * t, m2y = c1y + (c2y - c1y) * t;
             const m3x = c2x + (p2x - c2x) * t, m3y = c2y + (p2y - c2y) * t;
@@ -938,6 +932,16 @@ function EditorInner() {
     return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
   }, [fabricLoaded, DISPLAY_W, DISPLAY_H]);
 
+  // Redimensiona o canvas quando largura/altura ou zoom mudam
+  useEffect(() => {
+    if (!fc.current) return;
+    const z = zoom / 100;
+    fc.current.setZoom(z);
+    fc.current.setWidth(DISPLAY_W * z);
+    fc.current.setHeight(DISPLAY_H * z);
+    fc.current.requestRenderAll();
+  }, [zoom, DISPLAY_W, DISPLAY_H]);
+
   useEffect(() => {
     if (!fc.current) return;
     if (bgGradient) {
@@ -950,15 +954,6 @@ function EditorInner() {
       fc.current.setBackgroundColor(bgSolid, () => fc.current?.renderAll());
     }
   }, [bgSolid, bgGradient, DISPLAY_W, DISPLAY_H]);
-
-  useEffect(() => {
-    if (!fc.current) return;
-    const z = zoom / 100;
-    fc.current.setZoom(z);
-    fc.current.setWidth(DISPLAY_W * z);
-    fc.current.setHeight(DISPLAY_H * z);
-    fc.current.requestRenderAll();
-  }, [zoom, DISPLAY_W, DISPLAY_H]);
 
   const upd = (props: Record<string, any>) => {
     if (!fc.current || !sel) return;
@@ -1050,7 +1045,7 @@ function EditorInner() {
   };
   const applyShadow = (color: string, blur: number, ox: number, oy: number) => {
     if (!fc.current || !sel || !selShadow) return;
-    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur, offsetX: ox, offsetY: oy }));
+    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur, offsetX: ox, oy }));
     fc.current.requestRenderAll();
   };
 
@@ -1432,7 +1427,6 @@ function EditorInner() {
     worker.postMessage({ type: "removebg", imageData: pixelData.data.buffer, width: pw, height: ph }, [pixelData.data.buffer]);
   };
 
-  // ── Pen tool finalization ───────────────────────────────
   const finalizePen = (close: boolean) => {
     if (!fc.current) return;
     const fabric = (window as any).fabric;
@@ -1591,8 +1585,8 @@ function EditorInner() {
     const canvas = fc.current;
     const currentZoom = canvas.getZoom();
     canvas.setZoom(1); canvas.setWidth(DISPLAY_W); canvas.setHeight(DISPLAY_H);
-    const z = fmt.w / DISPLAY_W;
-    canvas.setZoom(z); canvas.setWidth(fmt.w); canvas.setHeight(fmt.h);
+    const z = canvasWidth / DISPLAY_W;
+    canvas.setZoom(z); canvas.setWidth(canvasWidth); canvas.setHeight(canvasHeight);
     const dataUrl = canvas.toDataURL({ format:"png", multiplier:1 });
     canvas.setZoom(currentZoom); canvas.setWidth(DISPLAY_W * currentZoom); canvas.setHeight(DISPLAY_H * currentZoom);
     canvas.requestRenderAll();
@@ -1631,9 +1625,33 @@ function EditorInner() {
           <Link href="/dashboard/canvas" className="text-sm text-gray-500 hover:text-gray-700">← Canvas</Link>
           <span className="text-gray-200">|</span>
           <input value={artName} onChange={e => setArtName(e.target.value)}
-            className="text-sm font-medium text-gray-900 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-indigo-400 focus:outline-none px-1 py-0.5 w-40" />
-          <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{fmt.label}</span>
+            className="text-sm font-medium text-gray-900 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-indigo-400 focus:outline-none px-1 py-0.5 w-36" />
+          
+          {/* Dimensões editáveis do Canvas */}
+          <div className="flex items-center gap-1 bg-gray-100 px-2 py-1 rounded-lg text-xs text-gray-600">
+            <span className="text-gray-400 font-semibold">W</span>
+            <input
+              type="number"
+              value={canvasWidth}
+              min={100}
+              max={8000}
+              onChange={e => setCanvasWidth(Math.max(100, +e.target.value || 100))}
+              className="w-14 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-indigo-400 focus:outline-none text-center font-medium"
+            />
+            <span className="text-gray-400">×</span>
+            <span className="text-gray-400 font-semibold">H</span>
+            <input
+              type="number"
+              value={canvasHeight}
+              min={100}
+              max={8000}
+              onChange={e => setCanvasHeight(Math.max(100, +e.target.value || 100))}
+              className="w-14 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-indigo-400 focus:outline-none text-center font-medium"
+            />
+            <span className="text-gray-400 text-[10px]">px</span>
+          </div>
         </div>
+
         <div className="flex items-center gap-2">
           {/* Zoom */}
           <div className="flex items-center gap-1 border border-gray-200 rounded-lg px-2 py-1">
@@ -1774,7 +1792,6 @@ function EditorInner() {
 
         {/* ── RIGHT: PROPERTIES + LAYERS ───────────────── */}
         <div className="w-56 bg-white border-l border-gray-200 flex flex-col flex-shrink-0 overflow-y-auto text-xs">
-
           {isEditingNodes && (
             <div className="p-3 bg-indigo-50 border-b border-indigo-100 flex flex-col gap-2">
               <p className="font-semibold text-indigo-900">Modo Edição de Nós</p>
@@ -1804,7 +1821,6 @@ function EditorInner() {
             <div className="p-3 flex flex-col gap-3 border-b border-gray-200">
               <p className="font-semibold text-gray-600 uppercase tracking-wide" style={{fontSize:10}}>Propriedades</p>
 
-              {/* Node edit button for Paths */}
               {isPath && !isEditingNodes && (
                 <button
                   onClick={() => enterEditNodes(sel)}
@@ -1814,7 +1830,6 @@ function EditorInner() {
                 </button>
               )}
 
-              {/* Máscara — Criar quando houver imagem + forma selecionadas */}
               {sel?.type === "activeSelection" && (() => {
                 const objs = (sel as any).getObjects();
                 const hasImage = objs.some((o: any) => o.type === "image");
@@ -1827,7 +1842,6 @@ function EditorInner() {
                 </button>
               )}
 
-              {/* Desfazer Máscara */}
               {hasClipPath && (
                 <button onClick={removeMask}
                   className="w-full py-2 bg-amber-50 text-amber-700 font-medium rounded-lg border border-amber-200 hover:bg-amber-100 transition text-xs">
@@ -1835,7 +1849,6 @@ function EditorInner() {
                 </button>
               )}
 
-              {/* Fill */}
               {sel.type !== "image" && (
                 <>
                   <Sec title="Preenchimento" />
@@ -1854,11 +1867,9 @@ function EditorInner() {
                 </>
               )}
 
-              {/* Opacity */}
               <Sec title="Opacidade" />
               <SliderRow label="" value={selOpacity} min={0} max={100} unit="%" onChange={updateOpacity} />
 
-              {/* Stroke */}
               {sel.type !== "image" && (
                 <>
                   <Sec title="Borda" />
@@ -1867,11 +1878,9 @@ function EditorInner() {
                 </>
               )}
 
-              {/* Rotation */}
               <Sec title="Rotação" />
               <SliderRow label="" value={selRotation} min={0} max={360} unit="°" onChange={updateRotation} />
 
-              {/* Border radius */}
               {isRect && (
                 <>
                   <Sec title="Arredondamento" />
@@ -1879,7 +1888,6 @@ function EditorInner() {
                 </>
               )}
 
-              {/* Text tools */}
               {isText && (
                 <>
                   <Sec title="Texto" />
@@ -1929,14 +1937,14 @@ function EditorInner() {
                   </div>
                   {isTextbox && (
                     <>
-                      <NumRow label="Largura (px)" value={selTextWidth} min={50} max={Math.round(fmt.w)} onChange={updateTextWidth} />
+                      <NumRow label="Largura (px)" value={selTextWidth} min={50} max={Math.round(canvasWidth)} onChange={updateTextWidth} />
                       <div>
                         <div className="flex items-center justify-between mb-1">
                           <p className="text-gray-400">Altura (px)</p>
                           <span className="text-xs text-gray-300">0 = automático</span>
                         </div>
                         <input
-                          type="number" value={selTextHeight} min={0} max={Math.round(fmt.h)}
+                          type="number" value={selTextHeight} min={0} max={Math.round(canvasHeight)}
                           onChange={e => updateTextHeight(+e.target.value)}
                           className="w-full px-2 py-1 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400"
                         />
@@ -1954,7 +1962,6 @@ function EditorInner() {
                 </>
               )}
 
-              {/* Shadow */}
               <Sec title="Sombra" />
               <div className="flex items-center justify-between">
                 <span className="text-gray-400">Ativar sombra</span>
@@ -1971,7 +1978,6 @@ function EditorInner() {
                 </div>
               )}
 
-              {/* Image features */}
               {sel.type === "image" && (
                 <>
                   <Sec title="Imagem" />
@@ -1988,13 +1994,11 @@ function EditorInner() {
                 </>
               )}
 
-              {/* Blur filter */}
               <>
                 <Sec title="Blur" />
                 <SliderRow label="" value={selBlur} min={0} max={100} onChange={updateBlur} />
               </>
 
-              {/* Align */}
               <Sec title="Alinhar" />
               <div className="grid grid-cols-3 gap-1">
                 {([["left","←□"],["hcenter","□↔"],["right","□→"],["top","↑□"],["vcenter","□↕"],["bottom","□↓"]] as [string,string][]).map(([dir,icon]) => (
@@ -2003,7 +2007,6 @@ function EditorInner() {
                 ))}
               </div>
 
-              {/* Delete */}
               <button onClick={deleteSelected} className="w-full py-2 mt-1 border border-red-200 text-red-500 rounded-lg hover:bg-red-50 transition">🗑 Remover</button>
             </div>
           ) : (
@@ -2014,7 +2017,6 @@ function EditorInner() {
             </div>
           )}
 
-          {/* Layers panel */}
           <div className="flex flex-col flex-1">
             <div className="px-3 py-2 border-b border-gray-100">
               <p className="font-semibold text-gray-500 uppercase tracking-wide" style={{fontSize:10}}>Camadas</p>
