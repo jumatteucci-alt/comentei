@@ -162,6 +162,7 @@ function EditorInner() {
   const isEditingNodesRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const clipboardRef = useRef<any>(null);
+  const selectedNodeRef = useRef<any>(null);
   const historyRef = useRef<{ undo: string[]; redo: string[] }>({ undo: [], redo: [] });
   const savingHistory = useRef(false);
   const blurOriginMap = useRef<Map<string, string>>(new Map());
@@ -691,8 +692,6 @@ function EditorInner() {
         canvas.requestRenderAll();
       }
     });
-
-    const selectedNodeRef = { current: null as any };
 
     const toggleNodeSmooth = () => {
       const node = selectedNodeRef.current;
