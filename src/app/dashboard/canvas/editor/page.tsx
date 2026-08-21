@@ -156,6 +156,7 @@ function EditorInner() {
   const format = searchParams.get("format") || "square";
   const fmt = FORMATS[format] || FORMATS.square;
 
+  const enterEditNodesRef = useRef<((p: any) => void) | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasElRef = useRef<HTMLElement | null>(null);
   const fc = useRef<any>(null);
@@ -478,17 +479,17 @@ function EditorInner() {
         canvas.add(line1);
         canvas.add(line2);
 
-        const nodeCp1 = new fabric.Circle({ left: cmd.cp1x, top: cmd.cp1y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
+        const nodeCp1 = new fabric.Circle({ left: cmd.cp1x, top: cmd.cp1y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true, opacity: 0 });
         nodeCp1.__cmd = cmd;
         nodeCp1.on("selected", () => { selectedNodeRef.current = nodeCp1; nodeCp1.set({ fill: "#ff0000" }); line1.set({ opacity: 1 }); line2.set({ opacity: 1 }); canvas.requestRenderAll(); });
         nodeCp1.on("deselected", () => { nodeCp1.set({ fill: "#ef4444" }); line1.set({ opacity: 0 }); line2.set({ opacity: 0 }); canvas.requestRenderAll(); });
 
-        const nodeCp2 = new fabric.Circle({ left: cmd.cp2x, top: cmd.cp2y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
+        const nodeCp2 = new fabric.Circle({ left: cmd.cp2x, top: cmd.cp2y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true, opacity: 0 });
         nodeCp2.__cmd = cmd;
         nodeCp2.on("selected", () => { selectedNodeRef.current = nodeCp2; nodeCp2.set({ fill: "#ff0000" }); line1.set({ opacity: 1 }); line2.set({ opacity: 1 }); canvas.requestRenderAll(); });
         nodeCp2.on("deselected", () => { nodeCp2.set({ fill: "#ef4444" }); line1.set({ opacity: 0 }); line2.set({ opacity: 0 }); canvas.requestRenderAll(); });
 
-        const nodeEnd = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
+        const nodeEnd = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true, opacity: 0 });
         nodeEnd.__cmd = cmd;
         nodeEnd.on("selected", () => { selectedNodeRef.current = nodeEnd; nodeEnd.set({ fill: "#ef4444" }); line1.set({ opacity: 1 }); line2.set({ opacity: 1 }); canvas.requestRenderAll(); });
         nodeEnd.on("deselected", () => { nodeEnd.set({ fill: "#ffffff" }); line1.set({ opacity: 0 }); line2.set({ opacity: 0 }); canvas.requestRenderAll(); });
@@ -681,6 +682,17 @@ function EditorInner() {
     });
 
     canvas.on("mouse:move", (e: any) => {
+
+      // Cursor de caneta ao passar sobre path em modo select
+      if (activeToolRef.current === "select" && !isEditingNodesRef.current) {
+        const target = canvas.findTarget(e.e, false);
+        if (target && target.type === "path" && !target.isControlHelper) {
+          canvas.defaultCursor = "crosshair";
+        } else {
+          canvas.defaultCursor = "default";
+        }
+      }
+
       if (activeToolRef.current !== "pen" || !isPenDragging.current) return;
       const fabric = (window as any).fabric;
       const p = canvas.getPointer(e.e);
@@ -851,6 +863,7 @@ function EditorInner() {
     };
 
     deleteSelectedNodeRef.current = deleteSelectedNode;
+    enterEditNodesRef.current = enterEditNodes;
 
     const onKey = (e: KeyboardEvent) => {
       const tag = (document.activeElement as HTMLElement)?.tagName;
@@ -915,6 +928,15 @@ function EditorInner() {
           exitEditNodes();
         } else if (activeToolRef.current === "pen") {
           finalizePenRef.current(true);
+        }
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        if (!isEditingNodesRef.current) {
+          const active = canvas.getActiveObject();
+          if (active && active.type === "path" && !active.isControlHelper) {
+            enterEditNodesRef.current?.(active);
+          }
         }
       }
       if (isEditingNodesRef.current) {
