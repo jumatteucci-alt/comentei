@@ -156,11 +156,9 @@ function EditorInner() {
   const format = searchParams.get("format") || "square";
   const fmt = FORMATS[format] || FORMATS.square;
 
-  const enterEditNodesRef = useRef<((p: any) => void) | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasElRef = useRef<HTMLElement | null>(null);
   const fc = useRef<any>(null);
-  const updatePreviewRef = useRef<(() => void) | null>(null);
   const isEditingNodesRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const clipboardRef = useRef<any>(null);
@@ -172,7 +170,6 @@ function EditorInner() {
   const blurPosMap    = useRef<Map<string, {left:number;top:number;scaleX:number;scaleY:number;angle:number}>>(new Map());
   const blurTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rectBeforeScale = useRef<{ rx: number; ry: number } | null>(null);
-  const deleteSelectedNodeRef = useRef<(() => void) | null>(null);
 
   const [site, setSite] = useState<Site | null>(null);
   const [fabricLoaded, setFabricLoaded] = useState(false);
@@ -318,7 +315,7 @@ function EditorInner() {
     } else { setSelFillGradient(null); }
   };
 
-  // Node editing handlers
+  // Node editing handlers & helpers
   const exitEditNodes = () => {
     if (!fc.current || !editingData.current) return;
     const canvas = fc.current;
@@ -333,7 +330,6 @@ function EditorInner() {
     canvas.hoverCursor = "move";
     canvas.selection = true;
 
-    // Constrói SVG path final
     let d = "";
     commands.forEach(c => {
       if (c.type === "M") d += `M ${c.x} ${c.y} `;
@@ -365,6 +361,155 @@ function EditorInner() {
     refreshLayers(canvas);
   };
 
+  const renderEditControls = () => {
+    if (!editingData.current || !fc.current) return;
+    const canvas = fc.current;
+    const fabric = (window as any).fabric;
+    const { commands, helpers, handleLines, previewObj, originalPathObj } = editingData.current;
+
+    helpers.forEach((h: any) => canvas.remove(h));
+    handleLines.forEach((l: any) => canvas.remove(l));
+    if (previewObj) canvas.remove(previewObj);
+
+    const newHelpers: any[] = [];
+    const newHandleLines: any[] = [];
+    let currentPreview: any = null;
+
+    const updatePreview = () => {
+      if (currentPreview) canvas.remove(currentPreview);
+      let d = "";
+      commands.forEach(c => {
+        if (c.type === "M") d += `M ${c.x} ${c.y} `;
+        else if (c.type === "L") d += `L ${c.x} ${c.y} `;
+        else if (c.type === "C") d += `C ${c.cp1x} ${c.cp1y} ${c.cp2x} ${c.cp2y} ${c.x} ${c.y} `;
+        else if (c.type === "Z") d += `Z `;
+      });
+      currentPreview = new fabric.Path(d.trim(), {
+        fill: originalPathObj.fill,
+        stroke: originalPathObj.stroke || "#000000",
+        strokeWidth: originalPathObj.strokeWidth || 2,
+        strokeUniform: true,
+        selectable: false,
+        evented: false,
+        isEditPreview: true,
+      });
+      currentPreview.set({
+        left: currentPreview.pathOffset.x - (currentPreview.width / 2),
+        top: currentPreview.pathOffset.y - (currentPreview.height / 2),
+      });
+      canvas.add(currentPreview);
+      canvas.sendToBack(currentPreview);
+      canvas.sendToBack(originalPathObj);
+      if (editingData.current) editingData.current.previewObj = currentPreview;
+      canvas.requestRenderAll();
+    };
+
+    commands.forEach((cmd, idx) => {
+      if (cmd.type === "M" || cmd.type === "L") {
+        const node = new fabric.Circle({
+          left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2,
+          originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true
+        });
+        node.__cmd = cmd;
+        node.on("selected", () => {
+          selectedNodeRef.current = node;
+          node.set({ fill: "#4f46e5" });
+          canvasElRef.current?.focus();
+          canvas.requestRenderAll();
+        });
+        node.on("deselected", () => {
+          node.set({ fill: "#ffffff" });
+          canvas.requestRenderAll();
+        });
+        node.on("moving", () => {
+          cmd.x = node.left;
+          cmd.y = node.top;
+          updatePreview();
+        });
+        newHelpers.push(node);
+        canvas.add(node);
+      } else if (cmd.type === "C") {
+        const prevCmd = commands[idx - 1];
+        const line1 = new fabric.Line([prevCmd ? prevCmd.x : cmd.cp1x, prevCmd ? prevCmd.y : cmd.cp1y, cmd.cp1x, cmd.cp1y], {
+          stroke: "#6366f1", strokeWidth: 1.2, strokeDashArray: [3, 3], selectable: false, evented: false, isControlHelper: true
+        });
+        const line2 = new fabric.Line([cmd.x, cmd.y, cmd.cp2x, cmd.cp2y], {
+          stroke: "#6366f1", strokeWidth: 1.2, strokeDashArray: [3, 3], selectable: false, evented: false, isControlHelper: true
+        });
+        newHandleLines.push(line1, line2);
+        canvas.add(line1);
+        canvas.add(line2);
+
+        const nodeCp1 = new fabric.Circle({ left: cmd.cp1x, top: cmd.cp1y, radius: 4, fill: "#ef4444", stroke: "#ffffff", strokeWidth: 1.5, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
+        const nodeCp2 = new fabric.Circle({ left: cmd.cp2x, top: cmd.cp2y, radius: 4, fill: "#ef4444", stroke: "#ffffff", strokeWidth: 1.5, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
+        const nodeEnd = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
+
+        nodeCp1.__cmd = cmd;
+        nodeCp2.__cmd = cmd;
+        nodeEnd.__cmd = cmd;
+
+        nodeCp1.on("selected", () => { selectedNodeRef.current = nodeCp1; canvasElRef.current?.focus(); });
+        nodeCp2.on("selected", () => { selectedNodeRef.current = nodeCp2; canvasElRef.current?.focus(); });
+        nodeEnd.on("selected", () => {
+          selectedNodeRef.current = nodeEnd;
+          nodeEnd.set({ fill: "#4f46e5" });
+          canvasElRef.current?.focus();
+          canvas.requestRenderAll();
+        });
+        nodeEnd.on("deselected", () => {
+          nodeEnd.set({ fill: "#ffffff" });
+          canvas.requestRenderAll();
+        });
+
+        nodeCp1.on("moving", () => {
+          cmd.cp1x = nodeCp1.left;
+          cmd.cp1y = nodeCp1.top;
+          const anchorX = prevCmd ? prevCmd.x : cmd.cp1x;
+          const anchorY = prevCmd ? prevCmd.y : cmd.cp1y;
+          line1.set({ x1: anchorX, y1: anchorY, x2: nodeCp1.left, y2: nodeCp1.top });
+          updatePreview();
+        });
+
+        nodeCp2.on("moving", () => {
+          cmd.cp2x = nodeCp2.left;
+          cmd.cp2y = nodeCp2.top;
+          line2.set({ x1: cmd.x, y1: cmd.y, x2: nodeCp2.left, y2: nodeCp2.top });
+          updatePreview();
+        });
+
+        nodeEnd.on("moving", () => {
+          const dx = nodeEnd.left - cmd.x;
+          const dy = nodeEnd.top - cmd.y;
+          cmd.x = nodeEnd.left;
+          cmd.y = nodeEnd.top;
+
+          // Arrasta as alças de controle junto para preservar a curvatura
+          cmd.cp2x += dx;
+          cmd.cp2y += dy;
+          nodeCp2.set({ left: cmd.cp2x, top: cmd.cp2y });
+
+          const nextCmd = commands[idx + 1];
+          if (nextCmd && nextCmd.type === "C") {
+            const nextL1 = newHandleLines[idx * 2];
+            if (nextL1) nextL1.set({ x1: nodeEnd.left, y1: nodeEnd.top });
+          }
+
+          line2.set({ x1: nodeEnd.left, y1: nodeEnd.top, x2: nodeCp2.left, y2: nodeCp2.top });
+          updatePreview();
+        });
+
+        newHelpers.push(nodeCp1, nodeCp2, nodeEnd);
+        canvas.add(nodeCp1);
+        canvas.add(nodeCp2);
+        canvas.add(nodeEnd);
+      }
+    });
+
+    editingData.current.helpers = newHelpers;
+    editingData.current.handleLines = newHandleLines;
+    updatePreview();
+  };
+
   const enterEditNodes = (pathObj: any) => {
     if (!fc.current || !pathObj || pathObj.type !== "path") return;
     const canvas = fc.current;
@@ -373,7 +518,6 @@ function EditorInner() {
     isEditingNodesRef.current = true;
 
     canvas.discardActiveObject();
-    canvas.selection = true;
     pathObj.opacity = 0.3;
     pathObj.selectable = false;
     pathObj.evented = false;
@@ -404,133 +548,48 @@ function EditorInner() {
       }
     });
 
-    const helpers: any[] = [];
-    const handleLines: any[] = [];
-    let previewObj: any = null;
-
-    const updatePreview = () => {
-      if (previewObj) canvas.remove(previewObj);
-      let d = "";
-      commands.forEach(c => {
-        if (c.type === "M") d += `M ${c.x} ${c.y} `;
-        else if (c.type === "L") d += `L ${c.x} ${c.y} `;
-        else if (c.type === "C") d += `C ${c.cp1x} ${c.cp1y} ${c.cp2x} ${c.cp2y} ${c.x} ${c.y} `;
-        else if (c.type === "Z") d += `Z `;
-      });
-      const tmp = new fabric.Path(d.trim(), {
-        fill: pathObj.fill,
-        stroke: pathObj.stroke || "#000000",
-        strokeWidth: pathObj.strokeWidth || 2,
-        strokeUniform: true,
-        selectable: false,
-        evented: false,
-        isEditPreview: true,
-      });
-      tmp.set({
-        left: tmp.pathOffset.x - (tmp.width / 2),
-        top: tmp.pathOffset.y - (tmp.height / 2),
-      });
-      canvas.add(tmp);
-      canvas.sendToBack(tmp);
-      canvas.sendToBack(pathObj);
-      previewObj = tmp;
-      if (editingData.current) editingData.current.previewObj = tmp;
-      canvas.requestRenderAll();
-    };
-
-    updatePreviewRef.current = updatePreview;
-
-    commands.forEach((cmd, idx) => {
-      if (cmd.type === "M" || cmd.type === "L") {
-        const node = new fabric.Circle({
-          left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2,
-          originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true
-        });
-        node.__cmd = cmd;
-        node.on("selected", () => {
-          selectedNodeRef.current = node;
-          node.set({ fill: "#ef4444" });
-          canvas.requestRenderAll();
-        });
-        node.on("deselected", () => {
-          node.set({ fill: "#ffffff" });
-          canvas.requestRenderAll();
-        });
-        node.on("moving", () => {
-          cmd.x = node.left;
-          cmd.y = node.top;
-          updatePreview();
-        });
-        helpers.push(node);
-        canvas.add(node);
-      } else if (cmd.type === "C") {
-        const prevCmd = commands[idx - 1];
-        const line1 = new fabric.Line([prevCmd ? prevCmd.x : cmd.cp1x, prevCmd ? prevCmd.y : cmd.cp1y, cmd.cp1x, cmd.cp1y], {
-          stroke: "#f87171", strokeWidth: 1, strokeDashArray: [2, 2], selectable: false, evented: false, isControlHelper: true, opacity:0
-        });
-        cmd.__line1 = line1;
-        const line2 = new fabric.Line([cmd.x, cmd.y, cmd.cp2x, cmd.cp2y], {
-          stroke: "#f87171", strokeWidth: 1, strokeDashArray: [2, 2], selectable: false, evented: false, isControlHelper: true, opacity:0
-        });
-        cmd.__line2 = line2;
-        handleLines.push(line1, line2);
-        canvas.add(line1);
-        canvas.add(line2);
-
-        const nodeCp1 = new fabric.Circle({ left: cmd.cp1x, top: cmd.cp1y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true, opacity: 0 });
-        nodeCp1.__cmd = cmd;
-        nodeCp1.on("selected", () => { selectedNodeRef.current = nodeCp1; nodeCp1.set({ fill: "#ff0000" }); line1.set({ opacity: 1 }); line2.set({ opacity: 1 }); canvas.requestRenderAll(); });
-        nodeCp1.on("deselected", () => { nodeCp1.set({ fill: "#ef4444" }); line1.set({ opacity: 0 }); line2.set({ opacity: 0 }); canvas.requestRenderAll(); });
-
-        const nodeCp2 = new fabric.Circle({ left: cmd.cp2x, top: cmd.cp2y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true, opacity: 0 });
-        nodeCp2.__cmd = cmd;
-        nodeCp2.on("selected", () => { selectedNodeRef.current = nodeCp2; nodeCp2.set({ fill: "#ff0000" }); line1.set({ opacity: 1 }); line2.set({ opacity: 1 }); canvas.requestRenderAll(); });
-        nodeCp2.on("deselected", () => { nodeCp2.set({ fill: "#ef4444" }); line1.set({ opacity: 0 }); line2.set({ opacity: 0 }); canvas.requestRenderAll(); });
-
-        const nodeEnd = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
-        nodeEnd.__cmd = cmd;
-        nodeEnd.on("selected", () => { selectedNodeRef.current = nodeEnd; nodeEnd.set({ fill: "#ef4444" }); line1.set({ opacity: 1 }); line2.set({ opacity: 1 }); canvas.requestRenderAll(); });
-        nodeEnd.on("deselected", () => { nodeEnd.set({ fill: "#ffffff" }); line1.set({ opacity: 0 }); line2.set({ opacity: 0 }); canvas.requestRenderAll(); });
-
-        nodeCp1.on("moving", () => {
-          cmd.cp1x = nodeCp1.left;
-          cmd.cp1y = nodeCp1.top;
-          line1.set({ x2: nodeCp1.left, y2: nodeCp1.top });
-          updatePreview();
-        });
-        nodeCp2.on("moving", () => {
-          cmd.cp2x = nodeCp2.left;
-          cmd.cp2y = nodeCp2.top;
-          line2.set({ x2: nodeCp2.left, y2: nodeCp2.top });
-          updatePreview();
-        });
-        nodeEnd.on("moving", () => {
-          cmd.x = nodeEnd.left;
-          cmd.y = nodeEnd.top;
-          line2.set({ x1: nodeEnd.left, y1: nodeEnd.top });
-          const nextCmd = commands[idx + 1];
-          if (nextCmd && nextCmd.__line1) {
-            nextCmd.__line1.set({ x1: nodeEnd.left, y1: nodeEnd.top });
-          }
-          updatePreview();
-        });
-
-        helpers.push(nodeCp1, nodeCp2, nodeEnd);
-        canvas.add(nodeCp1);
-        canvas.add(nodeCp2);
-        canvas.add(nodeEnd);
-      }
-    });
-
     editingData.current = {
       originalPathObj: pathObj,
       commands,
-      helpers,
-      handleLines,
+      helpers: [],
+      handleLines: [],
       previewObj: null,
     };
 
-    updatePreview();
+    renderEditControls();
+  };
+
+  const toggleNodeSmooth = () => {
+    const node = selectedNodeRef.current;
+    if (!node || !editingData.current) return;
+    const { commands } = editingData.current;
+    const cmd = commands.find((c: any) => c === node.__cmd);
+    if (!cmd) return;
+
+    if (cmd.type === "C") {
+      const isSmooth = Math.hypot(cmd.cp2x - cmd.x, cmd.cp2y - cmd.y) > 2;
+      if (isSmooth) {
+        cmd.cp2x = cmd.x;
+        cmd.cp2y = cmd.y;
+      } else {
+        cmd.cp2x = cmd.x + 35;
+        cmd.cp2y = cmd.y;
+      }
+      renderEditControls();
+    }
+  };
+
+  const deleteSelectedNode = () => {
+    const node = selectedNodeRef.current;
+    if (!node || !editingData.current) return;
+    const { commands } = editingData.current;
+    const cmdToRemove = node.__cmd;
+    const idx = commands.findIndex((c: any) => c === cmdToRemove);
+    if (idx <= 0) return;
+
+    commands.splice(idx, 1);
+    selectedNodeRef.current = null;
+    renderEditControls();
   };
 
   useEffect(() => {
@@ -543,13 +602,6 @@ function EditorInner() {
     const canvasEl = canvas.upperCanvasEl;
     canvasElRef.current = canvasEl;
     canvasEl.setAttribute("tabindex", "0");
-    canvasEl.addEventListener("keydown", (e: KeyboardEvent) => {
-      if (!isEditingNodesRef.current) return;
-      if (e.key === "Delete" || e.key === "Backspace") {
-        e.preventDefault();
-        deleteSelectedNodeRef.current?.();
-      }
-    });
 
     const saveState = () => {
       if (savingHistory.current) return;
@@ -560,14 +612,8 @@ function EditorInner() {
       try { canvas.loadFromJSON(JSON.parse(json), () => { try { canvas.renderAll(); refreshLayers(canvas); } catch {} savingHistory.current = false; }); } catch { savingHistory.current = false; }
     };
 
-    canvas.on("selection:created", (e: any) => {
-      const active = canvas.getActiveObject();
-      syncSel(active);
-    });
-    canvas.on("selection:updated", (e: any) => {
-      const active = canvas.getActiveObject();
-      syncSel(active);
-    });
+    canvas.on("selection:created", () => syncSel(canvas.getActiveObject()));
+    canvas.on("selection:updated", () => syncSel(canvas.getActiveObject()));
     canvas.on("selection:cleared", () => syncSel(null));
     canvas.on("object:modified", (e: any) => {
       if (!savingHistory.current) {
@@ -586,14 +632,6 @@ function EditorInner() {
       if (isEditingNodesRef.current) return;
       if (e.target && e.target.type === "path" && !e.target.isControlHelper) {
         enterEditNodes(e.target);
-      }
-    });
-
-    canvas.on("key:down", (e: any) => {
-      if (!isEditingNodesRef.current) return;
-      if (e.e.key === "Delete" || e.e.key === "Backspace") {
-        e.e.preventDefault();
-        deleteSelectedNodeRef.current?.();
       }
     });
 
@@ -641,30 +679,8 @@ function EditorInner() {
       e.e.stopPropagation?.();
     });
 
-    const rebuildPreview = () => {
-      if (!editingData.current || !fc.current) return;
-      const fabric = (window as any).fabric;
-      const { commands, originalPathObj } = editingData.current;
-      if (editingData.current.previewObj) fc.current.remove(editingData.current.previewObj);
-      let d = "";
-      commands.forEach((c: any) => {
-        if (c.type === "M") d += `M ${c.x} ${c.y} `;
-        else if (c.type === "L") d += `L ${c.x} ${c.y} `;
-        else if (c.type === "C") d += `C ${c.cp1x} ${c.cp1y} ${c.cp2x} ${c.cp2y} ${c.x} ${c.y} `;
-        else if (c.type === "Z") d += `Z `;
-      });
-      const tmp = new fabric.Path(d.trim(), { fill: originalPathObj.fill, stroke: originalPathObj.stroke || "#000", strokeWidth: originalPathObj.strokeWidth || 2, strokeUniform: true, selectable: false, evented: false, isEditPreview: true });
-      tmp.set({ left: tmp.pathOffset.x - tmp.width/2, top: tmp.pathOffset.y - tmp.height/2 });
-      fc.current.add(tmp);
-      fc.current.sendToBack(tmp);
-      fc.current.sendToBack(originalPathObj);
-      editingData.current.previewObj = tmp;
-      fc.current.requestRenderAll();
-    };
-
     canvas.on("mouse:down", (e: any) => {
-      if (activeToolRef.current !== "pen") return;
-      if (isEditingNodesRef.current) return;
+      if (activeToolRef.current !== "pen" || isEditingNodesRef.current) return;
       const fabric = (window as any).fabric;
       const p = canvas.getPointer(e.e);
       const pts = penPoints.current;
@@ -703,163 +719,10 @@ function EditorInner() {
       canvas.requestRenderAll();
     });
 
-    canvas.on("mouse:down", (e: any) => {
-      if (!isEditingNodesRef.current) return;
-      if (!editingData.current) return;
-      const fabric = (window as any).fabric;
-      const p = canvas.getPointer(e.e);
-      const pathObj = editingData.current.originalPathObj;
-      pathObj.evented = true;
-      const target = canvas.findTarget(e.e, false);
-      pathObj.evented = false;
-      if (!target || target !== pathObj) return;
-      const { commands } = editingData.current;
-      
-      let closestIdx = 1;
-      let closestDist = Infinity;
-
-      for (let i = 1; i < commands.length; i++) {
-        const cmd = commands[i];
-        if (cmd.type === "Z") continue;
-        const prevCmd = commands[i - 1];
-        if (!prevCmd) continue;
-        const px = prevCmd.x ?? 0;
-        const py = prevCmd.y ?? 0;
-        const cx = cmd.x ?? 0;
-        const cy = cmd.y ?? 0;
-        const mx = (px + cx) / 2;
-        const my = (py + cy) / 2;
-        const dist = Math.hypot(p.x - mx, p.y - my);
-        if (dist < closestDist) {
-          closestDist = dist;
-          closestIdx = i;
-        }
-      }
-
-      const prevCmd = commands[closestIdx - 1];
-      const nextCmd = commands[closestIdx];
-
-      const t = 0.5;
-      let p1x = prevCmd?.x ?? p.x, p1y = prevCmd?.y ?? p.y;
-      let c1x = nextCmd?.cp1x ?? p.x, c1y = nextCmd?.cp1y ?? p.y;
-      let c2x = nextCmd?.cp2x ?? p.x, c2y = nextCmd?.cp2y ?? p.y;
-      let p2x = nextCmd?.x ?? p.x, p2y = nextCmd?.y ?? p.y;
-
-      if (nextCmd?.type !== "C") {
-        c1x = p1x; c1y = p1y; c2x = p2x; c2y = p2y;
-      }
-
-      const m1x = p1x + (c1x - p1x) * t, m1y = p1y + (c1y - p1y) * t;
-      const m2x = c1x + (c2x - c1x) * t, m2y = c1y + (c2y - c1y) * t;
-      const m3x = c2x + (p2x - c2x) * t, m3y = c2y + (p2y - c2y) * t;
-      const m4x = m1x + (m2x - m1x) * t, m4y = m1y + (m2y - m1y) * t;
-      const m5x = m2x + (m3x - m2x) * t, m5y = m2y + (m3y - m2y) * t;
-      const midX = m4x + (m5x - m4x) * t, midY = m4y + (m5y - m4y) * t;
-
-      if (nextCmd?.type === "C") {
-        nextCmd.cp1x = m3x; nextCmd.cp1y = m3y;
-        nextCmd.cp2x = m5x; nextCmd.cp2y = m5y;
-      }
-
-      commands.splice(closestIdx, 0, {
-        type: "C",
-        cp1x: m1x, cp1y: m1y,
-        cp2x: m4x, cp2y: m4y,
-        x: midX, y: midY,
-      });
-
-      const { helpers, handleLines, previewObj } = editingData.current;
-      helpers.forEach((h: any) => canvas.remove(h));
-      handleLines.forEach((l: any) => canvas.remove(l));
-      if (previewObj) canvas.remove(previewObj);
-      editingData.current.helpers = [];
-      editingData.current.handleLines = [];
-      editingData.current.previewObj = null;
-
-      const newHelpers: any[] = [];
-      const newHandleLines: any[] = [];
-
-      commands.forEach((cmd: any, i: number) => {
-        if (cmd.type === "M" || cmd.type === "L") {
-          const node2 = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
-          node2.__cmd = cmd;
-          node2.on("selected", () => { selectedNodeRef.current = node2; node2.set({ fill: "#ef4444" }); canvasElRef.current?.focus(); canvas.requestRenderAll(); });
-          node2.on("deselected", () => { node2.set({ fill: "#ffffff" }); canvas.requestRenderAll(); });
-          node2.on("moving", () => { cmd.x = node2.left; cmd.y = node2.top; rebuildPreview(); });
-          newHelpers.push(node2);
-          canvas.add(node2);
-        } else if (cmd.type === "C") {
-          const prevCmd = commands[i - 1];
-          const l1 = new fabric.Line([prevCmd?.x ?? cmd.cp1x, prevCmd?.y ?? cmd.cp1y, cmd.cp1x, cmd.cp1y], { stroke: "#f87171", strokeWidth: 1, strokeDashArray: [2,2], selectable: false, evented: false, isControlHelper: true, opacity: 0 });
-          const l2 = new fabric.Line([cmd.x, cmd.y, cmd.cp2x, cmd.cp2y], { stroke: "#f87171", strokeWidth: 1, strokeDashArray: [2,2], selectable: false, evented: false, isControlHelper: true, opacity: 0 });
-          cmd.__line1 = l1;
-          newHandleLines.push(l1, l2);
-          canvas.add(l1); canvas.add(l2);
-          const nc1 = new fabric.Circle({ left: cmd.cp1x, top: cmd.cp1y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true, opacity: 0 });
-          const nc2 = new fabric.Circle({ left: cmd.cp2x, top: cmd.cp2y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true, opacity: 0 });
-          const ne = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
-          [nc1, nc2, ne].forEach((n: any) => { n.__cmd = cmd; });
-          nc1.on("selected", () => { selectedNodeRef.current = nc1; nc1.set({ fill: "#ff0000", opacity: 1 }); nc2.set({ opacity: 1 }); l1.set({ opacity: 1 }); l2.set({ opacity: 1 }); canvasElRef.current?.focus(); canvas.requestRenderAll(); });
-          nc1.on("deselected", () => { nc1.set({ fill: "#ef4444", opacity: 0 }); nc2.set({ opacity: 0 }); l1.set({ opacity: 0 }); l2.set({ opacity: 0 }); canvas.requestRenderAll(); });
-          nc2.on("selected", () => { selectedNodeRef.current = nc2; nc2.set({ fill: "#ff0000", opacity: 1 }); nc1.set({ opacity: 1 }); l1.set({ opacity: 1 }); l2.set({ opacity: 1 }); canvasElRef.current?.focus(); canvas.requestRenderAll(); });
-          nc2.on("deselected", () => { nc2.set({ fill: "#ef4444", opacity: 0 }); nc1.set({ opacity: 0 }); l1.set({ opacity: 0 }); l2.set({ opacity: 0 }); canvas.requestRenderAll(); });
-          ne.on("selected", () => {
-            selectedNodeRef.current = ne;
-            ne.set({ fill: "#ef4444" });
-            nc1.set({ opacity: 1 });
-            nc2.set({ opacity: 1 });
-            l1.set({ opacity: 1 });
-            l2.set({ opacity: 1 });
-            const cmdIdx = commands.indexOf(cmd);
-            for (let i = cmdIdx - 1; i >= 0; i--) {
-              if (commands[i].type === "C") {
-                if (commands[i].__line2) commands[i].__line2.set({ opacity: 1 });
-                break;
-              }
-            }
-            const nextCmd = commands[commands.indexOf(cmd) + 1];
-            if (nextCmd?.__line1) nextCmd.__line1.set({ opacity: 1 });
-            canvasElRef.current?.focus();
-            canvas.requestRenderAll();
-          });
-          ne.on("deselected", () => {
-            ne.set({ fill: "#ffffff" });
-            nc1.set({ opacity: 0 });
-            nc2.set({ opacity: 0 });
-            l1.set({ opacity: 0 });
-            l2.set({ opacity: 0 });
-            const cmdIdx = commands.indexOf(cmd);
-            for (let i = cmdIdx - 1; i >= 0; i--) {
-              if (commands[i].type === "C") {
-                if (commands[i].__line2) commands[i].__line2.set({ opacity: 0 });
-                break;
-              }
-            }
-            const nextCmd = commands[commands.indexOf(cmd) + 1];
-            if (nextCmd?.__line1) nextCmd.__line1.set({ opacity: 0 });
-            canvas.requestRenderAll();
-          });
-          nc1.on("moving", () => { cmd.cp1x = nc1.left; cmd.cp1y = nc1.top; l1.set({ x2: nc1.left, y2: nc1.top }); rebuildPreview(); });
-          nc2.on("moving", () => { cmd.cp2x = nc2.left; cmd.cp2y = nc2.top; l2.set({ x2: nc2.left, y2: nc2.top }); rebuildPreview(); });
-          ne.on("moving", () => { cmd.x = ne.left; cmd.y = ne.top; l2.set({ x1: ne.left, y1: ne.top }); const nc = commands[i+1]; if (nc?.__line1) nc.__line1.set({ x1: ne.left, y1: ne.top }); rebuildPreview(); });
-          newHelpers.push(nc1, nc2, ne);
-          canvas.add(nc1); canvas.add(nc2); canvas.add(ne);
-        }
-      });
-
-      editingData.current.helpers = newHelpers;
-      editingData.current.handleLines = newHandleLines;
-      rebuildPreview();
-    });
-
     canvas.on("mouse:move", (e: any) => {
       if (activeToolRef.current === "select" && !isEditingNodesRef.current) {
         const target = canvas.findTarget(e.e, false);
-        if (target && target.type === "path" && !target.isControlHelper) {
-          canvas.defaultCursor = "crosshair";
-        } else {
-          canvas.defaultCursor = "default";
-        }
+        canvas.defaultCursor = (target && target.type === "path" && !target.isControlHelper) ? "crosshair" : "default";
       }
 
       if (activeToolRef.current !== "pen" || !isPenDragging.current) return;
@@ -910,122 +773,6 @@ function EditorInner() {
       }
     });
 
-    const toggleNodeSmooth = () => {
-      const node = selectedNodeRef.current;
-      if (!node || !editingData.current) return;
-      const { commands } = editingData.current;
-      const cmd = commands.find((c: any) => c === node.__cmd);
-      if (!cmd || cmd.type !== "C") return;
-      const isSmooth = cmd.cp1x !== cmd.x || cmd.cp1y !== cmd.y;
-      if (isSmooth) {
-        cmd.cp1x = cmd.x; cmd.cp1y = cmd.y;
-        cmd.cp2x = cmd.x; cmd.cp2y = cmd.y;
-      } else {
-        cmd.cp1x = cmd.x - 40; cmd.cp2x = cmd.x + 40;
-      }
-      updatePreviewRef.current?.();
-    };
-
-    const deleteSelectedNode = () => {
-      const node = selectedNodeRef.current;
-      if (!node || !editingData.current) return;
-      const { commands, helpers, handleLines, previewObj } = editingData.current;
-      const cmdToRemove = node.__cmd;
-      const idx = commands.findIndex((c: any) => c === cmdToRemove);
-      if (idx < 0 || idx === 0) return;
-      
-      commands.splice(idx, 1);
-      
-      helpers.forEach((h: any) => fc.current?.remove(h));
-      handleLines.forEach((l: any) => fc.current?.remove(l));
-      if (previewObj) fc.current?.remove(previewObj);
-      editingData.current.helpers = [];
-      editingData.current.handleLines = [];
-      editingData.current.previewObj = null;
-      selectedNodeRef.current = null;
-
-      const fabric = (window as any).fabric;
-      const canvas = fc.current!;
-      const { originalPathObj } = editingData.current;
-      
-      let d = "";
-      commands.forEach(c => {
-        if (c.type === "M") d += `M ${c.x} ${c.y} `;
-        else if (c.type === "L") d += `L ${c.x} ${c.y} `;
-        else if (c.type === "C") d += `C ${c.cp1x} ${c.cp1y} ${c.cp2x} ${c.cp2y} ${c.x} ${c.y} `;
-        else if (c.type === "Z") d += `Z `;
-      });
-
-      const newHelpers: any[] = [];
-      const newHandleLines: any[] = [];
-      let newPreviewObj: any = null;
-
-      const updatePrev = () => {
-        if (newPreviewObj) canvas.remove(newPreviewObj);
-        const tmp = new fabric.Path(d, {
-          fill: originalPathObj.fill,
-          stroke: originalPathObj.stroke || "#000000",
-          strokeWidth: originalPathObj.strokeWidth || 2,
-          strokeUniform: true,
-          selectable: false, evented: false, isEditPreview: true,
-        });
-        tmp.set({ left: tmp.pathOffset.x - tmp.width/2, top: tmp.pathOffset.y - tmp.height/2 });
-        canvas.add(tmp);
-        canvas.sendToBack(tmp);
-        canvas.sendToBack(originalPathObj);
-        newPreviewObj = tmp;
-        editingData.current!.previewObj = tmp;
-        canvas.requestRenderAll();
-      };
-
-      commands.forEach((cmd, i) => {
-        if (cmd.type === "M" || cmd.type === "L") {
-          const node2 = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
-          node2.__cmd = cmd;
-          node2.on("selected", () => { 
-            selectedNodeRef.current = node2; 
-            node2.set({ fill: "#ef4444" }); 
-            canvasElRef.current?.focus(); 
-            canvas.requestRenderAll(); 
-          });
-          node2.on("deselected", () => { node2.set({ fill: "#ffffff" }); canvas.requestRenderAll(); });
-          node2.on("moving", () => { cmd.x = node2.left; cmd.y = node2.top; updatePrev(); });
-          newHelpers.push(node2);
-          canvas.add(node2);
-        } else if (cmd.type === "C") {
-          const prevCmd = commands[i - 1];
-          const l1 = new fabric.Line([prevCmd?.x ?? cmd.cp1x, prevCmd?.y ?? cmd.cp1y, cmd.cp1x, cmd.cp1y], { stroke: "#f87171", strokeWidth: 1, strokeDashArray: [2,2], selectable: false, evented: false, isControlHelper: true, opacity: 0 });
-          const l2 = new fabric.Line([cmd.x, cmd.y, cmd.cp2x, cmd.cp2y], { stroke: "#f87171", strokeWidth: 1, strokeDashArray: [2,2], selectable: false, evented: false, isControlHelper: true, opacity: 0 });
-          cmd.__line1 = l1;
-          newHandleLines.push(l1, l2);
-          canvas.add(l1); canvas.add(l2);
-          const nc1 = new fabric.Circle({ left: cmd.cp1x, top: cmd.cp1y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true, opacity: 0 });
-          const nc2 = new fabric.Circle({ left: cmd.cp2x, top: cmd.cp2y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true, opacity: 0 });
-          const ne = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
-          [nc1, nc2, ne].forEach(n => { n.__cmd = cmd; });
-          nc1.on("selected", () => { selectedNodeRef.current = nc1; nc1.set({ fill: "#ff0000" }); l1.set({ opacity: 1 }); l2.set({ opacity: 1 }); canvasElRef.current?.focus(); canvas.requestRenderAll(); });
-          nc1.on("deselected", () => { nc1.set({ fill: "#ef4444" }); l1.set({ opacity: 0 }); l2.set({ opacity: 0 }); canvas.requestRenderAll(); });
-          nc2.on("selected", () => { selectedNodeRef.current = nc2; nc2.set({ fill: "#ff0000" }); l1.set({ opacity: 1 }); l2.set({ opacity: 1 }); canvasElRef.current?.focus(); canvas.requestRenderAll(); });
-          nc2.on("deselected", () => { nc2.set({ fill: "#ef4444" }); l1.set({ opacity: 0 }); l2.set({ opacity: 0 }); canvas.requestRenderAll(); });
-          ne.on("selected", () => { selectedNodeRef.current = ne; ne.set({ fill: "#ef4444" }); l1.set({ opacity: 1 }); l2.set({ opacity: 1 }); canvasElRef.current?.focus(); canvas.requestRenderAll(); });
-          ne.on("deselected", () => { ne.set({ fill: "#ffffff" }); l1.set({ opacity: 0 }); l2.set({ opacity: 0 }); canvas.requestRenderAll(); });
-          nc1.on("moving", () => { cmd.cp1x = nc1.left; cmd.cp1y = nc1.top; l1.set({ x2: nc1.left, y2: nc1.top }); updatePrev(); });
-          nc2.on("moving", () => { cmd.cp2x = nc2.left; cmd.cp2y = nc2.top; l2.set({ x2: nc2.left, y2: nc2.top }); updatePrev(); });
-          ne.on("moving", () => { cmd.x = ne.left; cmd.y = ne.top; l2.set({ x1: ne.left, y1: ne.top }); const nc = commands[i+1]; if (nc?.__line1) nc.__line1.set({ x1: ne.left, y1: ne.top }); updatePrev(); });
-          newHelpers.push(nc1, nc2, ne);
-          canvas.add(nc1); canvas.add(nc2); canvas.add(ne);
-        }
-      });
-
-      editingData.current.helpers = newHelpers;
-      editingData.current.handleLines = newHandleLines;
-      editingData.current.commands = commands;
-      updatePrev();
-    };
-
-    deleteSelectedNodeRef.current = deleteSelectedNode;
-    enterEditNodesRef.current = enterEditNodes;
-
     const onKey = (e: KeyboardEvent) => {
       const tag = (document.activeElement as HTMLElement)?.tagName;
       const isInput = tag === "INPUT" || tag === "TEXTAREA";
@@ -1033,6 +780,11 @@ function EditorInner() {
       const obj = canvas.getActiveObject();
 
       if ((e.key === "Delete" || e.key === "Backspace") && !isInput) {
+        if (isEditingNodesRef.current) {
+          e.preventDefault();
+          deleteSelectedNode();
+          return;
+        }
         if (obj && !obj.lockMovementX && !obj.isControlHelper && !obj.isEditPreview) {
           if (obj.type === "i-text" && obj.isEditing) return;
           saveState(); canvas.remove(obj); syncSel(null);
@@ -1054,6 +806,7 @@ function EditorInner() {
               canvas.setActiveObject(c); canvas.requestRenderAll();
             }); break;
           case "d": e.preventDefault();
+            if (isEditingNodesRef.current) { toggleNodeSmooth(); return; }
             if (!obj) return;
             obj.clone((c: any) => { c.set({ left: obj.left+20, top: obj.top+20 }); canvas.add(c); canvas.setActiveObject(c); canvas.requestRenderAll(); }); break;
           case "z": e.preventDefault();
@@ -1089,42 +842,6 @@ function EditorInner() {
           exitEditNodes();
         } else if (activeToolRef.current === "pen") {
           finalizePenRef.current(true);
-        }
-      }
-      if (e.key === "Tab") {
-        e.preventDefault();
-        if (!isEditingNodesRef.current) {
-          const active = canvas.getActiveObject();
-          if (active && active.type === "path" && !active.isControlHelper) {
-            enterEditNodesRef.current?.(active);
-          }
-        }
-      }
-      if (isEditingNodesRef.current) {
-        if (e.key === "d" || e.key === "D") {
-          e.preventDefault();
-          toggleNodeSmooth();
-        }
-        if ((e.key === "Delete" || e.key === "Backspace") && !isInput) {
-          if (isEditingNodesRef.current) {
-            e.preventDefault();
-            deleteSelectedNode();
-            return;
-          }
-          const active = canvas.getActiveObject();
-          if (!active) return;
-          if (active.type === "activeSelection") {
-            (active as any).forEachObject((o: any) => {
-              if (!o.lockMovementX && !o.isControlHelper) canvas.remove(o);
-            });
-            canvas.discardActiveObject();
-          } else if (active.type !== "i-text" || !active.isEditing) {
-            if (!active.lockMovementX && !active.isControlHelper) {
-              saveState(); canvas.remove(active); syncSel(null);
-            }
-          }
-          canvas.requestRenderAll();
-          return;
         }
       }
     };
@@ -1717,7 +1434,6 @@ function EditorInner() {
     const shapeCenter = shape.getCenterPoint();
 
     shape.clone((clippedShape: any) => {
-      // Posiciona o clipPath relativo ao centro da imagem (scale normalizado)
       const imgScaleX = image.scaleX || 1;
       const imgScaleY = image.scaleY || 1;
 
@@ -1732,7 +1448,6 @@ function EditorInner() {
         absolutePositioned: false,
       });
 
-      // Salva referência da forma para caso o usuário queira desfazer depois
       image.__originalShape = shape;
       image.clipPath = clippedShape;
       image.setCoords();
@@ -1751,7 +1466,6 @@ function EditorInner() {
     const image = sel;
     const clip = image.clipPath;
 
-    // Se tiver a forma original salva, restaura na posição correta
     if (image.__originalShape) {
       const orig = image.__originalShape;
       const imgCenter = image.getCenterPoint();
@@ -1975,10 +1689,21 @@ function EditorInner() {
           {isEditingNodes && (
             <div className="p-3 bg-indigo-50 border-b border-indigo-100 flex flex-col gap-2">
               <p className="font-semibold text-indigo-900">Modo Edição de Nós</p>
-              <p className="text-[11px] text-indigo-700">Arraste os pontos azuis ou vermelhos para mudar curvas e vértices.</p>
+              <p className="text-[11px] text-indigo-700">
+                • Arraste nós azuis para mover vértices.<br/>
+                • Arraste pontos vermelhos para ajustar curvatura.<br/>
+                • Pressione <b>Ctrl+D</b> para alternar entre curva e canto reto.<br/>
+                • Pressione <b>Del</b> para remover o ponto.
+              </p>
+              <button
+                onClick={toggleNodeSmooth}
+                className="w-full py-1 bg-white border border-indigo-200 text-indigo-700 rounded-md text-xs hover:bg-indigo-100 transition"
+              >
+                Alternar Curva / Canto
+              </button>
               <button
                 onClick={exitEditNodes}
-                className="w-full py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 transition"
+                className="w-full py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 transition mt-1"
               >
                 Concluir edição (Enter / Esc)
               </button>
@@ -2012,7 +1737,7 @@ function EditorInner() {
                 </button>
               )}
 
-              {/* Desfazer Máscara — quando a imagem selecionada possui máscara aplicada */}
+              {/* Desfazer Máscara */}
               {hasClipPath && (
                 <button onClick={removeMask}
                   className="w-full py-2 bg-amber-50 text-amber-700 font-medium rounded-lg border border-amber-200 hover:bg-amber-100 transition text-xs">
