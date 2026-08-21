@@ -277,7 +277,7 @@ function EditorInner() {
       const objs = canvas.getObjects().filter((o: any) => !o.isControlHelper && !o.isEditPreview);
       setLayers([...objs].reverse().map((o: any) => ({
         id: o.__uid || (o.__uid = Math.random().toString(36).slice(2)),
-        label: o.type === "i-text" ? `T "${(o.text||"").slice(0,12)}"` : o.type === "image" ? "Imagem" : o.type === "rect" ? "Retângulo" : o.type === "circle" ? "Círculo" : o.type === "triangle" ? "Triângulo" : o.type === "line" ? "Linha" : o.type === "path" ? "Vetor" : o.type,
+        label: o.type === "i-text" ? `T "${(o.text||"").slice(0,12)}"` : o.type === "image" ? (o.clipPath ? "Imagem (Máscara)" : "Imagem") : o.type === "rect" ? "Retângulo" : o.type === "circle" ? "Círculo" : o.type === "triangle" ? "Triângulo" : o.type === "line" ? "Linha" : o.type === "path" ? "Vetor" : o.type,
         locked: !!o.lockMovementX,
       })));
     } catch {}
@@ -374,7 +374,7 @@ function EditorInner() {
 
     canvas.discardActiveObject();
     canvas.selection = true;
-    pathObj.opacity = 0.3; // Deixa o original translúcido de fundo
+    pathObj.opacity = 0.3;
     pathObj.selectable = false;
     pathObj.evented = false;
 
@@ -382,12 +382,10 @@ function EditorInner() {
     canvas.hoverCursor = "move";
     canvas.selection = false;
 
-    // Converte todos os comandos do Path para coordenadas absolutas de tela
     const matrix = pathObj.calcTransformMatrix();
     const parsedPath = pathObj.path;
     const commands: any[] = [];
 
-    // O Fabric centraliza os pontos internos em relação a pathOffset
     const poX = pathObj.pathOffset ? pathObj.pathOffset.x : 0;
     const poY = pathObj.pathOffset ? pathObj.pathOffset.y : 0;
 
@@ -434,7 +432,6 @@ function EditorInner() {
       });
       canvas.add(tmp);
       canvas.sendToBack(tmp);
-      // Também manda o original para trás
       canvas.sendToBack(pathObj);
       previewObj = tmp;
       if (editingData.current) editingData.current.previewObj = tmp;
@@ -458,7 +455,7 @@ function EditorInner() {
         node.on("deselected", () => {
           node.set({ fill: "#ffffff" });
           canvas.requestRenderAll();
-        });;
+        });
         node.on("moving", () => {
           cmd.x = node.left;
           cmd.y = node.top;
@@ -511,7 +508,6 @@ function EditorInner() {
           cmd.x = nodeEnd.left;
           cmd.y = nodeEnd.top;
           line2.set({ x1: nodeEnd.left, y1: nodeEnd.top });
-          // Atualiza também line1 do próximo comando se existir
           const nextCmd = commands[idx + 1];
           if (nextCmd && nextCmd.__line1) {
             nextCmd.__line1.set({ x1: nodeEnd.left, y1: nodeEnd.top });
@@ -551,7 +547,6 @@ function EditorInner() {
       if (!isEditingNodesRef.current) return;
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
-        console.log("canvas el keydown — node:", selectedNodeRef.current);
         deleteSelectedNodeRef.current?.();
       }
     });
@@ -598,7 +593,6 @@ function EditorInner() {
       if (!isEditingNodesRef.current) return;
       if (e.e.key === "Delete" || e.e.key === "Backspace") {
         e.e.preventDefault();
-        console.log("canvas key:down delete — node:", selectedNodeRef.current);
         deleteSelectedNodeRef.current?.();
       }
     });
@@ -718,11 +712,9 @@ function EditorInner() {
       pathObj.evented = true;
       const target = canvas.findTarget(e.e, false);
       pathObj.evented = false;
-      console.log("mouse:down edit mode — target:", target?.type, "pathObj:", pathObj.type, "match:", target === pathObj);
       if (!target || target !== pathObj) return;
       const { commands } = editingData.current;
       
-      // Encontra o segmento mais próximo do ponto clicado
       let closestIdx = 1;
       let closestDist = Infinity;
 
@@ -735,7 +727,6 @@ function EditorInner() {
         const py = prevCmd.y ?? 0;
         const cx = cmd.x ?? 0;
         const cy = cmd.y ?? 0;
-        // Ponto médio do segmento
         const mx = (px + cx) / 2;
         const my = (py + cy) / 2;
         const dist = Math.hypot(p.x - mx, p.y - my);
@@ -748,14 +739,12 @@ function EditorInner() {
       const prevCmd = commands[closestIdx - 1];
       const nextCmd = commands[closestIdx];
 
-      // Ponto no meio da curva usando De Casteljau (t=0.5)
       const t = 0.5;
       let p1x = prevCmd?.x ?? p.x, p1y = prevCmd?.y ?? p.y;
       let c1x = nextCmd?.cp1x ?? p.x, c1y = nextCmd?.cp1y ?? p.y;
       let c2x = nextCmd?.cp2x ?? p.x, c2y = nextCmd?.cp2y ?? p.y;
       let p2x = nextCmd?.x ?? p.x, p2y = nextCmd?.y ?? p.y;
 
-      // Se nextCmd não é C, trata como linha reta
       if (nextCmd?.type !== "C") {
         c1x = p1x; c1y = p1y; c2x = p2x; c2y = p2y;
       }
@@ -767,13 +756,11 @@ function EditorInner() {
       const m5x = m2x + (m3x - m2x) * t, m5y = m2y + (m3y - m2y) * t;
       const midX = m4x + (m5x - m4x) * t, midY = m4y + (m5y - m4y) * t;
 
-      // Atualiza o segmento existente com a primeira metade
       if (nextCmd?.type === "C") {
         nextCmd.cp1x = m3x; nextCmd.cp1y = m3y;
         nextCmd.cp2x = m5x; nextCmd.cp2y = m5y;
       }
 
-      // Insere novo ponto com a segunda metade
       commands.splice(closestIdx, 0, {
         type: "C",
         cp1x: m1x, cp1y: m1y,
@@ -789,7 +776,6 @@ function EditorInner() {
       editingData.current.handleLines = [];
       editingData.current.previewObj = null;
 
-      // Rebuild direto sem chamar enterEditNodes novamente
       const newHelpers: any[] = [];
       const newHandleLines: any[] = [];
 
@@ -824,7 +810,6 @@ function EditorInner() {
             nc2.set({ opacity: 1 });
             l1.set({ opacity: 1 });
             l2.set({ opacity: 1 });
-            // Procura o segmento C anterior para mostrar sua linha cp2→endpoint
             const cmdIdx = commands.indexOf(cmd);
             for (let i = cmdIdx - 1; i >= 0; i--) {
               if (commands[i].type === "C") {
@@ -832,7 +817,6 @@ function EditorInner() {
                 break;
               }
             }
-            // Mostra também as handles do próximo segmento
             const nextCmd = commands[commands.indexOf(cmd) + 1];
             if (nextCmd?.__line1) nextCmd.__line1.set({ opacity: 1 });
             canvasElRef.current?.focus();
@@ -844,7 +828,6 @@ function EditorInner() {
             nc2.set({ opacity: 0 });
             l1.set({ opacity: 0 });
             l2.set({ opacity: 0 });
-            // Procura o segmento C anterior para mostrar sua linha cp2→endpoint
             const cmdIdx = commands.indexOf(cmd);
             for (let i = cmdIdx - 1; i >= 0; i--) {
               if (commands[i].type === "C") {
@@ -870,8 +853,6 @@ function EditorInner() {
     });
 
     canvas.on("mouse:move", (e: any) => {
-
-      // Cursor de caneta ao passar sobre path em modo select
       if (activeToolRef.current === "select" && !isEditingNodesRef.current) {
         const target = canvas.findTarget(e.e, false);
         if (target && target.type === "path" && !target.isControlHelper) {
@@ -935,7 +916,6 @@ function EditorInner() {
       const { commands } = editingData.current;
       const cmd = commands.find((c: any) => c === node.__cmd);
       if (!cmd || cmd.type !== "C") return;
-      // Toggle: se handles estão simétricos, zera (ângulo); se zerados, restaura simétrico
       const isSmooth = cmd.cp1x !== cmd.x || cmd.cp1y !== cmd.y;
       if (isSmooth) {
         cmd.cp1x = cmd.x; cmd.cp1y = cmd.y;
@@ -954,11 +934,8 @@ function EditorInner() {
       const idx = commands.findIndex((c: any) => c === cmdToRemove);
       if (idx < 0 || idx === 0) return;
       
-      // Se o comando removido é C, remove também o Z que pode vir depois
-      // e reconecta o caminho
       commands.splice(idx, 1);
       
-      // Limpa helpers e handle lines do canvas
       helpers.forEach((h: any) => fc.current?.remove(h));
       handleLines.forEach((l: any) => fc.current?.remove(l));
       if (previewObj) fc.current?.remove(previewObj);
@@ -967,8 +944,6 @@ function EditorInner() {
       editingData.current.previewObj = null;
       selectedNodeRef.current = null;
 
-      // Rebuild — mantém originalPathObj existente em vez de chamar enterEditNodes
-      // que tentaria reprocessar um objeto já em modo edição
       const fabric = (window as any).fabric;
       const canvas = fc.current!;
       const { originalPathObj } = editingData.current;
@@ -981,7 +956,6 @@ function EditorInner() {
         else if (c.type === "Z") d += `Z `;
       });
 
-      // Recria helpers para os comandos restantes
       const newHelpers: any[] = [];
       const newHandleLines: any[] = [];
       let newPreviewObj: any = null;
@@ -1011,7 +985,6 @@ function EditorInner() {
           node2.on("selected", () => { 
             selectedNodeRef.current = node2; 
             node2.set({ fill: "#ef4444" }); 
-            console.log("node selected, focusing canvas:", canvasElRef.current);
             canvasElRef.current?.focus(); 
             canvas.requestRenderAll(); 
           });
@@ -1026,8 +999,8 @@ function EditorInner() {
           cmd.__line1 = l1;
           newHandleLines.push(l1, l2);
           canvas.add(l1); canvas.add(l2);
-          const nc1 = new fabric.Circle({ left: cmd.cp1x, top: cmd.cp1y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
-          const nc2 = new fabric.Circle({ left: cmd.cp2x, top: cmd.cp2y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
+          const nc1 = new fabric.Circle({ left: cmd.cp1x, top: cmd.cp1y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true, opacity: 0 });
+          const nc2 = new fabric.Circle({ left: cmd.cp2x, top: cmd.cp2y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true, opacity: 0 });
           const ne = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
           [nc1, nc2, ne].forEach(n => { n.__cmd = cmd; });
           nc1.on("selected", () => { selectedNodeRef.current = nc1; nc1.set({ fill: "#ff0000" }); l1.set({ opacity: 1 }); l2.set({ opacity: 1 }); canvasElRef.current?.focus(); canvas.requestRenderAll(); });
@@ -1128,16 +1101,13 @@ function EditorInner() {
         }
       }
       if (isEditingNodesRef.current) {
-        // D — converte ponto em curva/ângulo (toggle smooth)
         if (e.key === "d" || e.key === "D") {
           e.preventDefault();
           toggleNodeSmooth();
         }
-        // Delete/Backspace — remove ponto selecionado
         if ((e.key === "Delete" || e.key === "Backspace") && !isInput) {
           if (isEditingNodesRef.current) {
             e.preventDefault();
-            console.log("deleteSelectedNode — node:", selectedNodeRef.current);
             deleteSelectedNode();
             return;
           }
@@ -1549,7 +1519,7 @@ function EditorInner() {
         return null;
       };
 
-      const font = await loadFont(fontFamily);
+      const font = await loadFont(family => family === fontFamily ? fontFamily : "Montserrat");
 
       if (!font) {
         const svgData = sel.toSVG();
@@ -1740,36 +1710,73 @@ function EditorInner() {
     const shape = objects.find((o: any) => o.type !== "image");
     if (!image || !shape) { alert("Selecione uma imagem e uma forma juntas."); return; }
 
-    // Desfaz a seleção temporariamente para pegar coordenadas absolutas
     canvas.discardActiveObject();
     canvas.requestRenderAll();
 
-    const absShapeLeft = shape.left;
-    const absShapeTop = shape.top;
-    const absImageLeft = image.left;
-    const absImageTop = image.top;
-
-    console.log("absShape:", absShapeLeft, absShapeTop);
-    console.log("absImage:", absImageLeft, absImageTop);
+    const imgCenter = image.getCenterPoint();
+    const shapeCenter = shape.getCenterPoint();
 
     shape.clone((clippedShape: any) => {
+      // Posiciona o clipPath relativo ao centro da imagem (scale normalizado)
+      const imgScaleX = image.scaleX || 1;
+      const imgScaleY = image.scaleY || 1;
+
       clippedShape.set({
-        left: absShapeLeft,
-        top: absShapeTop,
-        scaleX: shape.scaleX || 1,
-        scaleY: shape.scaleY || 1,
-        angle: shape.angle || 0,
-        absolutePositioned: true,
+        left: (shapeCenter.x - imgCenter.x) / imgScaleX,
+        top: (shapeCenter.y - imgCenter.y) / imgScaleY,
+        originX: "center",
+        originY: "center",
+        scaleX: (shape.scaleX || 1) / imgScaleX,
+        scaleY: (shape.scaleY || 1) / imgScaleY,
+        angle: (shape.angle || 0) - (image.angle || 0),
+        absolutePositioned: false,
       });
-      image.set({ left: absImageLeft, top: absImageTop });
+
+      // Salva referência da forma para caso o usuário queira desfazer depois
+      image.__originalShape = shape;
       image.clipPath = clippedShape;
       image.setCoords();
+
       canvas.remove(shape);
-      canvas.discardActiveObject();
       canvas.setActiveObject(image);
       syncSel(image);
+      refreshLayers(canvas);
       canvas.requestRenderAll();
     });
+  };
+
+  const removeMask = () => {
+    if (!fc.current || !sel || !sel.clipPath) return;
+    const canvas = fc.current;
+    const image = sel;
+    const clip = image.clipPath;
+
+    // Se tiver a forma original salva, restaura na posição correta
+    if (image.__originalShape) {
+      const orig = image.__originalShape;
+      const imgCenter = image.getCenterPoint();
+      const imgScaleX = image.scaleX || 1;
+      const imgScaleY = image.scaleY || 1;
+
+      orig.set({
+        left: imgCenter.x + (clip.left || 0) * imgScaleX,
+        top: imgCenter.y + (clip.top || 0) * imgScaleY,
+        originX: "center",
+        originY: "center",
+        scaleX: (clip.scaleX || 1) * imgScaleX,
+        scaleY: (clip.scaleY || 1) * imgScaleY,
+        angle: (clip.angle || 0) + (image.angle || 0),
+      });
+      orig.setCoords();
+      canvas.add(orig);
+      delete image.__originalShape;
+    }
+
+    image.clipPath = null;
+    image.setCoords();
+    syncSel(image);
+    refreshLayers(canvas);
+    canvas.requestRenderAll();
   };
 
   const deleteSelected = () => {
@@ -1811,6 +1818,7 @@ function EditorInner() {
   const isTextbox = sel?.type === "textbox";
   const isPath = sel?.type === "path";
   const isRect = sel?.type === "rect";
+  const hasClipPath = !!sel?.clipPath;
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col overflow-hidden" style={{ fontFamily: "system-ui, sans-serif" }}>
@@ -1991,7 +1999,7 @@ function EditorInner() {
                 </button>
               )}
 
-              {/* Máscara — só quando há seleção múltipla com imagem + forma */}
+              {/* Máscara — Criar quando houver imagem + forma selecionadas */}
               {sel?.type === "activeSelection" && (() => {
                 const objs = (sel as any).getObjects();
                 const hasImage = objs.some((o: any) => o.type === "image");
@@ -2001,6 +2009,14 @@ function EditorInner() {
                 <button onClick={createMask}
                   className="w-full py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition text-xs font-medium">
                   ✂ Criar máscara
+                </button>
+              )}
+
+              {/* Desfazer Máscara — quando a imagem selecionada possui máscara aplicada */}
+              {hasClipPath && (
+                <button onClick={removeMask}
+                  className="w-full py-2 bg-amber-50 text-amber-700 font-medium rounded-lg border border-amber-200 hover:bg-amber-100 transition text-xs">
+                  ↺ Desfazer máscara
                 </button>
               )}
 
