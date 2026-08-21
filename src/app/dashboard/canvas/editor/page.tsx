@@ -738,10 +738,20 @@ function EditorInner() {
         }
       }
 
+      // Calcula direção do segmento para alinhar as handles
+      const prevCmd = commands[closestIdx - 1];
+      const nextCmd = commands[closestIdx];
+      const px = prevCmd?.x ?? p.x;
+      const py = prevCmd?.y ?? p.y;
+      const nx = nextCmd?.x ?? p.x;
+      const ny = nextCmd?.y ?? p.y;
+      const dx = (nx - px) / 4;
+      const dy = (ny - py) / 4;
+
       commands.splice(closestIdx, 0, {
         type: "C",
-        cp1x: p.x - 20, cp1y: p.y,
-        cp2x: p.x + 20, cp2y: p.y,
+        cp1x: p.x - dx, cp1y: p.y - dy,
+        cp2x: p.x + dx, cp2y: p.y + dy,
         x: p.x, y: p.y,
       });
       
