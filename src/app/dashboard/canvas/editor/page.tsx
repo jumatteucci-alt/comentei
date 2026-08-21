@@ -441,7 +441,6 @@ function EditorInner() {
     };
 
     updatePreviewRef.current = updatePreview;
-    deleteSelectedNodeRef.current = deleteSelectedNode;
 
     commands.forEach((cmd, idx) => {
       if (cmd.type === "M" || cmd.type === "L") {
@@ -844,6 +843,8 @@ function EditorInner() {
       editingData.current.commands = commands;
       updatePrev();
     };
+
+    deleteSelectedNodeRef.current = deleteSelectedNode;
 
     const onKey = (e: KeyboardEvent) => {
       const tag = (document.activeElement as HTMLElement)?.tagName;
