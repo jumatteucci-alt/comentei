@@ -407,7 +407,6 @@ function EditorInner() {
 
     const updatePreview = () => {
       if (previewObj) canvas.remove(previewObj);
-
       let d = "";
       commands.forEach(c => {
         if (c.type === "M") d += `M ${c.x} ${c.y} `;
@@ -415,7 +414,6 @@ function EditorInner() {
         else if (c.type === "C") d += `C ${c.cp1x} ${c.cp1y} ${c.cp2x} ${c.cp2y} ${c.x} ${c.y} `;
         else if (c.type === "Z") d += `Z `;
       });
-
       const tmp = new fabric.Path(d.trim(), {
         fill: pathObj.fill,
         stroke: pathObj.stroke || "#000000",
@@ -425,25 +423,17 @@ function EditorInner() {
         evented: false,
         isEditPreview: true,
       });
-
-      // fabric.Path auto-centers around pathOffset — compensate by shifting left/top
       tmp.set({
         left: tmp.pathOffset.x - (tmp.width / 2),
         top: tmp.pathOffset.y - (tmp.height / 2),
       });
-
       canvas.add(tmp);
-      canvas.bringToFront(tmp);
-      canvas.renderAll(); // em vez de requestRenderAll
+      canvas.sendToBack(tmp);
+      // Também manda o original para trás
+      canvas.sendToBack(pathObj);
       previewObj = tmp;
       if (editingData.current) editingData.current.previewObj = tmp;
-      canvas.renderAll();
-      setTimeout(() => {
-        console.log("após 100ms — objetos:", canvas.getObjects().map((o:any) => o.type + " op:" + o.opacity));
-        canvas.renderAll();
-      }, 100);
-
-      console.log("pathOffset:", tmp.pathOffset, "left:", tmp.left, "top:", tmp.top, "path:", d.trim().slice(0, 80));
+      canvas.requestRenderAll();
     };
 
     updatePreviewRef.current = updatePreview;
