@@ -1740,13 +1740,14 @@ function EditorInner() {
     const shape = objects.find((o: any) => o.type !== "image");
     if (!image || !shape) { alert("Selecione uma imagem e uma forma juntas."); return; }
 
-    // Converte coordenadas do activeSelection para absolutas do canvas
-    const selLeft = active.left;
-    const selTop = active.top;
-    const absShapeLeft = selLeft + shape.left;
-    const absShapeTop = selTop + shape.top;
-    const absImageLeft = selLeft + image.left;
-    const absImageTop = selTop + image.top;
+    // Desfaz a seleção temporariamente para pegar coordenadas absolutas
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+
+    const absShapeLeft = shape.left;
+    const absShapeTop = shape.top;
+    const absImageLeft = image.left;
+    const absImageTop = image.top;
 
     console.log("absShape:", absShapeLeft, absShapeTop);
     console.log("absImage:", absImageLeft, absImageTop);
