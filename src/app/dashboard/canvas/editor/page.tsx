@@ -343,7 +343,7 @@ function EditorInner() {
       stroke: originalPathObj.stroke,
       strokeWidth: originalPathObj.strokeWidth,
       strokeUniform: originalPathObj.strokeUniform ?? true,
-      opacity: originalPathObj.opacity ?? 1,
+      opacity: 1,
     });
     newPath.__uid = originalPathObj.__uid;
 
@@ -468,6 +468,7 @@ function EditorInner() {
         const line1 = new fabric.Line([prevCmd ? prevCmd.x : cmd.cp1x, prevCmd ? prevCmd.y : cmd.cp1y, cmd.cp1x, cmd.cp1y], {
           stroke: "#f87171", strokeWidth: 1, strokeDashArray: [2, 2], selectable: false, evented: false, isControlHelper: true
         });
+        cmd.__line1 = line1;
         const line2 = new fabric.Line([cmd.x, cmd.y, cmd.cp2x, cmd.cp2y], {
           stroke: "#f87171", strokeWidth: 1, strokeDashArray: [2, 2], selectable: false, evented: false, isControlHelper: true
         });
@@ -501,6 +502,11 @@ function EditorInner() {
           cmd.x = nodeEnd.left;
           cmd.y = nodeEnd.top;
           line2.set({ x1: nodeEnd.left, y1: nodeEnd.top });
+          // Atualiza também line1 do próximo comando se existir
+          const nextCmd = commands[idx + 1];
+          if (nextCmd && nextCmd.__line1) {
+            nextCmd.__line1.set({ x1: nodeEnd.left, y1: nodeEnd.top });
+          }
           updatePreview();
         });
 
