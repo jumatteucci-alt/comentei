@@ -565,8 +565,14 @@ function EditorInner() {
       try { canvas.loadFromJSON(JSON.parse(json), () => { try { canvas.renderAll(); refreshLayers(canvas); } catch {} savingHistory.current = false; }); } catch { savingHistory.current = false; }
     };
 
-    canvas.on("selection:created", (e: any) => syncSel(e.selected?.[0]));
-    canvas.on("selection:updated", (e: any) => syncSel(e.selected?.[0]));
+    canvas.on("selection:created", (e: any) => {
+      const active = canvas.getActiveObject();
+      syncSel(active);
+    });
+    canvas.on("selection:updated", (e: any) => {
+      const active = canvas.getActiveObject();
+      syncSel(active);
+    });
     canvas.on("selection:cleared", () => syncSel(null));
     canvas.on("object:modified", (e: any) => {
       if (!savingHistory.current) {
