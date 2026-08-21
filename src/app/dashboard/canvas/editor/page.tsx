@@ -544,6 +544,7 @@ function EditorInner() {
     fc.current = canvas;
     canvasElRef.current = canvas.getElement();
     const canvasEl = canvas.getElement();
+    console.log("canvasEl:", canvasElRef.current, "tabindex:", canvasElRef.current?.getAttribute("tabindex"));
     canvasEl.setAttribute("tabindex", "0");
     canvasEl.addEventListener("keydown", (e: KeyboardEvent) => {
       if (!isEditingNodesRef.current) return;
@@ -808,7 +809,13 @@ function EditorInner() {
         if (cmd.type === "M" || cmd.type === "L") {
           const node2 = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
           node2.__cmd = cmd;
-          node2.on("selected", () => { selectedNodeRef.current = node2; node2.set({ fill: "#ef4444" }); canvasElRef.current?.focus(); canvas.requestRenderAll(); });
+          node2.on("selected", () => { 
+            selectedNodeRef.current = node2; 
+            node2.set({ fill: "#ef4444" }); 
+            console.log("node selected, focusing canvas:", canvasElRef.current);
+            canvasElRef.current?.focus(); 
+            canvas.requestRenderAll(); 
+          });
           node2.on("deselected", () => { node2.set({ fill: "#ffffff" }); canvas.requestRenderAll(); });
           node2.on("moving", () => { cmd.x = node2.left; cmd.y = node2.top; updatePrev(); });
           newHelpers.push(node2);
