@@ -189,6 +189,7 @@ function EditorInner() {
   const [saved, setSaved] = useState(false);
   const [zoom, setZoom] = useState(100);
   const [layers, setLayers] = useState<{ id: string; label: string; locked: boolean }[]>([]);
+  const [selectedUids, setSelectedUids] = useState<string[]>([]);
   const [activeTool, setActiveTool] = useState<"select"|"pen"|"brush">("select");
   const activeToolRef = useRef<"select"|"pen"|"brush">("select");
 
@@ -297,8 +298,22 @@ function EditorInner() {
   };
 
   const syncSel = (obj: any) => {
-    if (!obj || obj.isControlHelper || obj.isEditPreview) { setSel(null); return; }
+    if (!obj || obj.isControlHelper || obj.isEditPreview) {
+      setSel(null);
+      setSelectedUids([]);
+      return;
+    }
     setSel(obj);
+
+    if (obj.type === "activeSelection") {
+      const uids = (obj as any).getObjects().map((o: any) => o.__uid || (o.__uid = Math.random().toString(36).slice(2)));
+      setSelectedUids(uids);
+      return;
+    }
+
+    const singleUid = obj.__uid || (obj.__uid = Math.random().toString(36).slice(2));
+    setSelectedUids([singleUid]);
+
     setSelFill(getObjColor(obj));
     setSelOpacity(Math.round((obj.opacity ?? 1) * 100));
     setSelStroke(obj.stroke || "#000000");
@@ -329,6 +344,27 @@ function EditorInner() {
       const c2 = fill.colorStops[1]?.color || "#fff";
       setSelFillGradient({ c1, c2, angle: 90 });
     } else { setSelFillGradient(null); }
+  };
+
+  const deleteSelected = () => {
+    if (!fc.current) return;
+    const canvas = fc.current;
+    const active = canvas.getActiveObject();
+    if (!active) return;
+
+    if (active.type === "activeSelection") {
+      const objects = (active as any).getObjects();
+      canvas.discardActiveObject();
+      objects.forEach((o: any) => {
+        if (!o.lockMovementX && !o.isControlHelper) canvas.remove(o);
+      });
+    } else {
+      if (!active.lockMovementX && !active.isControlHelper) canvas.remove(active);
+    }
+
+    canvas.requestRenderAll();
+    syncSel(null);
+    refreshLayers(canvas);
   };
 
   const exitEditNodes = () => {
@@ -666,7 +702,6 @@ function EditorInner() {
     if (!fc.current) return;
     const canvas = fc.current;
 
-    // Se a forma foi recém fechada, remove o vetor fechado e reabre a edição de pontos
     if (lastFinalizedPath.current) {
       canvas.remove(lastFinalizedPath.current);
       lastFinalizedPath.current = null;
@@ -970,7 +1005,8 @@ function EditorInner() {
           }
           if (obj && !obj.lockMovementX && !obj.isControlHelper && !obj.isEditPreview) {
             if (obj.type === "i-text" && obj.isEditing) return;
-            saveState(); canvas.remove(obj); syncSel(null);
+            saveState();
+            deleteSelected();
           }
           return;
         }
@@ -1555,7 +1591,6 @@ function EditorInner() {
       strokeUniform: true,
     });
 
-    // Limpa os elementos auxiliares da tela mantendo o histórico de nós
     penLines.current.forEach(l => canvas.remove(l));
     penDots.current.forEach(d => canvas.remove(d));
     if (activeHandleLine.current) {
@@ -1570,7 +1605,6 @@ function EditorInner() {
     syncSel(path);
     lastFinalizedPath.current = path;
 
-    // Retorna ao modo de seleção
     activeToolRef.current = "select";
     setActiveTool("select");
     canvas.defaultCursor = "default";
@@ -1694,11 +1728,6 @@ function EditorInner() {
     syncSel(image);
     refreshLayers(canvas);
     canvas.requestRenderAll();
-  };
-
-  const deleteSelected = () => {
-    if (!fc.current || !sel) return;
-    fc.current.remove(sel); syncSel(null);
   };
 
   const exportDataUrl = () => {
@@ -1993,7 +2022,7 @@ function EditorInner() {
                 </button>
               )}
 
-              {sel.type !== "image" && (
+              {sel.type !== "image" && sel.type !== "activeSelection" && (
                 <>
                   <Sec title="Preenchimento" />
                   <div className="flex items-center gap-2 mb-1">
@@ -2011,10 +2040,14 @@ function EditorInner() {
                 </>
               )}
 
-              <Sec title="Opacidade" />
-              <SliderRow label="" value={selOpacity} min={0} max={100} unit="%" onChange={updateOpacity} />
+              {sel.type !== "activeSelection" && (
+                <>
+                  <Sec title="Opacidade" />
+                  <SliderRow label="" value={selOpacity} min={0} max={100} unit="%" onChange={updateOpacity} />
+                </>
+              )}
 
-              {sel.type !== "image" && (
+              {sel.type !== "image" && sel.type !== "activeSelection" && (
                 <>
                   <Sec title="Borda" />
                   <ColorPicker value={selStroke} onChange={c => { setSelStroke(c); updateStroke(c); }} label="Cor" />
@@ -2022,8 +2055,12 @@ function EditorInner() {
                 </>
               )}
 
-              <Sec title="Rotação" />
-              <SliderRow label="" value={selRotation} min={0} max={360} unit="°" onChange={updateRotation} />
+              {sel.type !== "activeSelection" && (
+                <>
+                  <Sec title="Rotação" />
+                  <SliderRow label="" value={selRotation} min={0} max={360} unit="°" onChange={updateRotation} />
+                </>
+              )}
 
               {isRect && (
                 <>
@@ -2106,20 +2143,24 @@ function EditorInner() {
                 </>
               )}
 
-              <Sec title="Sombra" />
-              <div className="flex items-center justify-between">
-                <span className="text-gray-400">Ativar sombra</span>
-                <button onClick={() => updateShadow(!selShadow)} className={`w-9 h-5 rounded-full transition ${selShadow?"bg-indigo-500":"bg-gray-200"}`}>
-                  <span className={`block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${selShadow?"translate-x-4":""}`} />
-                </button>
-              </div>
-              {selShadow && (
-                <div className="flex flex-col gap-2">
-                  <ColorPicker value={selShadowColor} onChange={c => { setSelShadowColor(c); applyShadow(c, selShadowBlur, selShadowX, selShadowY); }} label="Cor" />
-                  <SliderRow label="Blur" value={selShadowBlur} min={0} max={60} onChange={v => { setSelShadowBlur(v); applyShadow(selShadowColor, v, selShadowX, selShadowY); }} />
-                  <SliderRow label="X" value={selShadowX} min={-50} max={50} onChange={v => { setSelShadowX(v); applyShadow(selShadowColor, selShadowBlur, v, selShadowY); }} />
-                  <SliderRow label="Y" value={selShadowY} min={-50} max={50} onChange={v => { setSelShadowY(v); applyShadow(selShadowColor, selShadowBlur, selShadowX, v); }} />
-                </div>
+              {sel.type !== "activeSelection" && (
+                <>
+                  <Sec title="Sombra" />
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Ativar sombra</span>
+                    <button onClick={() => updateShadow(!selShadow)} className={`w-9 h-5 rounded-full transition ${selShadow?"bg-indigo-500":"bg-gray-200"}`}>
+                      <span className={`block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${selShadow?"translate-x-4":""}`} />
+                    </button>
+                  </div>
+                  {selShadow && (
+                    <div className="flex flex-col gap-2">
+                      <ColorPicker value={selShadowColor} onChange={c => { setSelShadowColor(c); applyShadow(c, selShadowBlur, selShadowX, selShadowY); }} label="Cor" />
+                      <SliderRow label="Blur" value={selShadowBlur} min={0} max={60} onChange={v => { setSelShadowBlur(v); applyShadow(selShadowColor, v, selShadowX, selShadowY); }} />
+                      <SliderRow label="X" value={selShadowX} min={-50} max={50} onChange={v => { setSelShadowX(v); applyShadow(selShadowColor, selShadowBlur, v, selShadowY); }} />
+                      <SliderRow label="Y" value={selShadowY} min={-50} max={50} onChange={v => { setSelShadowY(v); applyShadow(selShadowColor, selShadowBlur, selShadowX, v); }} />
+                    </div>
+                  )}
+                </>
               )}
 
               {sel.type === "image" && (
@@ -2138,10 +2179,12 @@ function EditorInner() {
                 </>
               )}
 
-              <>
-                <Sec title="Blur" />
-                <SliderRow label="" value={selBlur} min={0} max={100} onChange={updateBlur} />
-              </>
+              {sel.type !== "activeSelection" && (
+                <>
+                  <Sec title="Blur" />
+                  <SliderRow label="" value={selBlur} min={0} max={100} onChange={updateBlur} />
+                </>
+              )}
 
               <Sec title="Alinhar" />
               <div className="grid grid-cols-3 gap-1">
@@ -2151,7 +2194,9 @@ function EditorInner() {
                 ))}
               </div>
 
-              <button onClick={deleteSelected} className="w-full py-2 mt-1 border border-red-200 text-red-500 rounded-lg hover:bg-red-50 transition">🗑 Remover</button>
+              <button onClick={deleteSelected} className="w-full py-2 mt-1 border border-red-200 text-red-500 rounded-lg hover:bg-red-50 transition font-medium">
+                🗑 {sel.type === "activeSelection" ? `Remover (${(sel as any).getObjects().length})` : "Remover"}
+              </button>
             </div>
           ) : (
             <div className="p-3 flex flex-col gap-3 border-b border-gray-200">
@@ -2162,14 +2207,19 @@ function EditorInner() {
           )}
 
           <div className="flex flex-col flex-1">
-            <div className="px-3 py-2 border-b border-gray-100">
+            <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
               <p className="font-semibold text-gray-500 uppercase tracking-wide" style={{fontSize:10}}>Camadas</p>
+              {selectedUids.length > 1 && (
+                <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-medium">
+                  {selectedUids.length} sel
+                </span>
+              )}
             </div>
             <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
               {layers.length === 0 ? (
                 <p className="text-gray-400 p-3 text-center">Sem elementos</p>
               ) : layers.map((layer, index) => {
-                const isActive = sel?.__uid === layer.id;
+                const isActive = selectedUids.includes(layer.id);
                 return (
                   <div key={layer.id} draggable
                     onDragStart={e => e.dataTransfer.setData("li", String(index))}
@@ -2186,15 +2236,40 @@ function EditorInner() {
                       objs.forEach((o: any, i: number) => { canvas.remove(o); canvas.insertAt(o, i, false); });
                       canvas.requestRenderAll(); refreshLayers(canvas);
                     }}
-                    className={`flex items-center gap-1.5 px-3 py-2 cursor-grab active:cursor-grabbing transition select-none ${isActive ? "bg-indigo-50 text-indigo-700 font-medium" : "text-gray-600 hover:bg-gray-50"}`}>
+                    className={`flex items-center gap-1.5 px-3 py-2 cursor-grab active:cursor-grabbing transition select-none ${isActive ? "bg-indigo-50 text-indigo-700 font-semibold border-l-2 border-indigo-600" : "text-gray-600 hover:bg-gray-50"}`}>
                     <svg width="8" height="12" viewBox="0 0 8 12" fill="none" className="flex-shrink-0 text-gray-300">
                       <circle cx="2" cy="2" r="1.2" fill="currentColor"/><circle cx="6" cy="2" r="1.2" fill="currentColor"/>
                       <circle cx="2" cy="6" r="1.2" fill="currentColor"/><circle cx="6" cy="6" r="1.2" fill="currentColor"/>
                       <circle cx="2" cy="10" r="1.2" fill="currentColor"/><circle cx="6" cy="10" r="1.2" fill="currentColor"/>
                     </svg>
-                    <span className="flex-1 truncate text-xs" onClick={() => {
-                      const obj = fc.current?.getObjects().find((o: any) => o.__uid === layer.id);
-                      if (obj) { fc.current.setActiveObject(obj); fc.current.requestRenderAll(); syncSel(obj); }
+                    <span className="flex-1 truncate text-xs cursor-pointer" onClick={(e) => {
+                      const canvas = fc.current;
+                      if (!canvas) return;
+                      const clickedObj = canvas.getObjects().find((o: any) => o.__uid === layer.id);
+                      if (!clickedObj) return;
+
+                      // Suporte a Shift+Click na lista de camadas para multi-seleção
+                      if (e.shiftKey) {
+                        const active = canvas.getActiveObject();
+                        if (active && active.type === "activeSelection") {
+                          const currentObjs = (active as any).getObjects();
+                          if (currentObjs.includes(clickedObj)) {
+                            const remaining = currentObjs.filter((o: any) => o !== clickedObj);
+                            if (remaining.length === 1) canvas.setActiveObject(remaining[0]);
+                            else canvas.setActiveObject(new (window as any).fabric.ActiveSelection(remaining, { canvas }));
+                          } else {
+                            canvas.setActiveObject(new (window as any).fabric.ActiveSelection([...currentObjs, clickedObj], { canvas }));
+                          }
+                        } else if (active && active !== clickedObj) {
+                          canvas.setActiveObject(new (window as any).fabric.ActiveSelection([active, clickedObj], { canvas }));
+                        } else {
+                          canvas.setActiveObject(clickedObj);
+                        }
+                      } else {
+                        canvas.setActiveObject(clickedObj);
+                      }
+                      canvas.requestRenderAll();
+                      syncSel(canvas.getActiveObject());
                     }}>{layer.label}</span>
                     <button onClick={() => toggleLock(layer.id)} title={layer.locked ? "Desbloquear" : "Bloquear"}
                       className={`text-gray-300 hover:text-gray-600 flex-shrink-0 ${layer.locked ? "text-amber-400" : ""}`}>
