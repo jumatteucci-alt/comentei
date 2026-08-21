@@ -429,6 +429,8 @@ function EditorInner() {
       });
 
       canvas.add(tmp);
+
+      console.log("objetos no canvas após add:", canvas.getObjects().length, "previewObj opacity:", tmp.opacity);
       canvas.sendToBack(tmp);
       previewObj = tmp;
       if (editingData.current) editingData.current.previewObj = tmp;
