@@ -810,8 +810,29 @@ function EditorInner() {
           nc1.on("deselected", () => { nc1.set({ fill: "#ef4444", opacity: 0 }); nc2.set({ opacity: 0 }); l1.set({ opacity: 0 }); l2.set({ opacity: 0 }); canvas.requestRenderAll(); });
           nc2.on("selected", () => { selectedNodeRef.current = nc2; nc2.set({ fill: "#ff0000", opacity: 1 }); nc1.set({ opacity: 1 }); l1.set({ opacity: 1 }); l2.set({ opacity: 1 }); canvasElRef.current?.focus(); canvas.requestRenderAll(); });
           nc2.on("deselected", () => { nc2.set({ fill: "#ef4444", opacity: 0 }); nc1.set({ opacity: 0 }); l1.set({ opacity: 0 }); l2.set({ opacity: 0 }); canvas.requestRenderAll(); });
-          ne.on("selected", () => { selectedNodeRef.current = ne; ne.set({ fill: "#ef4444" }); nc1.set({ opacity: 1 }); nc2.set({ opacity: 1 }); l1.set({ opacity: 1 }); l2.set({ opacity: 1 }); canvasElRef.current?.focus(); canvas.requestRenderAll(); });
-          ne.on("deselected", () => { ne.set({ fill: "#ffffff" }); nc1.set({ opacity: 0 }); nc2.set({ opacity: 0 }); l1.set({ opacity: 0 }); l2.set({ opacity: 0 }); canvas.requestRenderAll(); });
+          ne.on("selected", () => {
+            selectedNodeRef.current = ne;
+            ne.set({ fill: "#ef4444" });
+            nc1.set({ opacity: 1 });
+            nc2.set({ opacity: 1 });
+            l1.set({ opacity: 1 });
+            l2.set({ opacity: 1 });
+            // Mostra também as handles do próximo segmento
+            const nextCmd = commands[idx + 1];
+            if (nextCmd?.__line1) nextCmd.__line1.set({ opacity: 1 });
+            canvasElRef.current?.focus();
+            canvas.requestRenderAll();
+          });
+          ne.on("deselected", () => {
+            ne.set({ fill: "#ffffff" });
+            nc1.set({ opacity: 0 });
+            nc2.set({ opacity: 0 });
+            l1.set({ opacity: 0 });
+            l2.set({ opacity: 0 });
+            const nextCmd = commands[idx + 1];
+            if (nextCmd?.__line1) nextCmd.__line1.set({ opacity: 0 });
+            canvas.requestRenderAll();
+          });
           nc1.on("moving", () => { cmd.cp1x = nc1.left; cmd.cp1y = nc1.top; l1.set({ x2: nc1.left, y2: nc1.top }); rebuildPreview(); });
           nc2.on("moving", () => { cmd.cp2x = nc2.left; cmd.cp2y = nc2.top; l2.set({ x2: nc2.left, y2: nc2.top }); rebuildPreview(); });
           ne.on("moving", () => { cmd.x = ne.left; cmd.y = ne.top; l2.set({ x1: ne.left, y1: ne.top }); const nc = commands[i+1]; if (nc?.__line1) nc.__line1.set({ x1: ne.left, y1: ne.top }); rebuildPreview(); });
