@@ -180,6 +180,7 @@ function EditorInner() {
   const [site, setSite] = useState<Site | null>(null);
   const [fabricLoaded, setFabricLoaded] = useState(false);
   const [openTypeLoaded, setOpenTypeLoaded] = useState(false);
+  const [paperLoaded, setPaperLoaded] = useState(false);
   const [converting, setConverting] = useState(false);
   const [removingBg, setRemovingBg] = useState(false);
   const [rmbgProgress, setRmbgProgress] = useState("");
@@ -274,6 +275,11 @@ function EditorInner() {
     otScript.onload = () => setOpenTypeLoaded(true);
     document.head.appendChild(otScript);
 
+    const paperScript = document.createElement("script");
+    paperScript.src = "https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.18/paper-core.min.js";
+    paperScript.onload = () => setPaperLoaded(true);
+    document.head.appendChild(paperScript);
+
     try {
       const worker = new Worker("/rmbg-worker.js", { type: "module" });
       worker.postMessage({ type: "preload" });
@@ -283,6 +289,7 @@ function EditorInner() {
     return () => {
       try { document.head.removeChild(script); } catch {}
       try { document.head.removeChild(otScript); } catch {}
+      try { document.head.removeChild(paperScript); } catch {}
     };
   }, []);
 
@@ -365,6 +372,81 @@ function EditorInner() {
     canvas.requestRenderAll();
     syncSel(null);
     refreshLayers(canvas);
+  };
+
+  // ── Boolean Operations Engine (Paper.js) ───────────
+  const applyBooleanOperation = (operation: "unite" | "subtract" | "intersect" | "exclude") => {
+    if (!fc.current || !sel || sel.type !== "activeSelection") return;
+    const paper = (window as any).paper;
+    if (!paper) {
+      alert("Biblioteca vetorial ainda carregando, tente novamente.");
+      return;
+    }
+
+    const canvas = fc.current;
+    const activeSel = sel;
+    const objects = [...(activeSel as any).getObjects()];
+    if (objects.length < 2) return;
+
+    // Desfaz temporariamente a seleção para calcular SVG com coordenadas globais exatas
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+
+    // Cria scope Paper.js isolado
+    const paperCanvas = document.createElement("canvas");
+    paperCanvas.width = canvasWidth;
+    paperCanvas.height = canvasHeight;
+    paper.setup(paperCanvas);
+
+    try {
+      const paperItems: any[] = [];
+      objects.forEach(obj => {
+        const svg = obj.toSVG();
+        const item = paper.project.importSVG(svg);
+        // Extrai caminhos se importado como grupo
+        if (item.children && item.children.length > 0) {
+          item.children.forEach((c: any) => paperItems.push(c));
+        } else {
+          paperItems.push(item);
+        }
+      });
+
+      if (paperItems.length < 2) return;
+
+      let result = paperItems[0];
+      for (let i = 1; i < paperItems.length; i++) {
+        if (operation === "unite") result = result.unite(paperItems[i]);
+        else if (operation === "subtract") result = result.subtract(paperItems[i]);
+        else if (operation === "intersect") result = result.intersect(paperItems[i]);
+        else if (operation === "exclude") result = result.exclude(paperItems[i]);
+      }
+
+      const resultSvg = result.exportSVG({ asString: true }) as string;
+      const fabric = (window as any).fabric;
+
+      fabric.loadSVGFromString(resultSvg, (parsedObjects: any[], options: any) => {
+        const newObj = fabric.util.groupSVGElements(parsedObjects, options);
+        newObj.set({
+          fill: objects[0].fill || "#3b82f6",
+          stroke: objects[0].stroke || "#000000",
+          strokeWidth: objects[0].strokeWidth || 0,
+          strokeUniform: true,
+        });
+        newObj.__uid = Math.random().toString(36).slice(2);
+
+        // Remove formas originais e adiciona a resultante
+        objects.forEach(o => canvas.remove(o));
+        canvas.add(newObj);
+        canvas.setActiveObject(newObj);
+        syncSel(newObj);
+        refreshLayers(canvas);
+        canvas.requestRenderAll();
+      });
+    } catch (err) {
+      console.error("Erro na operação booleana:", err);
+      canvas.setActiveObject(activeSel);
+      canvas.requestRenderAll();
+    }
   };
 
   const exitEditNodes = () => {
@@ -1768,6 +1850,12 @@ function EditorInner() {
   const isRect = sel?.type === "rect";
   const hasClipPath = !!sel?.clipPath;
 
+  // Verifica se há formas selecionadas para operações booleanas
+  const isMultiShapeSelected = sel?.type === "activeSelection" && (() => {
+    const objs = (sel as any).getObjects();
+    return objs.length >= 2 && objs.every((o: any) => o.type !== "image" && o.type !== "i-text" && o.type !== "textbox");
+  })();
+
   return (
     <div className="h-screen bg-gray-50 flex flex-col overflow-hidden" style={{ fontFamily: "system-ui, sans-serif" }}>
       {/* Top bar */}
@@ -2001,6 +2089,43 @@ function EditorInner() {
                 >
                   ✎ Editar Nós / Pontos
                 </button>
+              )}
+
+              {/* Operações Booleanas (Figma/Illustrator Style) */}
+              {isMultiShapeSelected && (
+                <div className="flex flex-col gap-1.5 p-2 bg-slate-50 border border-slate-200 rounded-xl">
+                  <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider">Operações Booleanas</p>
+                  <div className="grid grid-cols-2 gap-1">
+                    <button
+                      onClick={() => applyBooleanOperation("unite")}
+                      title="União de formas"
+                      className="px-2 py-1.5 bg-white border border-slate-200 hover:bg-indigo-50 hover:border-indigo-300 rounded-lg text-slate-700 transition flex items-center justify-center gap-1 text-[11px]"
+                    >
+                      <span>∪</span> União
+                    </button>
+                    <button
+                      onClick={() => applyBooleanOperation("subtract")}
+                      title="Subtrair forma da frente"
+                      className="px-2 py-1.5 bg-white border border-slate-200 hover:bg-indigo-50 hover:border-indigo-300 rounded-lg text-slate-700 transition flex items-center justify-center gap-1 text-[11px]"
+                    >
+                      <span>−</span> Subtrair
+                    </button>
+                    <button
+                      onClick={() => applyBooleanOperation("intersect")}
+                      title="Interseção de formas"
+                      className="px-2 py-1.5 bg-white border border-slate-200 hover:bg-indigo-50 hover:border-indigo-300 rounded-lg text-slate-700 transition flex items-center justify-center gap-1 text-[11px]"
+                    >
+                      <span>∩</span> Interseção
+                    </button>
+                    <button
+                      onClick={() => applyBooleanOperation("exclude")}
+                      title="Excluir sobreposição"
+                      className="px-2 py-1.5 bg-white border border-slate-200 hover:bg-indigo-50 hover:border-indigo-300 rounded-lg text-slate-700 transition flex items-center justify-center gap-1 text-[11px]"
+                    >
+                      <span>⨁</span> Exclusão
+                    </button>
+                  </div>
+                </div>
               )}
 
               {sel?.type === "activeSelection" && (() => {
@@ -2248,7 +2373,6 @@ function EditorInner() {
                       const clickedObj = canvas.getObjects().find((o: any) => o.__uid === layer.id);
                       if (!clickedObj) return;
 
-                      // Suporte a Shift+Click na lista de camadas para multi-seleção
                       if (e.shiftKey) {
                         const active = canvas.getActiveObject();
                         if (active && active.type === "activeSelection") {
