@@ -170,6 +170,7 @@ function EditorInner() {
   const blurPosMap    = useRef<Map<string, {left:number;top:number;scaleX:number;scaleY:number;angle:number}>>(new Map());
   const blurTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rectBeforeScale = useRef<{ rx: number; ry: number } | null>(null);
+  const deleteSelectedNodeRef = useRef<(() => void) | null>(null);
 
   const [site, setSite] = useState<Site | null>(null);
   const [fabricLoaded, setFabricLoaded] = useState(false);
@@ -439,6 +440,7 @@ function EditorInner() {
     };
 
     updatePreviewRef.current = updatePreview;
+    deleteSelectedNodeRef.current = deleteSelectedNode;
 
     commands.forEach((cmd, idx) => {
       if (cmd.type === "M" || cmd.type === "L") {
@@ -570,6 +572,15 @@ function EditorInner() {
       if (isEditingNodesRef.current) return;
       if (e.target && e.target.type === "path" && !e.target.isControlHelper) {
         enterEditNodes(e.target);
+      }
+    });
+
+    canvas.on("key:down", (e: any) => {
+      if (!isEditingNodesRef.current) return;
+      if (e.e.key === "Delete" || e.e.key === "Backspace") {
+        e.e.preventDefault();
+        console.log("canvas key:down delete — node:", selectedNodeRef.current);
+        deleteSelectedNodeRef.current?.();
       }
     });
 
