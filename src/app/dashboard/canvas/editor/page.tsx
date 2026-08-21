@@ -157,6 +157,7 @@ function EditorInner() {
   const fmt = FORMATS[format] || FORMATS.square;
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasElRef = useRef<HTMLElement | null>(null);
   const fc = useRef<any>(null);
   const updatePreviewRef = useRef<(() => void) | null>(null);
   const isEditingNodesRef = useRef(false);
@@ -542,6 +543,17 @@ function EditorInner() {
       centeredRotation: true,
     });
     fc.current = canvas;
+    canvasElRef.current = canvas.getElement();
+    const canvasEl = canvas.getElement();
+    canvasEl.setAttribute("tabindex", "0");
+    canvasEl.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (!isEditingNodesRef.current) return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        console.log("canvas el keydown — node:", selectedNodeRef.current);
+        deleteSelectedNodeRef.current?.();
+      }
+    });
 
     const saveState = () => {
       if (savingHistory.current) return;
@@ -797,15 +809,15 @@ function EditorInner() {
         if (cmd.type === "M" || cmd.type === "L") {
           const node2 = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
           node2.__cmd = cmd;
-          node2.on("selected", () => { selectedNodeRef.current = node2; node2.set({ fill: "#ef4444" }); canvas.requestRenderAll(); });
+          node2.on("selected", () => { selectedNodeRef.current = node2; node2.set({ fill: "#ef4444" }); canvasElRef.current?.focus(); canvas.requestRenderAll(); });
           node2.on("deselected", () => { node2.set({ fill: "#ffffff" }); canvas.requestRenderAll(); });
           node2.on("moving", () => { cmd.x = node2.left; cmd.y = node2.top; updatePrev(); });
           newHelpers.push(node2);
           canvas.add(node2);
         } else if (cmd.type === "C") {
           const prevCmd = commands[i - 1];
-          const l1 = new fabric.Line([prevCmd?.x ?? cmd.cp1x, prevCmd?.y ?? cmd.cp1y, cmd.cp1x, cmd.cp1y], { stroke: "#f87171", strokeWidth: 1, strokeDashArray: [2,2], selectable: false, evented: false, isControlHelper: true });
-          const l2 = new fabric.Line([cmd.x, cmd.y, cmd.cp2x, cmd.cp2y], { stroke: "#f87171", strokeWidth: 1, strokeDashArray: [2,2], selectable: false, evented: false, isControlHelper: true });
+          const l1 = new fabric.Line([prevCmd?.x ?? cmd.cp1x, prevCmd?.y ?? cmd.cp1y, cmd.cp1x, cmd.cp1y], { stroke: "#f87171", strokeWidth: 1, strokeDashArray: [2,2], selectable: false, evented: false, isControlHelper: true, opacity: 0 });
+          const l2 = new fabric.Line([cmd.x, cmd.y, cmd.cp2x, cmd.cp2y], { stroke: "#f87171", strokeWidth: 1, strokeDashArray: [2,2], selectable: false, evented: false, isControlHelper: true, opacity: 0 });
           cmd.__line1 = l1;
           newHandleLines.push(l1, l2);
           canvas.add(l1); canvas.add(l2);
@@ -813,12 +825,12 @@ function EditorInner() {
           const nc2 = new fabric.Circle({ left: cmd.cp2x, top: cmd.cp2y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
           const ne = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
           [nc1, nc2, ne].forEach(n => { n.__cmd = cmd; });
-          nc1.on("selected", () => { selectedNodeRef.current = nc1; nc1.set({ fill: "#ff0000" }); canvas.requestRenderAll(); });
-          nc1.on("deselected", () => { nc1.set({ fill: "#ef4444" }); canvas.requestRenderAll(); });
-          nc2.on("selected", () => { selectedNodeRef.current = nc2; nc2.set({ fill: "#ff0000" }); canvas.requestRenderAll(); });
-          nc2.on("deselected", () => { nc2.set({ fill: "#ef4444" }); canvas.requestRenderAll(); });
-          ne.on("selected", () => { selectedNodeRef.current = ne; ne.set({ fill: "#ef4444" }); canvas.requestRenderAll(); });
-          ne.on("deselected", () => { ne.set({ fill: "#ffffff" }); canvas.requestRenderAll(); });
+          nc1.on("selected", () => { selectedNodeRef.current = nc1; nc1.set({ fill: "#ff0000" }); l1.set({ opacity: 1 }); l2.set({ opacity: 1 }); canvasElRef.current?.focus(); canvas.requestRenderAll(); });
+          nc1.on("deselected", () => { nc1.set({ fill: "#ef4444" }); l1.set({ opacity: 0 }); l2.set({ opacity: 0 }); canvas.requestRenderAll(); });
+          nc2.on("selected", () => { selectedNodeRef.current = nc2; nc2.set({ fill: "#ff0000" }); l1.set({ opacity: 1 }); l2.set({ opacity: 1 }); canvasElRef.current?.focus(); canvas.requestRenderAll(); });
+          nc2.on("deselected", () => { nc2.set({ fill: "#ef4444" }); l1.set({ opacity: 0 }); l2.set({ opacity: 0 }); canvas.requestRenderAll(); });
+          ne.on("selected", () => { selectedNodeRef.current = ne; ne.set({ fill: "#ef4444" }); l1.set({ opacity: 1 }); l2.set({ opacity: 1 }); canvasElRef.current?.focus(); canvas.requestRenderAll(); });
+          ne.on("deselected", () => { ne.set({ fill: "#ffffff" }); l1.set({ opacity: 0 }); l2.set({ opacity: 0 }); canvas.requestRenderAll(); });
           nc1.on("moving", () => { cmd.cp1x = nc1.left; cmd.cp1y = nc1.top; l1.set({ x2: nc1.left, y2: nc1.top }); updatePrev(); });
           nc2.on("moving", () => { cmd.cp2x = nc2.left; cmd.cp2y = nc2.top; l2.set({ x2: nc2.left, y2: nc2.top }); updatePrev(); });
           ne.on("moving", () => { cmd.x = ne.left; cmd.y = ne.top; l2.set({ x1: ne.left, y1: ne.top }); const nc = commands[i+1]; if (nc?.__line1) nc.__line1.set({ x1: ne.left, y1: ne.top }); updatePrev(); });
