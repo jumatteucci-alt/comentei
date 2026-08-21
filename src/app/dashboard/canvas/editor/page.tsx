@@ -1,6 +1,6 @@
 "use client";
 export const dynamic = "force-dynamic";
-import { useEffect, useRef, useState, Suspense } from "react";
+import { useEffect, useRef, useState, Suspense, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { db, storage } from "@/lib/firebase";
@@ -162,6 +162,7 @@ function EditorInner() {
   const [inputWidth, setInputWidth] = useState(String(fmt.w));
   const [inputHeight, setInputHeight] = useState(String(fmt.h));
 
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasElRef = useRef<HTMLElement | null>(null);
   const fc = useRef<any>(null);
@@ -238,11 +239,22 @@ function EditorInner() {
   const [bgSolid, setBgSolid] = useState("#ffffff");
   const [bgGradient, setBgGradient] = useState<{c1:string;c2:string;angle:number}|null>(null);
 
-  // Escala máxima de viewport (proporcional no display)
-  const MAX_DISPLAY = 600;
-  const scale = Math.min(MAX_DISPLAY / canvasWidth, MAX_DISPLAY / canvasHeight, 0.5);
-  const DISPLAY_W = Math.round(canvasWidth * scale);
-  const DISPLAY_H = Math.round(canvasHeight * scale);
+  // Auto-fit responsivo com base no tamanho do container visível
+  const fitCanvasToScreen = useCallback(() => {
+    if (!canvasContainerRef.current) return;
+    const container = canvasContainerRef.current;
+    const padding = 64; // respiro
+    const availW = Math.max(300, container.clientWidth - padding);
+    const availH = Math.max(300, container.clientHeight - padding);
+
+    const fitRatio = Math.min(availW / canvasWidth, availH / canvasHeight, 1);
+    const autoZoom = Math.max(10, Math.round(fitRatio * 100));
+    setZoom(autoZoom);
+  }, [canvasWidth, canvasHeight]);
+
+  useEffect(() => {
+    fitCanvasToScreen();
+  }, [fitCanvasToScreen]);
 
   useEffect(() => {
     if (!user) return;
@@ -293,7 +305,7 @@ function EditorInner() {
     setSelStrokeW(obj.strokeWidth || 0);
     setSelRadius(obj.rx || 0);
     setSelRotation(Math.round(obj.angle || 0));
-    setSelFontSize(Math.round((obj.fontSize || 48) / scale));
+    setSelFontSize(Math.round(obj.fontSize || 48));
     setSelFontFamily(obj.fontFamily || "Montserrat");
     setSelBold(obj.fontWeight === "bold");
     setSelItalic(obj.fontStyle === "italic");
@@ -301,8 +313,8 @@ function EditorInner() {
     setSelCharSpacing(obj.charSpacing ?? 0);
     setSelLineHeight(obj.lineHeight ?? 1.2);
     if (obj.type === "textbox") {
-      setSelTextWidth(Math.round((obj.width || 300) / scale));
-      setSelTextHeight(obj.__fixedHeight ? Math.round(obj.height / scale) : 0);
+      setSelTextWidth(Math.round(obj.width || 300));
+      setSelTextHeight(obj.__fixedHeight ? Math.round(obj.height) : 0);
     }
     const sh = obj.shadow;
     setSelShadow(!!sh);
@@ -612,14 +624,19 @@ function EditorInner() {
     renderEditControls();
   };
 
-  // Inicialização e atualização de dimensões do Canvas
+  // Inicialização e atualização de dimensões do Canvas em tempo real
   useEffect(() => {
     if (!fabricLoaded || !canvasRef.current) return;
+    const z = zoom / 100;
+    const currentW = Math.round(canvasWidth * z);
+    const currentH = Math.round(canvasHeight * z);
+
     if (!fc.current) {
       const canvas = new (window as any).fabric.Canvas(canvasRef.current, {
-        width: DISPLAY_W, height: DISPLAY_H, backgroundColor: "#ffffff", selection: true,
+        width: currentW, height: currentH, backgroundColor: "#ffffff", selection: true,
         centeredRotation: true,
       });
+      canvas.setZoom(z);
       fc.current = canvas;
       const canvasEl = canvas.upperCanvasEl;
       canvasElRef.current = canvasEl;
@@ -661,7 +678,7 @@ function EditorInner() {
         const obj = e.target;
         if (!obj) return;
         if (obj.type === "textbox" || obj.type === "i-text") {
-          const newSize = Math.round((obj.fontSize * obj.scaleY) / scale);
+          const newSize = Math.round(obj.fontSize * obj.scaleY);
           setSelFontSize(newSize);
         }
         if (obj.type === "rect") {
@@ -936,13 +953,12 @@ function EditorInner() {
       window.addEventListener("keydown", onKey);
       return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
     } else {
-      const z = zoom / 100;
+      fc.current.setWidth(currentW);
+      fc.current.setHeight(currentH);
       fc.current.setZoom(z);
-      fc.current.setWidth(DISPLAY_W * z);
-      fc.current.setHeight(DISPLAY_H * z);
       fc.current.requestRenderAll();
     }
-  }, [fabricLoaded, DISPLAY_W, DISPLAY_H, zoom]);
+  }, [fabricLoaded, canvasWidth, canvasHeight, zoom]);
 
   useEffect(() => {
     if (!fc.current) return;
@@ -950,12 +966,12 @@ function EditorInner() {
       const fab = (window as any).fabric;
       if (!fab) return;
       const rad = (bgGradient.angle * Math.PI) / 180;
-      const grad = new fab.Gradient({ type: "linear", coords: { x1: (Math.cos(rad+Math.PI)+1)/2*DISPLAY_W, y1: (Math.sin(rad+Math.PI)+1)/2*DISPLAY_H, x2: (Math.cos(rad)+1)/2*DISPLAY_W, y2: (Math.sin(rad)+1)/2*DISPLAY_H }, colorStops: [{ offset:0, color: bgGradient.c1 },{ offset:1, color: bgGradient.c2 }] });
+      const grad = new fab.Gradient({ type: "linear", coords: { x1: (Math.cos(rad+Math.PI)+1)/2*canvasWidth, y1: (Math.sin(rad+Math.PI)+1)/2*canvasHeight, x2: (Math.cos(rad)+1)/2*canvasWidth, y2: (Math.sin(rad)+1)/2*canvasHeight }, colorStops: [{ offset:0, color: bgGradient.c1 },{ offset:1, color: bgGradient.c2 }] });
       fc.current.setBackgroundColor(grad, () => fc.current?.renderAll());
     } else {
       fc.current.setBackgroundColor(bgSolid, () => fc.current?.renderAll());
     }
-  }, [bgSolid, bgGradient, DISPLAY_W, DISPLAY_H]);
+  }, [bgSolid, bgGradient, canvasWidth, canvasHeight]);
 
   const upd = (props: Record<string, any>) => {
     if (!fc.current || !sel) return;
@@ -987,13 +1003,13 @@ function EditorInner() {
     setSelFontSize(v);
     if (!fc.current || !sel) return;
     if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
-      sel.setSelectionStyles({ fontSize: v * scale });
+      sel.setSelectionStyles({ fontSize: v });
       fc.current.requestRenderAll();
-    } else { upd({ fontSize: v * scale }); }
+    } else { upd({ fontSize: v }); }
   };
   const updateFontFamily = (v: string) => {
     setSelFontFamily(v);
-    document.fonts.load(`${selFontSize * scale}px "${v}"`).finally(() => {
+    document.fonts.load(`${selFontSize}px "${v}"`).finally(() => {
       upd({ fontFamily: v });
     });
   };
@@ -1047,7 +1063,7 @@ function EditorInner() {
   };
   const applyShadow = (color: string, blur: number, ox: number, oy: number) => {
     if (!fc.current || !sel || !selShadow) return;
-    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur, offsetX: ox, oy }));
+    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur, offsetX: ox, offsetY: oy }));
     fc.current.requestRenderAll();
   };
 
@@ -1179,9 +1195,8 @@ function EditorInner() {
   const alignObj = (dir: string) => {
     if (!fc.current || !sel) return;
     const canvas = fc.current;
-    const zoom = canvas.getZoom();
-    const cw = canvas.getWidth() / zoom;
-    const ch = canvas.getHeight() / zoom;
+    const cw = canvasWidth;
+    const ch = canvasHeight;
     sel.setCoords();
     const br = sel.getBoundingRect(true);
     if (dir === "left")    sel.set({ left: sel.left - br.left });
@@ -1202,15 +1217,15 @@ function EditorInner() {
   const addText = () => {
     if (!fc.current) return;
     const fab = (window as any).fabric;
-    const fontToLoad = `${selFontSize * scale}px "${selFontFamily}"`;
+    const fontToLoad = `${selFontSize}px "${selFontFamily}"`;
     document.fonts.load(fontToLoad).finally(() => {
       const t = new fab.Textbox("Texto aqui", {
-        left: DISPLAY_W / 2,
-        top: DISPLAY_H / 2,
+        left: canvasWidth / 2,
+        top: canvasHeight / 2,
         originX: "center",
         originY: "center",
-        width: 300 * scale,
-        fontSize: selFontSize * scale,
+        width: 300,
+        fontSize: selFontSize,
         fontFamily: selFontFamily,
         fill: "#000000",
         strokeUniform: true,
@@ -1237,7 +1252,7 @@ function EditorInner() {
 
   const updateTextWidth = (v: number) => {
     setSelTextWidth(v);
-    upd({ width: v * scale });
+    upd({ width: v });
   };
 
   const updateTextHeight = (v: number) => {
@@ -1250,22 +1265,22 @@ function EditorInner() {
       fc.current.requestRenderAll();
     } else {
       sel.__fixedHeight = true;
-      sel.set({ height: v * scale, minHeight: v * scale });
+      sel.set({ height: v, minHeight: v });
       fc.current.requestRenderAll();
     }
   };
-  const addRect  = (r=0) => add(fab => new fab.Rect({ left:DISPLAY_W/2-75, top:DISPLAY_H/2-50, width:150, height:100, fill:"#3b82f6", rx:r, ry:r, strokeUniform:true }));
-  const addCirc  = () => add(fab => new fab.Circle({ left:DISPLAY_W/2-60, top:DISPLAY_H/2-60, radius:60, fill:"#3b82f6", strokeUniform:true }));
-  const addTri   = () => add(fab => new fab.Triangle({ left:DISPLAY_W/2-60, top:DISPLAY_H/2-60, width:120, height:120, fill:"#3b82f6", strokeUniform:true }));
-  const addLine  = () => add(fab => new fab.Line([DISPLAY_W/2-80, DISPLAY_H/2, DISPLAY_W/2+80, DISPLAY_H/2], { stroke:"#000000", strokeWidth:3, strokeUniform:true }));
+  const addRect  = (r=0) => add(fab => new fab.Rect({ left:canvasWidth/2-75, top:canvasHeight/2-50, width:150, height:100, fill:"#3b82f6", rx:r, ry:r, strokeUniform:true }));
+  const addCirc  = () => add(fab => new fab.Circle({ left:canvasWidth/2-60, top:canvasHeight/2-60, radius:60, fill:"#3b82f6", strokeUniform:true }));
+  const addTri   = () => add(fab => new fab.Triangle({ left:canvasWidth/2-60, top:canvasHeight/2-60, width:120, height:120, fill:"#3b82f6", strokeUniform:true }));
+  const addLine  = () => add(fab => new fab.Line([canvasWidth/2-80, canvasHeight/2, canvasWidth/2+80, canvasHeight/2], { stroke:"#000000", strokeWidth:3, strokeUniform:true }));
   const addStar  = () => {
     const points: { x: number; y: number }[] = [];
     for (let i=0;i<10;i++) { const r = i%2===0?60:24; const a = (Math.PI/5)*i - Math.PI/2; points.push({ x: r*Math.cos(a), y: r*Math.sin(a) }); }
-    add(fab => new fab.Polygon(points, { left:DISPLAY_W/2, top:DISPLAY_H/2, originX:"center", originY:"center", fill:"#eab308", strokeUniform:true }));
+    add(fab => new fab.Polygon(points, { left:canvasWidth/2, top:canvasHeight/2, originX:"center", originY:"center", fill:"#eab308", strokeUniform:true }));
   };
   const addArrow = () => {
     const points: { x: number; y: number }[] = [{ x:0,y:20 },{ x:80,y:20 },{ x:80,y:0 },{ x:120,y:35 },{ x:80,y:70 },{ x:80,y:50 },{ x:0,y:50 }];
-    add(fab => new fab.Polygon(points, { left:DISPLAY_W/2-60, top:DISPLAY_H/2-35, fill:"#3b82f6", strokeUniform:true }));
+    add(fab => new fab.Polygon(points, { left:canvasWidth/2-60, top:canvasHeight/2-35, fill:"#3b82f6", strokeUniform:true }));
   };
 
   const handleImg = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1273,12 +1288,12 @@ function EditorInner() {
     if (!file || !fc.current) return;
     const r = new FileReader();
     r.onload = ev => (window as any).fabric.Image.fromURL(ev.target?.result as string, (img: any) => {
-      if (img.width > DISPLAY_W * 0.8) img.scaleToWidth(DISPLAY_W * 0.8);
+      if (img.width > canvasWidth * 0.8) img.scaleToWidth(canvasWidth * 0.8);
       const scaledW = img.getScaledWidth();
       const scaledH = img.getScaledHeight();
       img.set({
-        left: (DISPLAY_W - scaledW) / 2,
-        top: (DISPLAY_H - scaledH) / 2,
+        left: (canvasWidth - scaledW) / 2,
+        top: (canvasHeight - scaledH) / 2,
         originX: "left",
         originY: "top",
       });
@@ -1586,11 +1601,13 @@ function EditorInner() {
   const exportDataUrl = () => {
     const canvas = fc.current;
     const currentZoom = canvas.getZoom();
-    canvas.setZoom(1); canvas.setWidth(DISPLAY_W); canvas.setHeight(DISPLAY_H);
-    const z = canvasWidth / DISPLAY_W;
-    canvas.setZoom(z); canvas.setWidth(canvasWidth); canvas.setHeight(canvasHeight);
+    canvas.setZoom(1);
+    canvas.setWidth(canvasWidth);
+    canvas.setHeight(canvasHeight);
     const dataUrl = canvas.toDataURL({ format:"png", multiplier:1 });
-    canvas.setZoom(currentZoom); canvas.setWidth(DISPLAY_W * currentZoom); canvas.setHeight(DISPLAY_H * currentZoom);
+    canvas.setZoom(currentZoom);
+    canvas.setWidth(Math.round(canvasWidth * currentZoom));
+    canvas.setHeight(Math.round(canvasHeight * currentZoom));
     canvas.requestRenderAll();
     return dataUrl;
   };
@@ -1629,7 +1646,7 @@ function EditorInner() {
           <input value={artName} onChange={e => setArtName(e.target.value)}
             className="text-sm font-medium text-gray-900 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-indigo-400 focus:outline-none px-1 py-0.5 w-36" />
           
-          {/* Dimensões editáveis com inputs desacoplados */}
+          {/* Dimensões editáveis */}
           <div className="flex items-center gap-1 bg-gray-100 px-2 py-1 rounded-lg text-xs text-gray-600">
             <span className="text-gray-400 font-semibold">W</span>
             <input
@@ -1669,11 +1686,14 @@ function EditorInner() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Zoom */}
-          <div className="flex items-center gap-1 border border-gray-200 rounded-lg px-2 py-1">
-            <button onClick={() => setZoom(z => Math.max(25, z-25))} className="text-gray-500 hover:text-gray-800 w-5 text-center text-sm">−</button>
+          {/* Zoom controls com botão Fit */}
+          <div className="flex items-center gap-1 border border-gray-200 rounded-lg px-2 py-1 bg-white">
+            <button onClick={() => setZoom(z => Math.max(10, z - 10))} className="text-gray-500 hover:text-gray-800 w-5 text-center text-sm font-semibold">−</button>
             <span className="text-xs text-gray-600 w-10 text-center">{zoom}%</span>
-            <button onClick={() => setZoom(z => Math.min(200, z+25))} className="text-gray-500 hover:text-gray-800 w-5 text-center text-sm">+</button>
+            <button onClick={() => setZoom(z => Math.min(300, z + 10))} className="text-gray-500 hover:text-gray-800 w-5 text-center text-sm font-semibold">+</button>
+            <button onClick={fitCanvasToScreen} title="Ajustar à tela" className="ml-1 px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded text-[10px] font-medium transition">
+              Fit
+            </button>
           </div>
           <button onClick={handleDownload} className="px-3 py-1.5 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition">↓ PNG</button>
           <button onClick={handleSave} disabled={saving} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition disabled:opacity-60">
@@ -1795,11 +1815,11 @@ function EditorInner() {
           )}
         </div>
 
-        {/* ── CANVAS ───────────────────────────────────── */}
-        <div className="flex-1 overflow-auto flex items-start justify-center p-8 bg-gray-100">
+        {/* ── CANVAS VIEWPORT ───────────────────────────── */}
+        <div ref={canvasContainerRef} className="flex-1 overflow-auto flex items-center justify-center p-8 bg-gray-100">
           <div className="shadow-2xl">
             {!fabricLoaded ? (
-              <div style={{ width: DISPLAY_W, height: DISPLAY_H }} className="bg-white flex items-center justify-center">
+              <div style={{ width: Math.round(canvasWidth * (zoom / 100)), height: Math.round(canvasHeight * (zoom / 100)) }} className="bg-white flex items-center justify-center">
                 <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
               </div>
             ) : <canvas ref={canvasRef} />}
