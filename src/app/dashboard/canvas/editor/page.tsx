@@ -370,12 +370,13 @@ function EditorInner() {
     isEditingNodesRef.current = true;
 
     canvas.discardActiveObject();
+    canvas.selection = true;
     pathObj.opacity = 0.3; // Deixa o original translúcido de fundo
     pathObj.selectable = false;
     pathObj.evented = false;
 
-    canvas.defaultCursor = "crosshair";
-    canvas.hoverCursor = "crosshair";
+    canvas.defaultCursor = "default";
+    canvas.hoverCursor = "move";
     canvas.selection = false;
 
     // Converte todos os comandos do Path para coordenadas absolutas de tela
@@ -446,7 +447,15 @@ function EditorInner() {
           originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true
         });
         node.__cmd = cmd;
-        node.on("mousedown", () => { selectedNodeRef.current = node; });
+        node.on("selected", () => {
+          selectedNodeRef.current = node;
+          node.set({ fill: "#ef4444" });
+          canvas.requestRenderAll();
+        });
+        node.on("deselected", () => {
+          node.set({ fill: "#ffffff" });
+          canvas.requestRenderAll();
+        });;
         node.on("moving", () => {
           cmd.x = node.left;
           cmd.y = node.top;
@@ -469,13 +478,18 @@ function EditorInner() {
 
         const nodeCp1 = new fabric.Circle({ left: cmd.cp1x, top: cmd.cp1y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
         nodeCp1.__cmd = cmd;
-        nodeCp1.on("mousedown", () => { selectedNodeRef.current = nodeCp1; })
+        nodeCp1.on("selected", () => { selectedNodeRef.current = nodeCp1; nodeCp1.set({ fill: "#ff0000" }); canvas.requestRenderAll(); });
+        nodeCp1.on("deselected", () => { nodeCp1.set({ fill: "#ef4444" }); canvas.requestRenderAll(); });
+
         const nodeCp2 = new fabric.Circle({ left: cmd.cp2x, top: cmd.cp2y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
         nodeCp2.__cmd = cmd;
-        nodeCp2.on("mousedown", () => { selectedNodeRef.current = nodeCp2; });
+        nodeCp2.on("selected", () => { selectedNodeRef.current = nodeCp2; nodeCp2.set({ fill: "#ff0000" }); canvas.requestRenderAll(); });
+        nodeCp2.on("deselected", () => { nodeCp2.set({ fill: "#ef4444" }); canvas.requestRenderAll(); });
+
         const nodeEnd = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
         nodeEnd.__cmd = cmd;
-        nodeEnd.on("mousedown", () => { selectedNodeRef.current = nodeEnd; });
+        nodeEnd.on("selected", () => { selectedNodeRef.current = nodeEnd; nodeEnd.set({ fill: "#ef4444" }); canvas.requestRenderAll(); });
+        nodeEnd.on("deselected", () => { nodeEnd.set({ fill: "#ffffff" }); canvas.requestRenderAll(); });
 
         nodeCp1.on("moving", () => {
           cmd.cp1x = nodeCp1.left;
@@ -772,7 +786,8 @@ function EditorInner() {
         if (cmd.type === "M" || cmd.type === "L") {
           const node2 = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
           node2.__cmd = cmd;
-          node2.on("mousedown", () => { selectedNodeRef.current = node2; });
+          node2.on("selected", () => { selectedNodeRef.current = node2; node2.set({ fill: "#ef4444" }); canvas.requestRenderAll(); });
+          node2.on("deselected", () => { node2.set({ fill: "#ffffff" }); canvas.requestRenderAll(); });
           node2.on("moving", () => { cmd.x = node2.left; cmd.y = node2.top; updatePrev(); });
           newHelpers.push(node2);
           canvas.add(node2);
@@ -786,7 +801,13 @@ function EditorInner() {
           const nc1 = new fabric.Circle({ left: cmd.cp1x, top: cmd.cp1y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
           const nc2 = new fabric.Circle({ left: cmd.cp2x, top: cmd.cp2y, radius: 4, fill: "#ef4444", originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
           const ne = new fabric.Circle({ left: cmd.x, top: cmd.y, radius: 5, fill: "#ffffff", stroke: "#4f46e5", strokeWidth: 2, originX: "center", originY: "center", hasControls: false, hasBorders: false, isControlHelper: true });
-          [nc1, nc2, ne].forEach(n => { n.__cmd = cmd; n.on("mousedown", () => { selectedNodeRef.current = n; }); });
+          [nc1, nc2, ne].forEach(n => { n.__cmd = cmd; });
+          nc1.on("selected", () => { selectedNodeRef.current = nc1; nc1.set({ fill: "#ff0000" }); canvas.requestRenderAll(); });
+          nc1.on("deselected", () => { nc1.set({ fill: "#ef4444" }); canvas.requestRenderAll(); });
+          nc2.on("selected", () => { selectedNodeRef.current = nc2; nc2.set({ fill: "#ff0000" }); canvas.requestRenderAll(); });
+          nc2.on("deselected", () => { nc2.set({ fill: "#ef4444" }); canvas.requestRenderAll(); });
+          ne.on("selected", () => { selectedNodeRef.current = ne; ne.set({ fill: "#ef4444" }); canvas.requestRenderAll(); });
+          ne.on("deselected", () => { ne.set({ fill: "#ffffff" }); canvas.requestRenderAll(); });
           nc1.on("moving", () => { cmd.cp1x = nc1.left; cmd.cp1y = nc1.top; l1.set({ x2: nc1.left, y2: nc1.top }); updatePrev(); });
           nc2.on("moving", () => { cmd.cp2x = nc2.left; cmd.cp2y = nc2.top; l2.set({ x2: nc2.left, y2: nc2.top }); updatePrev(); });
           ne.on("moving", () => { cmd.x = ne.left; cmd.y = ne.top; l2.set({ x1: ne.left, y1: ne.top }); const nc = commands[i+1]; if (nc?.__line1) nc.__line1.set({ x1: ne.left, y1: ne.top }); updatePrev(); });
