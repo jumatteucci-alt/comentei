@@ -394,7 +394,7 @@ function EditorInner() {
     let previewObj: any = null;
 
     const updatePreview = () => {
-      if (previewObj) canvas.remove(previewObj);
+      // Build path string from absolute screen coordinates
       let d = "";
       commands.forEach(c => {
         if (c.type === "M") d += `M ${c.x} ${c.y} `;
@@ -402,18 +402,31 @@ function EditorInner() {
         else if (c.type === "C") d += `C ${c.cp1x} ${c.cp1y} ${c.cp2x} ${c.cp2y} ${c.x} ${c.y} `;
         else if (c.type === "Z") d += `Z `;
       });
-      previewObj = new fabric.Path(d.trim(), {
-        fill: pathObj.fill,
-        stroke: pathObj.stroke,
-        strokeWidth: pathObj.strokeWidth,
-        strokeUniform: true,
-        selectable: false,
-        evented: false,
-        isEditPreview: true,
-      });
-      canvas.add(previewObj);
-      canvas.sendToBack(previewObj);
-      if (editingData.current) editingData.current.previewObj = previewObj;
+
+      if (previewObj) {
+        // Update existing preview path in-place
+        previewObj._setPath(d.trim());
+        previewObj.set({ left: 0, top: 0, scaleX: 1, scaleY: 1, angle: 0 });
+        previewObj.setCoords();
+      } else {
+        previewObj = new fabric.Path(d.trim(), {
+          fill: pathObj.fill,
+          stroke: pathObj.stroke || "#000000",
+          strokeWidth: pathObj.strokeWidth || 2,
+          strokeUniform: true,
+          selectable: false,
+          evented: false,
+          left: 0,
+          top: 0,
+          scaleX: 1,
+          scaleY: 1,
+          angle: 0,
+          isEditPreview: true,
+        });
+        canvas.add(previewObj);
+        canvas.sendToBack(previewObj);
+        if (editingData.current) editingData.current.previewObj = previewObj;
+      }
       canvas.requestRenderAll();
     };
 
