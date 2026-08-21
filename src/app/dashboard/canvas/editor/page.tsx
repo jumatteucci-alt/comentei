@@ -818,7 +818,7 @@ function EditorInner() {
             l1.set({ opacity: 1 });
             l2.set({ opacity: 1 });
             // Mostra também as handles do próximo segmento
-            const nextCmd = commands[idx + 1];
+            const nextCmd = commands[commands.indexOf(cmd) + 1];
             if (nextCmd?.__line1) nextCmd.__line1.set({ opacity: 1 });
             canvasElRef.current?.focus();
             canvas.requestRenderAll();
@@ -829,7 +829,7 @@ function EditorInner() {
             nc2.set({ opacity: 0 });
             l1.set({ opacity: 0 });
             l2.set({ opacity: 0 });
-            const nextCmd = commands[idx + 1];
+            const nextCmd = commands[commands.indexOf(cmd) + 1];
             if (nextCmd?.__line1) nextCmd.__line1.set({ opacity: 0 });
             canvas.requestRenderAll();
           });
