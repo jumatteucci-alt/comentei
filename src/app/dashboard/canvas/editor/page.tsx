@@ -1519,7 +1519,7 @@ function EditorInner() {
         return null;
       };
 
-      const font = await loadFont(family => family === fontFamily ? fontFamily : "Montserrat");
+      const font = await loadFont(fontFamily);
 
       if (!font) {
         const svgData = sel.toSVG();
