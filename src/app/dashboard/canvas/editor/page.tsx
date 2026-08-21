@@ -198,6 +198,7 @@ function EditorInner() {
   const penCurveHandles = useRef<{x:number;y:number}[][]>([]);
   const isPenDragging = useRef(false);
   const activeHandleLine = useRef<any>(null);
+  const lastFinalizedPath = useRef<any>(null);
   const finalizePenRef = useRef<(close:boolean)=>void>(() => {});
   const cancelPenRef = useRef<()=>void>(() => {});
   const undoLastPenPointRef = useRef<()=>void>(() => {});
@@ -623,9 +624,62 @@ function EditorInner() {
     renderEditControls();
   };
 
-  const undoLastPenPoint = () => {
-    if (!fc.current || penPoints.current.length === 0) return;
+  const redrawPenCanvas = () => {
+    if (!fc.current) return;
     const canvas = fc.current;
+    const fabric = (window as any).fabric;
+    const pts = penPoints.current;
+    const handles = penCurveHandles.current;
+
+    penDots.current.forEach(d => canvas.remove(d));
+    penLines.current.forEach(l => canvas.remove(l));
+    penDots.current = [];
+    penLines.current = [];
+
+    pts.forEach((pt, i) => {
+      const dot = new fabric.Circle({
+        left: pt.x, top: pt.y, radius: 4, originX: "center", originY: "center",
+        fill: i === 0 ? "#22c55e" : "#4f46e5",
+        stroke: "white", strokeWidth: 1.5,
+        selectable: false, evented: false,
+      });
+      canvas.add(dot);
+      penDots.current.push(dot);
+
+      if (i > 0) {
+        const prev = pts[i - 1];
+        const prevH = handles[i - 1]?.[1] || prev;
+        const currH = handles[i]?.[0] || pt;
+        const curvePath = new fabric.Path(`M ${prev.x} ${prev.y} C ${prevH.x} ${prevH.y} ${currH.x} ${currH.y} ${pt.x} ${pt.y}`, {
+          stroke: "#4f46e5", strokeWidth: 1.5, strokeDashArray: [4, 3], fill: "transparent",
+          selectable: false, evented: false,
+        });
+        canvas.add(curvePath);
+        penLines.current.push(curvePath);
+      }
+    });
+
+    canvas.requestRenderAll();
+  };
+
+  const undoLastPenPoint = () => {
+    if (!fc.current) return;
+    const canvas = fc.current;
+
+    // Se a forma foi recém fechada, remove o vetor fechado e reabre a edição de pontos
+    if (lastFinalizedPath.current) {
+      canvas.remove(lastFinalizedPath.current);
+      lastFinalizedPath.current = null;
+      activeToolRef.current = "pen";
+      setActiveTool("pen");
+      canvas.defaultCursor = "crosshair";
+      canvas.hoverCursor = "crosshair";
+      canvas.selection = false;
+      redrawPenCanvas();
+      return;
+    }
+
+    if (penPoints.current.length === 0) return;
 
     penPoints.current.pop();
     penCurveHandles.current.pop();
@@ -817,7 +871,7 @@ function EditorInner() {
         if (pts.length > 1) {
           const first = pts[0];
           const dist = Math.hypot(p.x - first.x, p.y - first.y);
-          if (dist < 12) { finalizePenRef.current(true); return; }
+          if (dist < 14) { finalizePenRef.current(true); return; }
         }
 
         isPenDragging.current = true;
@@ -939,7 +993,7 @@ function EditorInner() {
               if (!obj) return;
               obj.clone((c: any) => { c.set({ left: obj.left+20, top: obj.top+20 }); canvas.add(c); canvas.setActiveObject(c); canvas.requestRenderAll(); }); break;
             case "z": e.preventDefault();
-              if (activeToolRef.current === "pen" && penPoints.current.length > 0) {
+              if (lastFinalizedPath.current || (activeToolRef.current === "pen" && penPoints.current.length > 0)) {
                 undoLastPenPointRef.current();
                 return;
               }
@@ -1474,6 +1528,7 @@ function EditorInner() {
 
   const finalizePen = (close: boolean) => {
     if (!fc.current) return;
+    const canvas = fc.current;
     const fabric = (window as any).fabric;
     const pts = penPoints.current;
     const handles = penCurveHandles.current;
@@ -1499,11 +1554,29 @@ function EditorInner() {
       strokeWidth: 2,
       strokeUniform: true,
     });
-    fc.current.add(path);
-    fc.current.setActiveObject(path);
+
+    // Limpa os elementos auxiliares da tela mantendo o histórico de nós
+    penLines.current.forEach(l => canvas.remove(l));
+    penDots.current.forEach(d => canvas.remove(d));
+    if (activeHandleLine.current) {
+      canvas.remove(activeHandleLine.current);
+      activeHandleLine.current = null;
+    }
+    penLines.current = [];
+    penDots.current = [];
+
+    canvas.add(path);
+    canvas.setActiveObject(path);
     syncSel(path);
-    cancelPen();
-    fc.current.requestRenderAll();
+    lastFinalizedPath.current = path;
+
+    // Retorna ao modo de seleção
+    activeToolRef.current = "select";
+    setActiveTool("select");
+    canvas.defaultCursor = "default";
+    canvas.hoverCursor = "move";
+    canvas.selection = true;
+    canvas.requestRenderAll();
   };
 
   const cancelPen = () => {
@@ -1516,11 +1589,13 @@ function EditorInner() {
     penDots.current = [];
     penCurveHandles.current = [];
     activeHandleLine.current = null;
+    lastFinalizedPath.current = null;
     fc.current.requestRenderAll();
   };
 
   const startPen = () => {
     if (isEditingNodes) exitEditNodes();
+    lastFinalizedPath.current = null;
     setActiveTool("pen"); activeToolRef.current = "pen";
     if (fc.current) {
       fc.current.defaultCursor = "crosshair";
