@@ -684,31 +684,23 @@ function EditorInner() {
     canvas.on("mouse:down", (e: any) => {
       if (!isEditingNodesRef.current) return;
       if (!editingData.current) return;
-      // Só adiciona ponto se clicou no path original (borda)
-      // Verifica se clicou próximo ao path original
+      const fabric = (window as any).fabric;
+      const p = canvas.getPointer(e.e);
       const pathObj = editingData.current.originalPathObj;
       pathObj.evented = true;
       const target = canvas.findTarget(e.e, false);
       pathObj.evented = false;
+      console.log("mouse:down edit mode — target:", target?.type, "pathObj:", pathObj.type, "match:", target === pathObj);
       if (!target || target !== pathObj) return;
-
-      const fabric = (window as any).fabric;
-      const p = canvas.getPointer(e.e);
       const { commands } = editingData.current;
-
-      // Encontra o segmento mais próximo e insere ponto
-      // Insere antes do Z se existir, senão no final
       const zIdx = commands.findIndex((c: any) => c.type === "Z");
       const insertAt = zIdx >= 0 ? zIdx : commands.length;
-
       commands.splice(insertAt, 0, {
         type: "C",
         cp1x: p.x - 20, cp1y: p.y,
         cp2x: p.x + 20, cp2y: p.y,
         x: p.x, y: p.y,
       });
-
-      // Rebuild visual
       const { helpers, handleLines, previewObj, originalPathObj } = editingData.current;
       helpers.forEach((h: any) => canvas.remove(h));
       handleLines.forEach((l: any) => canvas.remove(l));
