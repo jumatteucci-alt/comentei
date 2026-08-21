@@ -186,8 +186,8 @@ function EditorInner() {
   const [saved, setSaved] = useState(false);
   const [zoom, setZoom] = useState(100);
   const [layers, setLayers] = useState<{ id: string; label: string; locked: boolean }[]>([]);
-  const [activeTool, setActiveTool] = useState<"select"|"pen">("select");
-  const activeToolRef = useRef<"select"|"pen">("select");
+  const [activeTool, setActiveTool] = useState<"select"|"pen"|"brush">("select");
+  const activeToolRef = useRef<"select"|"pen"|"brush">("select");
 
   // Pen tool state
   const penPoints = useRef<{x:number;y:number}[]>([]);
@@ -1717,11 +1717,39 @@ function EditorInner() {
       fc.current.defaultCursor = "default";
       fc.current.hoverCursor = "move";
       fc.current.selection = true;
+      fc.current.isDrawingMode = false;
     }
   };
 
   finalizePenRef.current = finalizePen;
   cancelPenRef.current = cancelPen;
+
+  const createMask = () => {
+    if (!fc.current) return;
+    const canvas = fc.current;
+    const active = canvas.getActiveObject();
+    if (!active || active.type !== "activeSelection") return;
+    const objects = (active as any).getObjects();
+    const image = objects.find((o: any) => o.type === "image");
+    const shape = objects.find((o: any) => o.type !== "image");
+    if (!image || !shape) { alert("Selecione uma imagem e uma forma juntas."); return; }
+
+    shape.clone((clippedShape: any) => {
+      // Converte coordenadas da forma para o espaço da imagem
+      clippedShape.set({
+        left: shape.left - image.left,
+        top: shape.top - image.top,
+        originX: "left",
+        originY: "top",
+      });
+      image.clipPath = clippedShape;
+      canvas.remove(shape);
+      canvas.discardActiveObject();
+      canvas.setActiveObject(image);
+      syncSel(image);
+      canvas.requestRenderAll();
+    });
+  };
 
   const deleteSelected = () => {
     if (!fc.current || !sel) return;
@@ -1802,6 +1830,26 @@ function EditorInner() {
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition ${activeTool==="pen" ? "bg-indigo-100 text-indigo-700" : "text-gray-500 hover:bg-gray-100"}`}>
               <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M13 2l3 3-9 9H4v-3L13 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/><path d="M11 4l3 3" stroke="currentColor" strokeWidth="1.5"/></svg>
             </div>
+          </button>
+
+          {/* Brush */}
+          <button onClick={() => {
+            if (activeTool === "brush") {
+              setActiveTool("select"); activeToolRef.current = "select";
+              if (fc.current) { fc.current.isDrawingMode = false; }
+            } else {
+              setActiveTool("brush"); activeToolRef.current = "brush";
+              if (fc.current) {
+                const fabric = (window as any).fabric;
+                fc.current.isDrawingMode = true;
+                fc.current.freeDrawingBrush = new fabric.PencilBrush(fc.current);
+                fc.current.freeDrawingBrush.color = selFill !== "transparent" ? selFill : "#000000";
+                fc.current.freeDrawingBrush.width = selStrokeW > 0 ? selStrokeW : 4;
+              }
+            }
+          }} title="Pincel"
+            className={`w-10 h-10 rounded-xl flex items-center justify-center transition ${activeTool==="brush" ? "bg-indigo-100 text-indigo-700" : "text-gray-500 hover:bg-gray-100"}`}>
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 15c1-1 2-3 4-3s2 2 4 2c1 0 2-1 2-2V4l-2-2-8 8-2 4z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>
           </button>
 
           <div className="w-8 border-t border-gray-100 my-1" />
@@ -1919,6 +1967,19 @@ function EditorInner() {
                   className="w-full py-2 bg-indigo-50 text-indigo-700 font-medium rounded-lg border border-indigo-200 hover:bg-indigo-100 transition"
                 >
                   ✎ Editar Nós / Pontos
+                </button>
+              )}
+
+              {/* Máscara — só quando há seleção múltipla com imagem + forma */}
+              {sel?.type === "activeSelection" && (() => {
+                const objs = (sel as any).getObjects();
+                const hasImage = objs.some((o: any) => o.type === "image");
+                const hasShape = objs.some((o: any) => o.type !== "image");
+                return hasImage && hasShape;
+              })() && (
+                <button onClick={createMask}
+                  className="w-full py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition text-xs font-medium">
+                  ✂ Criar máscara
                 </button>
               )}
 
