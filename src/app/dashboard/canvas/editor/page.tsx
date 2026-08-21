@@ -1731,6 +1731,7 @@ function EditorInner() {
   cancelPenRef.current = cancelPen;
 
   const createMask = () => {
+
     if (!fc.current) return;
     const canvas = fc.current;
     const active = canvas.getActiveObject();
@@ -1738,6 +1739,10 @@ function EditorInner() {
     const objects = (active as any).getObjects();
     const image = objects.find((o: any) => o.type === "image");
     const shape = objects.find((o: any) => o.type !== "image");
+
+    console.log("image:", image.left, image.top, image.width, image.height, image.scaleX, image.scaleY);
+    console.log("shape:", shape.left, shape.top, shape.width, shape.height, shape.scaleX, shape.scaleY);
+    
     if (!image || !shape) { alert("Selecione uma imagem e uma forma juntas."); return; }
 
     shape.clone((clippedShape: any) => {
