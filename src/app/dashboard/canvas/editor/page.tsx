@@ -158,6 +158,7 @@ function EditorInner() {
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fc = useRef<any>(null);
+  const isEditingNodesRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const clipboardRef = useRef<any>(null);
   const historyRef = useRef<{ undo: string[]; redo: string[] }>({ undo: [], redo: [] });
@@ -354,6 +355,7 @@ function EditorInner() {
     syncSel(newPath);
     editingData.current = null;
     setIsEditingNodes(false);
+    isEditingNodesRef.current = false;
     canvas.requestRenderAll();
     refreshLayers(canvas);
   };
@@ -363,6 +365,7 @@ function EditorInner() {
     const canvas = fc.current;
     const fabric = (window as any).fabric;
     setIsEditingNodes(true);
+    isEditingNodesRef.current = true;
 
     canvas.discardActiveObject();
     pathObj.opacity = 0.3; // Deixa o original translúcido de fundo
@@ -729,7 +732,7 @@ function EditorInner() {
         obj.setCoords(); canvas.requestRenderAll();
       }
       if (e.key === "Escape") {
-        if (isEditingNodes) {
+        if (isEditingNodesRef.current) {
           exitEditNodes();
         } else if (activeToolRef.current === "pen") {
           cancelPenRef.current(); activeToolRef.current = "select"; setActiveTool("select");
@@ -739,7 +742,7 @@ function EditorInner() {
         }
       }
       if (e.key === "Enter") {
-        if (isEditingNodes) {
+        if (isEditingNodesRef.current) {
           exitEditNodes();
         } else if (activeToolRef.current === "pen") {
           finalizePenRef.current(true);
@@ -748,7 +751,7 @@ function EditorInner() {
     };
     window.addEventListener("keydown", onKey);
     return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
-  }, [fabricLoaded, DISPLAY_W, DISPLAY_H, isEditingNodes]);
+  }, [fabricLoaded, DISPLAY_W, DISPLAY_H]);
 
   useEffect(() => {
     if (!fc.current) return;
