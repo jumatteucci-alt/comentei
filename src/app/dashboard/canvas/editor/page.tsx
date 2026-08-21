@@ -156,7 +156,6 @@ function EditorInner() {
   const format = searchParams.get("format") || "square";
   const fmt = FORMATS[format] || FORMATS.square;
 
-  // Dimensões dinâmicas do Canvas (resolução real)
   const [canvasWidth, setCanvasWidth] = useState(fmt.w);
   const [canvasHeight, setCanvasHeight] = useState(fmt.h);
   const [inputWidth, setInputWidth] = useState(String(fmt.w));
@@ -201,6 +200,7 @@ function EditorInner() {
   const activeHandleLine = useRef<any>(null);
   const finalizePenRef = useRef<(close:boolean)=>void>(() => {});
   const cancelPenRef = useRef<()=>void>(() => {});
+  const undoLastPenPointRef = useRef<()=>void>(() => {});
 
   const [isEditingNodes, setIsEditingNodes] = useState(false);
   const editingData = useRef<{
@@ -239,11 +239,10 @@ function EditorInner() {
   const [bgSolid, setBgSolid] = useState("#ffffff");
   const [bgGradient, setBgGradient] = useState<{c1:string;c2:string;angle:number}|null>(null);
 
-  // Auto-fit responsivo com base no tamanho do container visível
   const fitCanvasToScreen = useCallback(() => {
     if (!canvasContainerRef.current) return;
     const container = canvasContainerRef.current;
-    const padding = 64; // respiro
+    const padding = 64;
     const availW = Math.max(300, container.clientWidth - padding);
     const availH = Math.max(300, container.clientHeight - padding);
 
@@ -624,7 +623,32 @@ function EditorInner() {
     renderEditControls();
   };
 
-  // Inicialização e atualização de dimensões do Canvas em tempo real
+  const undoLastPenPoint = () => {
+    if (!fc.current || penPoints.current.length === 0) return;
+    const canvas = fc.current;
+
+    penPoints.current.pop();
+    penCurveHandles.current.pop();
+
+    const lastDot = penDots.current.pop();
+    if (lastDot) canvas.remove(lastDot);
+
+    const lastLine = penLines.current.pop();
+    if (lastLine) canvas.remove(lastLine);
+
+    if (activeHandleLine.current) {
+      canvas.remove(activeHandleLine.current);
+      activeHandleLine.current = null;
+    }
+
+    if (penPoints.current.length === 0) {
+      cancelPen();
+    } else {
+      canvas.requestRenderAll();
+    }
+  };
+  undoLastPenPointRef.current = undoLastPenPoint;
+
   useEffect(() => {
     if (!fabricLoaded || !canvasRef.current) return;
     const z = zoom / 100;
@@ -915,6 +939,10 @@ function EditorInner() {
               if (!obj) return;
               obj.clone((c: any) => { c.set({ left: obj.left+20, top: obj.top+20 }); canvas.add(c); canvas.setActiveObject(c); canvas.requestRenderAll(); }); break;
             case "z": e.preventDefault();
+              if (activeToolRef.current === "pen" && penPoints.current.length > 0) {
+                undoLastPenPointRef.current();
+                return;
+              }
               if (e.shiftKey) { const n = historyRef.current.redo.pop(); if (!n) return; historyRef.current.undo.push(JSON.stringify(canvas.toJSON())); restoreState(n); }
               else { const p = historyRef.current.undo.pop(); if (!p) return; historyRef.current.redo.push(JSON.stringify(canvas.toJSON())); restoreState(p); }
               break;
@@ -1063,7 +1091,7 @@ function EditorInner() {
   };
   const applyShadow = (color: string, blur: number, ox: number, oy: number) => {
     if (!fc.current || !sel || !selShadow) return;
-    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur, offsetX: ox, offsetY: oy }));
+    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur, offsetX: ox, oy }));
     fc.current.requestRenderAll();
   };
 
@@ -1711,10 +1739,15 @@ function EditorInner() {
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 2l12 7-6 1-3 6L3 2z" fill="currentColor"/></svg>
           </button>
 
-          {/* Pen */}
+          {/* Pen (Ícone Clássico de Caneta Tinteiro / Pen Tool) */}
           <button onClick={() => activeTool==="pen" ? stopPen() : startPen()} title="Caneta (P) - Clique e arraste para curvas">
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition ${activeTool==="pen" ? "bg-indigo-100 text-indigo-700" : "text-gray-500 hover:bg-gray-100"}`}>
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M13 2l3 3-9 9H4v-3L13 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/><path d="M11 4l3 3" stroke="currentColor" strokeWidth="1.5"/></svg>
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 19l7-7 3 3-7 7-3-3z"/>
+                <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
+                <path d="M2 2l7.586 7.586"/>
+                <circle cx="11" cy="11" r="1.5" fill="currentColor"/>
+              </svg>
             </div>
           </button>
 
