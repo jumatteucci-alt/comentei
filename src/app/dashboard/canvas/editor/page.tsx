@@ -714,14 +714,37 @@ function EditorInner() {
       console.log("mouse:down edit mode — target:", target?.type, "pathObj:", pathObj.type, "match:", target === pathObj);
       if (!target || target !== pathObj) return;
       const { commands } = editingData.current;
-      const zIdx = commands.findIndex((c: any) => c.type === "Z");
-      const insertAt = zIdx >= 0 ? zIdx : commands.length;
-      commands.splice(insertAt, 0, {
+      
+      // Encontra o segmento mais próximo do ponto clicado
+      let closestIdx = 1;
+      let closestDist = Infinity;
+
+      for (let i = 1; i < commands.length; i++) {
+        const cmd = commands[i];
+        if (cmd.type === "Z") continue;
+        const prevCmd = commands[i - 1];
+        if (!prevCmd) continue;
+        const px = prevCmd.x ?? 0;
+        const py = prevCmd.y ?? 0;
+        const cx = cmd.x ?? 0;
+        const cy = cmd.y ?? 0;
+        // Ponto médio do segmento
+        const mx = (px + cx) / 2;
+        const my = (py + cy) / 2;
+        const dist = Math.hypot(p.x - mx, p.y - my);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closestIdx = i;
+        }
+      }
+
+      commands.splice(closestIdx, 0, {
         type: "C",
         cp1x: p.x - 20, cp1y: p.y,
         cp2x: p.x + 20, cp2y: p.y,
         x: p.x, y: p.y,
       });
+      
       const { helpers, handleLines, previewObj } = editingData.current;
       helpers.forEach((h: any) => canvas.remove(h));
       handleLines.forEach((l: any) => canvas.remove(l));
