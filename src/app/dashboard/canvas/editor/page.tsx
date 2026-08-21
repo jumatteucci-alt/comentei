@@ -475,6 +475,7 @@ function EditorInner() {
         const line2 = new fabric.Line([cmd.x, cmd.y, cmd.cp2x, cmd.cp2y], {
           stroke: "#f87171", strokeWidth: 1, strokeDashArray: [2, 2], selectable: false, evented: false, isControlHelper: true, opacity:0
         });
+        cmd.__line2 = line2;
         handleLines.push(line1, line2);
         canvas.add(line1);
         canvas.add(line2);
@@ -773,7 +774,7 @@ function EditorInner() {
         cp2x: m4x, cp2y: m4y,
         x: midX, y: midY,
       });
-      
+
       const { helpers, handleLines, previewObj } = editingData.current;
       helpers.forEach((h: any) => canvas.remove(h));
       handleLines.forEach((l: any) => canvas.remove(l));
@@ -817,6 +818,8 @@ function EditorInner() {
             nc2.set({ opacity: 1 });
             l1.set({ opacity: 1 });
             l2.set({ opacity: 1 });
+            const prevCmd = commands[commands.indexOf(cmd) - 1];
+            if (prevCmd?.__line2) prevCmd.__line2.set({ opacity: 1 });
             // Mostra também as handles do próximo segmento
             const nextCmd = commands[commands.indexOf(cmd) + 1];
             if (nextCmd?.__line1) nextCmd.__line1.set({ opacity: 1 });
@@ -829,6 +832,8 @@ function EditorInner() {
             nc2.set({ opacity: 0 });
             l1.set({ opacity: 0 });
             l2.set({ opacity: 0 });
+            const prevCmd = commands[commands.indexOf(cmd) - 1];
+            if (prevCmd?.__line2) prevCmd.__line2.set({ opacity: 0 });
             const nextCmd = commands[commands.indexOf(cmd) + 1];
             if (nextCmd?.__line1) nextCmd.__line1.set({ opacity: 0 });
             canvas.requestRenderAll();
