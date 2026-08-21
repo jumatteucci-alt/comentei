@@ -681,6 +681,40 @@ function EditorInner() {
       canvas.requestRenderAll();
     });
 
+    canvas.on("mouse:down", (e: any) => {
+      if (!isEditingNodesRef.current) return;
+      if (!editingData.current) return;
+      // Só adiciona ponto se clicou no path original (borda)
+      const target = canvas.findTarget(e.e, false);
+      if (!target || target !== editingData.current.originalPathObj) return;
+
+      const fabric = (window as any).fabric;
+      const p = canvas.getPointer(e.e);
+      const { commands } = editingData.current;
+
+      // Encontra o segmento mais próximo e insere ponto
+      // Insere antes do Z se existir, senão no final
+      const zIdx = commands.findIndex((c: any) => c.type === "Z");
+      const insertAt = zIdx >= 0 ? zIdx : commands.length;
+
+      commands.splice(insertAt, 0, {
+        type: "C",
+        cp1x: p.x - 20, cp1y: p.y,
+        cp2x: p.x + 20, cp2y: p.y,
+        x: p.x, y: p.y,
+      });
+
+      // Rebuild visual
+      const { helpers, handleLines, previewObj, originalPathObj } = editingData.current;
+      helpers.forEach((h: any) => canvas.remove(h));
+      handleLines.forEach((l: any) => canvas.remove(l));
+      if (previewObj) canvas.remove(previewObj);
+      editingData.current.helpers = [];
+      editingData.current.handleLines = [];
+      editingData.current.previewObj = null;
+      enterEditNodesRef.current?.(originalPathObj);
+    });
+
     canvas.on("mouse:move", (e: any) => {
 
       // Cursor de caneta ao passar sobre path em modo select
