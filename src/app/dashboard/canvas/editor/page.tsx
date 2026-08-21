@@ -738,21 +738,40 @@ function EditorInner() {
         }
       }
 
-      // Calcula direção do segmento para alinhar as handles
       const prevCmd = commands[closestIdx - 1];
       const nextCmd = commands[closestIdx];
-      const px = prevCmd?.x ?? p.x;
-      const py = prevCmd?.y ?? p.y;
-      const nx = nextCmd?.x ?? p.x;
-      const ny = nextCmd?.y ?? p.y;
-      const dx = (nx - px) / 4;
-      const dy = (ny - py) / 4;
 
+      // Ponto no meio da curva usando De Casteljau (t=0.5)
+      const t = 0.5;
+      let p1x = prevCmd?.x ?? p.x, p1y = prevCmd?.y ?? p.y;
+      let c1x = nextCmd?.cp1x ?? p.x, c1y = nextCmd?.cp1y ?? p.y;
+      let c2x = nextCmd?.cp2x ?? p.x, c2y = nextCmd?.cp2y ?? p.y;
+      let p2x = nextCmd?.x ?? p.x, p2y = nextCmd?.y ?? p.y;
+
+      // Se nextCmd não é C, trata como linha reta
+      if (nextCmd?.type !== "C") {
+        c1x = p1x; c1y = p1y; c2x = p2x; c2y = p2y;
+      }
+
+      const m1x = p1x + (c1x - p1x) * t, m1y = p1y + (c1y - p1y) * t;
+      const m2x = c1x + (c2x - c1x) * t, m2y = c1y + (c2y - c1y) * t;
+      const m3x = c2x + (p2x - c2x) * t, m3y = c2y + (p2y - c2y) * t;
+      const m4x = m1x + (m2x - m1x) * t, m4y = m1y + (m2y - m1y) * t;
+      const m5x = m2x + (m3x - m2x) * t, m5y = m2y + (m3y - m2y) * t;
+      const midX = m4x + (m5x - m4x) * t, midY = m4y + (m5y - m4y) * t;
+
+      // Atualiza o segmento existente com a primeira metade
+      if (nextCmd?.type === "C") {
+        nextCmd.cp1x = m3x; nextCmd.cp1y = m3y;
+        nextCmd.cp2x = m5x; nextCmd.cp2y = m5y;
+      }
+
+      // Insere novo ponto com a segunda metade
       commands.splice(closestIdx, 0, {
         type: "C",
-        cp1x: p.x - dx, cp1y: p.y - dy,
-        cp2x: p.x + dx, cp2y: p.y + dy,
-        x: p.x, y: p.y,
+        cp1x: m1x, cp1y: m1y,
+        cp2x: m4x, cp2y: m4y,
+        x: midX, y: midY,
       });
       
       const { helpers, handleLines, previewObj } = editingData.current;
