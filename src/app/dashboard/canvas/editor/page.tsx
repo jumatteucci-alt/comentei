@@ -33,34 +33,6 @@ function loadGoogleFonts() {
   document.head.appendChild(l);
 }
 
-function hexToRgba(hex: string, alpha = 1) {
-  if (hex.startsWith("rgb")) return hex;
-  let c = hex.replace("#", "");
-  if (c.length === 3) c = c.split("").map(x => x + x).join("");
-  const num = parseInt(c, 16);
-  const r = (num >> 16) & 255;
-  const g = (num >> 8) & 255;
-  const b = num & 255;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-function rgbToHex(rgb: string): string {
-  if (!rgb) return "#000000";
-  if (rgb.startsWith("#")) return rgb;
-  const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-  if (!m) return "#000000";
-  return "#" + [m[1], m[2], m[3]].map(n => parseInt(n).toString(16).padStart(2, "0")).join("");
-}
-
-function getObjColor(obj: any): string {
-  if (!obj) return "#000000";
-  const fill = obj.fill;
-  if (!fill || fill === "transparent" || fill === "none") return "transparent";
-  if (typeof fill === "string") return rgbToHex(fill);
-  if (fill.colorStops?.length) return rgbToHex(fill.colorStops[0].color);
-  return "#000000";
-}
-
 function ColorPicker({ value, onChange, label, allowTransparent = true }: { value: string; onChange: (c: string) => void; label?: string; allowTransparent?: boolean }) {
   const isNone = value === "transparent" || value === "" || value === "none";
   return (
@@ -264,6 +236,17 @@ function GradientEditor({ value, onChange }: { value: GradConfig | null; onChang
   );
 }
 
+function hexToRgba(hex: string, alpha = 1) {
+  if (hex.startsWith("rgb")) return hex;
+  let c = hex.replace("#", "");
+  if (c.length === 3) c = c.split("").map(x => x + x).join("");
+  const num = parseInt(c, 16);
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function SliderRow({ label, value, min, max, step = 1, unit = "", onChange }: { label: string; value: number; min: number; max: number; step?: number; unit?: string; onChange: (v: number) => void }) {
   return (
     <div>
@@ -311,6 +294,22 @@ function applyGradient(fc: any, obj: any, g: GradConfig) {
   });
   obj.set("fill", gradient);
   fc.requestRenderAll();
+}
+
+function rgbToHex(rgb: string): string {
+  if (rgb.startsWith("#")) return rgb;
+  const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (!m) return "#000000";
+  return "#" + [m[1], m[2], m[3]].map(n => parseInt(n).toString(16).padStart(2, "0")).join("");
+}
+
+function getObjColor(obj: any): string {
+  if (!obj) return "#000000";
+  const fill = obj.fill;
+  if (!fill || fill === "transparent" || fill === "none") return "transparent";
+  if (typeof fill === "string") return rgbToHex(fill);
+  if (fill.colorStops?.length) return rgbToHex(fill.colorStops[0].color);
+  return "#000000";
 }
 
 function EditorInner() {
@@ -364,6 +363,9 @@ function EditorInner() {
   const isPenDragging = useRef(false);
   const activeHandleLine = useRef<any>(null);
   const lastFinalizedPath = useRef<any>(null);
+  const finalizePenRef = useRef<(close:boolean)=>void>(() => {});
+  const cancelPenRef = useRef<()=>void>(() => {});
+  const undoLastPenPointRef = useRef<()=>void>(() => {});
 
   const [isEditingNodes, setIsEditingNodes] = useState(false);
   const editingData = useRef<{
@@ -402,18 +404,6 @@ function EditorInner() {
 
   const [bgSolid, setBgSolid] = useState("#ffffff");
   const [bgGradient, setBgGradient] = useState<{c1:string;c2:string;angle:number}|null>(null);
-
-  const isText = sel?.type === "i-text" || sel?.type === "textbox";
-  const isTextbox = sel?.type === "textbox";
-  const isPath = sel?.type === "path";
-  const isRect = sel?.type === "rect";
-  const hasClipPath = !!sel?.clipPath;
-  const isShapeType = (o: any) => o && ["rect", "circle", "triangle", "polygon"].includes(o.type);
-
-  const isMultiShapeSelected = sel?.type === "activeSelection" && (() => {
-    const objs = (sel as any).getObjects();
-    return objs.length >= 2 && objs.every((o: any) => o.type !== "image" && o.type !== "i-text" && o.type !== "textbox");
-  })();
 
   const fitCanvasToScreen = useCallback(() => {
     if (!canvasContainerRef.current) return;
@@ -554,277 +544,6 @@ function EditorInner() {
     canvas.requestRenderAll();
     syncSel(null);
     refreshLayers(canvas);
-  };
-
-  const upd = (props: Record<string, any>) => {
-    if (!fc.current || !sel) return;
-    sel.set(props);
-    if (isText && sel.fontFamily) {
-      document.fonts.load(`${sel.fontSize || 48}px "${sel.fontFamily}"`).finally(() => {
-        fc.current?.requestRenderAll();
-      });
-    } else {
-      fc.current.requestRenderAll();
-    }
-  };
-
-  const updateFill = (color: string) => {
-    setSelFill(color); setSelFillGradient(null);
-    upd({ fill: color });
-  };
-  const updateFillGradient = (g: GradConfig | null) => {
-    setSelFillGradient(g);
-    if (!g) { upd({ fill: selFill }); return; }
-    if (fc.current && sel) applyGradient(fc.current, sel, g);
-  };
-  const updateOpacity  = (v: number) => { setSelOpacity(v);  upd({ opacity: v/100 }); };
-  const updateStroke   = (c: string) => { setSelStroke(c);   upd({ stroke: c }); };
-  const updateStrokeW  = (v: number) => { setSelStrokeW(v);  upd({ strokeWidth: v, strokeUniform: true }); };
-  const updateRadius   = (v: number) => { setSelRadius(v);   upd({ rx: v, ry: v }); };
-  const updateRotation = (v: number) => { setSelRotation(v); upd({ angle: v }); };
-  const updateFontSize = (v: number) => {
-    setSelFontSize(v);
-    if (!fc.current || !sel) return;
-    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
-      sel.setSelectionStyles({ fontSize: v });
-      fc.current.requestRenderAll();
-    } else { upd({ fontSize: v }); }
-  };
-  const updateFontFamily = (v: string) => {
-    setSelFontFamily(v);
-    document.fonts.load(`${selFontSize}px "${v}"`).finally(() => {
-      upd({ fontFamily: v });
-    });
-  };
-  const updateTextAlign = (v: "left"|"center"|"right"|"justify") => {
-    setSelTextAlign(v);
-    upd({ textAlign: v });
-  };
-  const toggleBold = () => {
-    const n = !selBold; setSelBold(n);
-    if (!fc.current || !sel) return;
-    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
-      sel.setSelectionStyles({ fontWeight: n ? "bold" : "normal" });
-      fc.current.requestRenderAll();
-    } else {
-      sel.set({ fontWeight: n ? "bold" : "normal" });
-      if (sel.initDimensions) sel.initDimensions();
-      document.fonts.load(`bold ${sel.fontSize}px "${sel.fontFamily}"`).finally(() => {
-        fc.current?.requestRenderAll();
-      });
-    }
-  };
-  const toggleItalic = () => {
-    const n = !selItalic; setSelItalic(n);
-    if (!fc.current || !sel) return;
-    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
-      sel.setSelectionStyles({ fontStyle: n ? "italic" : "normal" });
-      fc.current.requestRenderAll();
-    } else { upd({ fontStyle: n ? "italic" : "normal" }); }
-  };
-  const toggleUnderline = () => {
-    const n = !selUnderline; setSelUnderline(n);
-    if (!fc.current || !sel) return;
-    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
-      sel.setSelectionStyles({ underline: n });
-      fc.current.requestRenderAll();
-    } else { upd({ underline: n }); }
-  };
-  const updateFillForText = (color: string) => {
-    if (sel?.isEditing && sel.selectionStart !== sel.selectionEnd) {
-      setSelFill(color);
-      sel.setSelectionStyles({ fill: color });
-      fc.current?.requestRenderAll();
-    } else {
-      updateFill(color);
-    }
-  };
-  const updateCharSpacing = (v: number) => { setSelCharSpacing(v); upd({ charSpacing: v }); };
-  const updateLineHeight  = (v: number) => { setSelLineHeight(v);  upd({ lineHeight: v }); };
-
-  const updateShadow = (on: boolean) => {
-    setSelShadow(on);
-    if (!fc.current || !sel) return;
-    sel.set("shadow", on ? new (window as any).fabric.Shadow({ color: selShadowColor, blur: selShadowBlur, offsetX: selShadowX, offsetY: selShadowY }) : null);
-    fc.current.requestRenderAll();
-  };
-  const applyShadow = (color: string, blur: number, ox: number, oy: number) => {
-    if (!fc.current || !sel || !selShadow) return;
-    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur, offsetX: ox, oy }));
-    fc.current.requestRenderAll();
-  };
-
-  const updateSaturation = (v: number) => {
-    setSelSaturation(v);
-    if (!fc.current || !sel) return;
-    const fabric = (window as any).fabric;
-    const filters = (sel.filters || []).filter((f: any) => f.type !== "Saturation");
-    filters.push(new fabric.Image.filters.Saturation({ saturation: v }));
-    sel.filters = filters;
-    sel.applyFilters();
-    fc.current.requestRenderAll();
-  };
-
-  const updateTextWidth = (v: number) => {
-    setSelTextWidth(v);
-    upd({ width: v });
-  };
-
-  const updateTextHeight = (v: number) => {
-    setSelTextHeight(v);
-    if (!fc.current || !sel) return;
-    if (v === 0) {
-      sel.set({ minHeight: undefined, __fixedHeight: false });
-      sel.__fixedHeight = false;
-      sel.initDimensions?.();
-      fc.current.requestRenderAll();
-    } else {
-      sel.__fixedHeight = true;
-      sel.set({ height: v, minHeight: v });
-      fc.current.requestRenderAll();
-    }
-  };
-
-  const updateBlur = (v: number) => {
-    setSelBlur(v);
-    if (!fc.current || !sel) return;
-    const uid = sel.__uid;
-    if (v > 0) blurValueMap.current.set(uid, v);
-    else blurValueMap.current.delete(uid);
-
-    if (sel.type === "image" && !blurOriginMap.current.has(uid)) {
-      const fabric = (window as any).fabric;
-      const filters = (sel.filters || []).filter((f: any) => f.type !== "Blur");
-      if (v > 0) filters.push(new fabric.Image.filters.Blur({ blur: v / 100 }));
-      sel.filters = filters;
-      sel.set({ padding: v > 0 ? Math.round(v * 0.8) : 0 });
-      sel.applyFilters();
-      fc.current.requestRenderAll();
-      return;
-    }
-
-    if (!blurPosMap.current.has(uid)) {
-      blurPosMap.current.set(uid, {
-        left: sel.left, top: sel.top,
-        scaleX: sel.scaleX || 1, scaleY: sel.scaleY || 1,
-        angle: sel.angle || 0,
-      });
-    }
-
-    if (!blurOriginMap.current.has(uid) && sel.type !== "image") {
-      blurOriginMap.current.set(uid, JSON.stringify(sel.toObject()));
-    }
-
-    if (blurTimer.current) clearTimeout(blurTimer.current);
-    blurTimer.current = setTimeout(() => {
-      const fabric = (window as any).fabric;
-      const currentV = blurValueMap.current.get(uid) ?? 0;
-      const pos = blurPosMap.current.get(uid)!;
-
-      if (currentV === 0 && blurOriginMap.current.has(uid)) {
-        const json = blurOriginMap.current.get(uid)!;
-        blurOriginMap.current.delete(uid);
-        blurPosMap.current.delete(uid);
-        const current = fc.current.getObjects().find((o: any) => o.__uid === uid);
-        if (current) fc.current.remove(current);
-        fabric.util.enlivenObjects([JSON.parse(json)], (objs: any[]) => {
-          const orig = objs[0];
-          orig.set({ left: pos.left, top: pos.top, angle: pos.angle, scaleX: pos.scaleX, scaleY: pos.scaleY });
-          orig.__uid = uid;
-          fc.current.add(orig);
-          fc.current.setActiveObject(orig);
-          setSel(orig);
-          setSelBlur(0);
-          fc.current.requestRenderAll();
-        });
-        return;
-      }
-
-      const sourceJson = blurOriginMap.current.get(uid)!;
-      const current = fc.current.getObjects().find((o: any) => o.__uid === uid);
-      if (current) fc.current.remove(current);
-
-      fabric.util.enlivenObjects([JSON.parse(sourceJson)], async (objs: any[]) => {
-        const sourceObj = objs[0];
-        const srcW = (sourceObj.width  || 100) * pos.scaleX;
-        const srcH = (sourceObj.height || 100) * pos.scaleY;
-        const blurPx = Math.max(1, Math.round(currentV * 0.3));
-        const pad = blurPx * 4;
-        const cw = Math.min(Math.ceil(srcW) + pad * 2, 1800);
-        const ch = Math.min(Math.ceil(srcH) + pad * 2, 1800);
-
-        const miniEl = document.createElement("canvas");
-        miniEl.width = cw; miniEl.height = ch;
-        const miniCanvas = new fabric.StaticCanvas(miniEl, { width: cw, height: ch, enableRetinaScaling: false });
-        sourceObj.set({ left: cw / 2, top: ch / 2, originX: "center", originY: "center", angle: 0, scaleX: pos.scaleX, scaleY: pos.scaleY });
-        miniCanvas.add(sourceObj);
-
-        await document.fonts.ready;
-        miniCanvas.renderAll();
-
-        const outEl = document.createElement("canvas");
-        outEl.width = cw; outEl.height = ch;
-        const ctx = outEl.getContext("2d")!;
-        ctx.filter = `blur(${blurPx}px)`;
-        ctx.drawImage(miniEl, 0, 0);
-        miniCanvas.dispose();
-
-        const dataURL = outEl.toDataURL("image/png");
-        fabric.Image.fromURL(dataURL, (img: any) => {
-          img.set({
-            left: pos.left + (srcW / 2) - (cw / 2),
-            top:  pos.top  + (srcH / 2) - (ch / 2),
-            angle: pos.angle,
-            scaleX: 1, scaleY: 1,
-            originX: "left", originY: "top",
-            strokeUniform: true,
-          });
-          img.__uid = uid;
-          fc.current.add(img);
-          fc.current.setActiveObject(img);
-          setSel(img);
-          setSelBlur(currentV);
-          fc.current.requestRenderAll();
-        });
-      });
-    }, 150);
-  };
-
-  const toggleLock = (uid: string) => {
-    if (!fc.current) return;
-    const obj = fc.current.getObjects().find((o: any) => o.__uid === uid);
-    if (!obj) return;
-    const locked = !obj.lockMovementX;
-    obj.set({
-      lockMovementX: locked, lockMovementY: locked,
-      lockRotation: locked, lockScalingX: locked, lockScalingY: locked,
-      selectable: !locked,
-      evented: !locked,
-      hoverCursor: locked ? "default" : "move",
-    });
-    if (locked && fc.current.getActiveObject() === obj) {
-      fc.current.discardActiveObject();
-      syncSel(null);
-    }
-    refreshLayers(fc.current);
-    fc.current.requestRenderAll();
-  };
-
-  const alignObj = (dir: string) => {
-    if (!fc.current || !sel) return;
-    const canvas = fc.current;
-    const cw = canvasWidth;
-    const ch = canvasHeight;
-    sel.setCoords();
-    const br = sel.getBoundingRect(true);
-    if (dir === "left")    sel.set({ left: sel.left - br.left });
-    if (dir === "hcenter") sel.set({ left: sel.left - br.left + (cw - br.width) / 2 });
-    if (dir === "right")   sel.set({ left: sel.left - br.left + cw - br.width });
-    if (dir === "top")     sel.set({ top: sel.top - br.top });
-    if (dir === "vcenter") sel.set({ top: sel.top - br.top + (ch - br.height) / 2 });
-    if (dir === "bottom")  sel.set({ top: sel.top - br.top + ch - br.height });
-    sel.setCoords();
-    canvas.requestRenderAll();
   };
 
   const convertShapeToFabricPath = (obj: any): any => {
@@ -1395,6 +1114,601 @@ function EditorInner() {
       canvas.requestRenderAll();
     }
   };
+  undoLastPenPointRef.current = undoLastPenPoint;
+
+  useEffect(() => {
+    if (!fabricLoaded || !canvasRef.current) return;
+
+    if (!fc.current) {
+      const canvas = new (window as any).fabric.Canvas(canvasRef.current, {
+        width: canvasWidth,
+        height: canvasHeight,
+        backgroundColor: "#ffffff",
+        selection: true,
+        centeredRotation: true,
+      });
+      fc.current = canvas;
+      const canvasEl = canvas.upperCanvasEl;
+      canvasElRef.current = canvasEl;
+      canvasEl.setAttribute("tabindex", "0");
+
+      const saveState = () => {
+        if (savingHistory.current) return;
+        try { historyRef.current.undo.push(JSON.stringify(canvas.toJSON())); historyRef.current.redo = []; if (historyRef.current.undo.length > 50) historyRef.current.undo.shift(); } catch {}
+      };
+      const restoreState = (json: string) => {
+        savingHistory.current = true;
+        try { canvas.loadFromJSON(JSON.parse(json), () => { try { canvas.renderAll(); refreshLayers(canvas); } catch {} savingHistory.current = false; }); } catch { savingHistory.current = false; }
+      };
+
+      canvas.on("selection:created", () => syncSel(canvas.getActiveObject()));
+      canvas.on("selection:updated", () => syncSel(canvas.getActiveObject()));
+      canvas.on("selection:cleared", () => syncSel(null));
+      canvas.on("object:modified", (e: any) => {
+        if (!savingHistory.current) {
+          saveState();
+          refreshLayers(canvas);
+          const obj = e.target;
+          if (obj?.type !== "textbox" && obj?.type !== "i-text") {
+            syncSel(obj);
+          }
+        }
+      });
+      canvas.on("object:added",    () => { if (!savingHistory.current) { saveState(); refreshLayers(canvas); } });
+      canvas.on("object:removed",  () => { if (!savingHistory.current) refreshLayers(canvas); });
+
+      canvas.on("mouse:dblclick", (e: any) => {
+        if (isEditingNodesRef.current) return;
+        if (e.target && !e.target.isControlHelper && (e.target.type === "path" || isShapeType(e.target))) {
+          enterEditNodes(e.target);
+        }
+      });
+
+      canvas.on("object:scaling", (e: any) => {
+        const obj = e.target;
+        if (!obj) return;
+        if (obj.type === "textbox" || obj.type === "i-text") {
+          const newSize = Math.round(obj.fontSize * obj.scaleY);
+          setSelFontSize(newSize);
+        }
+        if (obj.type === "rect") {
+          const storedRx = rectBeforeScale.current?.rx ?? (obj.rx || 0);
+          const sx = obj.scaleX || 1;
+          const sy = obj.scaleY || 1;
+          const newW = obj.width * sx;
+          const newH = obj.height * sy;
+          const maxRx = Math.min(newW, newH) / 2;
+          const newRx = Math.min(storedRx, maxRx);
+          obj.set({ width: newW, height: newH, rx: newRx, ry: newRx, scaleX: 1, scaleY: 1 });
+          rectBeforeScale.current = { rx: newRx, ry: newRx };
+          obj.setCoords();
+        }
+      });
+
+      canvas.on("object:scaled", (e: any) => {
+        const obj = e.target;
+        if (!obj) return;
+        if (obj.type === "textbox" || obj.type === "i-text") {
+          const newFontSize = Math.round(obj.fontSize * obj.scaleY);
+          const newWidth = obj.type === "textbox" ? obj.width * obj.scaleX : obj.width;
+          obj.set({ fontSize: newFontSize, width: newWidth, scaleX: 1, scaleY: 1 });
+          canvas.requestRenderAll();
+          syncSel(obj);
+        }
+        if (obj.type === "rect") {
+          rectBeforeScale.current = { rx: obj.rx || 0, ry: obj.ry || 0 };
+          canvas.requestRenderAll();
+          syncSel(obj);
+        }
+      });
+
+      canvas.on("mouse:down:before", (e: any) => {
+        if (activeToolRef.current !== "pen") return;
+        e.e.stopPropagation?.();
+      });
+
+      canvas.on("mouse:down", (e: any) => {
+        if (isEditingNodesRef.current && editingData.current) {
+          const p = canvas.getPointer(e.e);
+          const target = canvas.findTarget(e.e, false);
+          const isTargetHelper = target && target.isControlHelper;
+
+          if (!isTargetHelper) {
+            const { commands } = editingData.current;
+            let closestIdx = -1;
+            let closestDist = 25;
+
+            for (let i = 1; i < commands.length; i++) {
+              const cmd = commands[i];
+              if (cmd.type === "Z") continue;
+              const prevCmd = commands[i - 1];
+              if (!prevCmd) continue;
+
+              const px = prevCmd.x ?? 0;
+              const py = prevCmd.y ?? 0;
+              const cx = cmd.x ?? 0;
+              const cy = cmd.y ?? 0;
+              const mx = (px + cx) / 2;
+              const my = (py + cy) / 2;
+              const dist = Math.hypot(p.x - mx, p.y - my);
+
+              if (dist < closestDist) {
+                closestDist = dist;
+                closestIdx = i;
+              }
+            }
+
+            if (closestIdx !== -1) {
+              const prevCmd = commands[closestIdx - 1];
+              const nextCmd = commands[closestIdx];
+              const t = 0.5;
+
+              const p1x = prevCmd.x, p1y = prevCmd.y;
+              const c1x = nextCmd.type === "C" ? nextCmd.cp1x : p1x;
+              const c1y = nextCmd.type === "C" ? nextCmd.cp1y : p1y;
+              const c2x = nextCmd.type === "C" ? nextCmd.cp2x : nextCmd.x;
+              const c2y = nextCmd.type === "C" ? nextCmd.cp2y : nextCmd.y;
+              const p2x = nextCmd.x, p2y = nextCmd.y;
+
+              const m1x = p1x + (c1x - p1x) * t, m1y = p1y + (c1y - p1y) * t;
+              const m2x = c1x + (c2x - c1x) * t, m2y = c1y + (c2y - c1y) * t;
+              const m3x = c2x + (p2x - c2x) * t, m3y = c2y + (p2y - c2y) * t;
+              const m4x = m1x + (m2x - m1x) * t, m4y = m1y + (m2y - m1y) * t;
+              const m5x = m2x + (m3x - m2x) * t, m5y = m2y + (m3y - m2y) * t;
+              const midX = m4x + (m5x - m4x) * t, midY = m4y + (m5y - m4y) * t;
+
+              if (nextCmd.type === "C") {
+                nextCmd.cp1x = m3x; nextCmd.cp1y = m3y;
+                nextCmd.cp2x = m5x; nextCmd.cp2y = m5y;
+              }
+
+              commands.splice(closestIdx, 0, {
+                type: "C",
+                cp1x: m1x, cp1y: m1y,
+                cp2x: m4x, cp2y: m4y,
+                x: midX, y: midY,
+              });
+
+              renderEditControls();
+              return;
+            }
+          }
+        }
+
+        if (activeToolRef.current !== "pen" || isEditingNodesRef.current) return;
+        const fabric = (window as any).fabric;
+        const p = canvas.getPointer(e.e);
+        const pts = penPoints.current;
+
+        if (pts.length > 1) {
+          const first = pts[0];
+          const dist = Math.hypot(p.x - first.x, p.y - first.y);
+          if (dist < 14) { finalizePenRef.current(true); return; }
+        }
+
+        isPenDragging.current = true;
+        pts.push({ x: p.x, y: p.y });
+        penCurveHandles.current.push([{ x: p.x, y: p.y }, { x: p.x, y: p.y }]);
+
+        const dot = new fabric.Circle({
+          left: p.x, top: p.y, radius: 4, originX: "center", originY: "center",
+          fill: pts.length === 1 ? "#22c55e" : "#4f46e5",
+          stroke: "white", strokeWidth: 1.5,
+          selectable: false, evented: false,
+        });
+        canvas.add(dot);
+        penDots.current.push(dot);
+
+        if (pts.length > 1) {
+          const prev = pts[pts.length - 2];
+          const prevHandle = penCurveHandles.current[pts.length - 2][1];
+          const currHandle = penCurveHandles.current[pts.length - 1][0];
+          const curvePath = new fabric.Path(`M ${prev.x} ${prev.y} C ${prevHandle.x} ${prevHandle.y} ${currHandle.x} ${currHandle.y} ${p.x} ${p.y}`, {
+            stroke: "#4f46e5", strokeWidth: 1.5, strokeDashArray: [4, 3], fill: "transparent",
+            selectable: false, evented: false,
+          });
+          canvas.add(curvePath);
+          penLines.current.push(curvePath);
+        }
+
+        canvas.requestRenderAll();
+      });
+
+      canvas.on("mouse:move", (e: any) => {
+        if (activeToolRef.current === "select" && !isEditingNodesRef.current) {
+          const target = canvas.findTarget(e.e, false);
+          canvas.defaultCursor = (target && !target.isControlHelper && (target.type === "path" || isShapeType(target))) ? "crosshair" : "default";
+        }
+
+        if (activeToolRef.current !== "pen" || !isPenDragging.current) return;
+        const fabric = (window as any).fabric;
+        const p = canvas.getPointer(e.e);
+        const pts = penPoints.current;
+        const currIdx = pts.length - 1;
+        const anchor = pts[currIdx];
+
+        const dx = p.x - anchor.x;
+        const dy = p.y - anchor.y;
+
+        penCurveHandles.current[currIdx] = [
+          { x: anchor.x - dx, y: anchor.y - dy },
+          { x: anchor.x + dx, y: anchor.y + dy }
+        ];
+
+        if (activeHandleLine.current) canvas.remove(activeHandleLine.current);
+        activeHandleLine.current = new fabric.Line([anchor.x - dx, anchor.y - dy, anchor.x + dx, anchor.y + dy], {
+          stroke: "#ef4444", strokeWidth: 1, selectable: false, evented: false, strokeDashArray: [2, 2]
+        });
+        canvas.add(activeHandleLine.current);
+
+        if (pts.length > 1) {
+          const prev = pts[pts.length - 2];
+          const prevH = penCurveHandles.current[pts.length - 2][1];
+          const currH = penCurveHandles.current[currIdx][0];
+          const lastLine = penLines.current[penLines.current.length - 1];
+          if (lastLine) canvas.remove(lastLine);
+
+          const newPath = new fabric.Path(`M ${prev.x} ${prev.y} C ${prevH.x} ${prevH.y} ${currH.x} ${currH.y} ${anchor.x} ${anchor.y}`, {
+            stroke: "#4f46e5", strokeWidth: 1.5, strokeDashArray: [4, 3], fill: "transparent", selectable: false, evented: false,
+          });
+          canvas.add(newPath);
+          penLines.current[penLines.current.length - 1] = newPath;
+        }
+
+        canvas.requestRenderAll();
+      });
+
+      canvas.on("mouse:up", () => {
+        if (activeToolRef.current !== "pen") return;
+        isPenDragging.current = false;
+        if (activeHandleLine.current) {
+          canvas.remove(activeHandleLine.current);
+          activeHandleLine.current = null;
+          canvas.requestRenderAll();
+        }
+      });
+
+      const onKey = (e: KeyboardEvent) => {
+        const tag = (document.activeElement as HTMLElement)?.tagName;
+        const isInput = tag === "INPUT" || tag === "TEXTAREA";
+        const ctrl = e.ctrlKey || e.metaKey;
+        const obj = canvas.getActiveObject();
+
+        if ((e.key === "Delete" || e.key === "Backspace") && !isInput) {
+          if (isEditingNodesRef.current) {
+            e.preventDefault();
+            deleteSelectedNode();
+            return;
+          }
+          if (obj && !obj.lockMovementX && !obj.isControlHelper && !obj.isEditPreview) {
+            if (obj.type === "i-text" && obj.isEditing) return;
+            saveState();
+            deleteSelected();
+          }
+          return;
+        }
+        if (isInput) return;
+
+        if (ctrl) {
+          switch (e.key.toLowerCase()) {
+            case "c": e.preventDefault(); if (obj) obj.clone((c: any) => { clipboardRef.current = c; }); break;
+            case "v": e.preventDefault();
+              if (!clipboardRef.current) return;
+              clipboardRef.current.clone((c: any) => {
+                c.set({ left: c.left + 20, top: c.top + 20, evented: true });
+                if (c.type === "activeSelection") { c.canvas = canvas; c.forEachObject((o: any) => canvas.add(o)); c.setCoords(); }
+                else canvas.add(c);
+                clipboardRef.current.top += 20; clipboardRef.current.left += 20;
+                canvas.setActiveObject(c); canvas.requestRenderAll();
+              }); break;
+            case "d": e.preventDefault();
+              if (isEditingNodesRef.current) { toggleNodeSmooth(); return; }
+              if (!obj) return;
+              obj.clone((c: any) => { c.set({ left: obj.left+20, top: obj.top+20 }); canvas.add(c); canvas.setActiveObject(c); canvas.requestRenderAll(); }); break;
+            case "z": e.preventDefault();
+              if (lastFinalizedPath.current || (activeToolRef.current === "pen" && penPoints.current.length > 0)) {
+                undoLastPenPointRef.current();
+                return;
+              }
+              if (e.shiftKey) { const n = historyRef.current.redo.pop(); if (!n) return; historyRef.current.undo.push(JSON.stringify(canvas.toJSON())); restoreState(n); }
+              else { const p = historyRef.current.undo.pop(); if (!p) return; historyRef.current.redo.push(JSON.stringify(canvas.toJSON())); restoreState(p); }
+              break;
+            case "y": e.preventDefault(); { const n = historyRef.current.redo.pop(); if (!n) return; historyRef.current.undo.push(JSON.stringify(canvas.toJSON())); restoreState(n); } break;
+            case "a": e.preventDefault(); { const all = new (window as any).fabric.ActiveSelection(canvas.getObjects().filter((o: any) => !o.isControlHelper && !o.isEditPreview), { canvas }); canvas.setActiveObject(all); canvas.requestRenderAll(); } break;
+            case "g": e.preventDefault(); if (obj?.type === "activeSelection") { canvas.setActiveObject(obj.toGroup()); canvas.requestRenderAll(); } break;
+          }
+          return;
+        }
+        if (obj && ["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key)) {
+          e.preventDefault(); const s = e.shiftKey ? 10 : 1;
+          if (e.key==="ArrowLeft") obj.set("left", obj.left-s);
+          if (e.key==="ArrowRight") obj.set("left", obj.left+s);
+          if (e.key==="ArrowUp") obj.set("top", obj.top-s);
+          if (e.key==="ArrowDown") obj.set("top", obj.top+s);
+          obj.setCoords(); canvas.requestRenderAll();
+        }
+        if (e.key === "Escape") {
+          if (isEditingNodesRef.current) {
+            exitEditNodes();
+          } else if (activeToolRef.current === "pen") {
+            cancelPenRef.current(); activeToolRef.current = "select"; setActiveTool("select");
+            if (fc.current) { fc.current.defaultCursor="default"; fc.current.hoverCursor="move"; fc.current.selection=true; }
+          } else {
+            canvas.discardActiveObject(); canvas.requestRenderAll();
+          }
+        }
+        if (e.key === "Enter") {
+          if (isEditingNodesRef.current) {
+            exitEditNodes();
+          } else if (activeToolRef.current === "pen") {
+            finalizePenRef.current(true);
+          }
+        }
+      };
+      window.addEventListener("keydown", onKey);
+      return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
+    } else {
+      if (fc.current) {
+        fc.current.setWidth(canvasWidth);
+        fc.current.setHeight(canvasHeight);
+        fc.current.calcOffset();
+        fc.current.requestRenderAll();
+      }
+    }
+  }, [fabricLoaded, canvasWidth, canvasHeight]);
+
+  useEffect(() => {
+    if (!fc.current) return;
+    if (bgGradient) {
+      const fab = (window as any).fabric;
+      if (!fab) return;
+      const rad = (bgGradient.angle * Math.PI) / 180;
+      const grad = new fab.Gradient({ type: "linear", coords: { x1: (Math.cos(rad+Math.PI)+1)/2*canvasWidth, y1: (Math.sin(rad+Math.PI)+1)/2*canvasHeight, x2: (Math.cos(rad)+1)/2*canvasWidth, y2: (Math.sin(rad)+1)/2*canvasHeight }, colorStops: [{ offset:0, color: bgGradient.c1 },{ offset:1, color: bgGradient.c2 }] });
+      fc.current.setBackgroundColor(grad, () => fc.current?.renderAll());
+    } else {
+      fc.current.setBackgroundColor(bgSolid, () => fc.current?.renderAll());
+    }
+  }, [bgSolid, bgGradient, canvasWidth, canvasHeight]);
+
+  const upd = (props: Record<string, any>) => {
+    if (!fc.current || !sel) return;
+    sel.set(props);
+    if (isText && sel.fontFamily) {
+      document.fonts.load(`${sel.fontSize || 48}px "${sel.fontFamily}"`).finally(() => {
+        fc.current?.requestRenderAll();
+      });
+    } else {
+      fc.current.requestRenderAll();
+    }
+  };
+
+  const updateFill = (color: string) => {
+    setSelFill(color); setSelFillGradient(null);
+    upd({ fill: color });
+  };
+  const updateFillGradient = (g: GradConfig | null) => {
+    setSelFillGradient(g);
+    if (!g) { upd({ fill: selFill }); return; }
+    if (fc.current && sel) applyGradient(fc.current, sel, g);
+  };
+  const updateOpacity  = (v: number) => { setSelOpacity(v);  upd({ opacity: v/100 }); };
+  const updateStroke   = (c: string) => { setSelStroke(c);   upd({ stroke: c }); };
+  const updateStrokeW  = (v: number) => { setSelStrokeW(v);  upd({ strokeWidth: v, strokeUniform: true }); };
+  const updateRadius   = (v: number) => { setSelRadius(v);   upd({ rx: v, ry: v }); };
+  const updateRotation = (v: number) => { setSelRotation(v); upd({ angle: v }); };
+  const updateFontSize = (v: number) => {
+    setSelFontSize(v);
+    if (!fc.current || !sel) return;
+    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      sel.setSelectionStyles({ fontSize: v });
+      fc.current.requestRenderAll();
+    } else { upd({ fontSize: v }); }
+  };
+  const updateFontFamily = (v: string) => {
+    setSelFontFamily(v);
+    document.fonts.load(`${selFontSize}px "${v}"`).finally(() => {
+      upd({ fontFamily: v });
+    });
+  };
+  const updateTextAlign = (v: "left"|"center"|"right"|"justify") => {
+    setSelTextAlign(v);
+    upd({ textAlign: v });
+  };
+  const toggleBold = () => {
+    const n = !selBold; setSelBold(n);
+    if (!fc.current || !sel) return;
+    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      sel.setSelectionStyles({ fontWeight: n ? "bold" : "normal" });
+      fc.current.requestRenderAll();
+    } else {
+      sel.set({ fontWeight: n ? "bold" : "normal" });
+      if (sel.initDimensions) sel.initDimensions();
+      document.fonts.load(`bold ${sel.fontSize}px "${sel.fontFamily}"`).finally(() => {
+        fc.current?.requestRenderAll();
+      });
+    }
+  };
+  const toggleItalic = () => {
+    const n = !selItalic; setSelItalic(n);
+    if (!fc.current || !sel) return;
+    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      sel.setSelectionStyles({ fontStyle: n ? "italic" : "normal" });
+      fc.current.requestRenderAll();
+    } else { upd({ fontStyle: n ? "italic" : "normal" }); }
+  };
+  const toggleUnderline = () => {
+    const n = !selUnderline; setSelUnderline(n);
+    if (!fc.current || !sel) return;
+    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      sel.setSelectionStyles({ underline: n });
+      fc.current.requestRenderAll();
+    } else { upd({ underline: n }); }
+  };
+  const updateFillForText = (color: string) => {
+    if (sel?.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      setSelFill(color);
+      sel.setSelectionStyles({ fill: color });
+      fc.current?.requestRenderAll();
+    } else {
+      updateFill(color);
+    }
+  };
+  const updateCharSpacing = (v: number) => { setSelCharSpacing(v); upd({ charSpacing: v }); };
+  const updateLineHeight  = (v: number) => { setSelLineHeight(v);  upd({ lineHeight: v }); };
+
+  const updateShadow = (on: boolean) => {
+    setSelShadow(on);
+    if (!fc.current || !sel) return;
+    sel.set("shadow", on ? new (window as any).fabric.Shadow({ color: selShadowColor, blur: selShadowBlur, offsetX: selShadowX, offsetY: selShadowY }) : null);
+    fc.current.requestRenderAll();
+  };
+  const applyShadow = (color: string, blur: number, ox: number, oy: number) => {
+    if (!fc.current || !sel || !selShadow) return;
+    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur, offsetX: ox, oy }));
+    fc.current.requestRenderAll();
+  };
+
+  const updateBlur = (v: number) => {
+    setSelBlur(v);
+    if (!fc.current || !sel) return;
+    const uid = sel.__uid;
+    if (v > 0) blurValueMap.current.set(uid, v);
+    else blurValueMap.current.delete(uid);
+
+    if (sel.type === "image" && !blurOriginMap.current.has(uid)) {
+      const fabric = (window as any).fabric;
+      const filters = (sel.filters || []).filter((f: any) => f.type !== "Blur");
+      if (v > 0) filters.push(new fabric.Image.filters.Blur({ blur: v / 100 }));
+      sel.filters = filters;
+      sel.set({ padding: v > 0 ? Math.round(v * 0.8) : 0 });
+      sel.applyFilters();
+      fc.current.requestRenderAll();
+      return;
+    }
+
+    if (!blurPosMap.current.has(uid)) {
+      blurPosMap.current.set(uid, {
+        left: sel.left, top: sel.top,
+        scaleX: sel.scaleX || 1, scaleY: sel.scaleY || 1,
+        angle: sel.angle || 0,
+      });
+    }
+
+    if (!blurOriginMap.current.has(uid) && sel.type !== "image") {
+      blurOriginMap.current.set(uid, JSON.stringify(sel.toObject()));
+    }
+
+    if (blurTimer.current) clearTimeout(blurTimer.current);
+    blurTimer.current = setTimeout(() => {
+      const fabric = (window as any).fabric;
+      const currentV = blurValueMap.current.get(uid) ?? 0;
+      const pos = blurPosMap.current.get(uid)!;
+
+      if (currentV === 0 && blurOriginMap.current.has(uid)) {
+        const json = blurOriginMap.current.get(uid)!;
+        blurOriginMap.current.delete(uid);
+        blurPosMap.current.delete(uid);
+        const current = fc.current.getObjects().find((o: any) => o.__uid === uid);
+        if (current) fc.current.remove(current);
+        fabric.util.enlivenObjects([JSON.parse(json)], (objs: any[]) => {
+          const orig = objs[0];
+          orig.set({ left: pos.left, top: pos.top, angle: pos.angle, scaleX: pos.scaleX, scaleY: pos.scaleY });
+          orig.__uid = uid;
+          fc.current.add(orig);
+          fc.current.setActiveObject(orig);
+          setSel(orig);
+          setSelBlur(0);
+          fc.current.requestRenderAll();
+        });
+        return;
+      }
+
+      const sourceJson = blurOriginMap.current.get(uid)!;
+      const current = fc.current.getObjects().find((o: any) => o.__uid === uid);
+      if (current) fc.current.remove(current);
+
+      fabric.util.enlivenObjects([JSON.parse(sourceJson)], async (objs: any[]) => {
+        const sourceObj = objs[0];
+        const srcW = (sourceObj.width  || 100) * pos.scaleX;
+        const srcH = (sourceObj.height || 100) * pos.scaleY;
+        const blurPx = Math.max(1, Math.round(currentV * 0.3));
+        const pad = blurPx * 4;
+        const cw = Math.min(Math.ceil(srcW) + pad * 2, 1800);
+        const ch = Math.min(Math.ceil(srcH) + pad * 2, 1800);
+
+        const miniEl = document.createElement("canvas");
+        miniEl.width = cw; miniEl.height = ch;
+        const miniCanvas = new fabric.StaticCanvas(miniEl, { width: cw, height: ch, enableRetinaScaling: false });
+        sourceObj.set({ left: cw / 2, top: ch / 2, originX: "center", originY: "center", angle: 0, scaleX: pos.scaleX, scaleY: pos.scaleY });
+        miniCanvas.add(sourceObj);
+
+        await document.fonts.ready;
+        miniCanvas.renderAll();
+
+        const outEl = document.createElement("canvas");
+        outEl.width = cw; outEl.height = ch;
+        const ctx = outEl.getContext("2d")!;
+        ctx.filter = `blur(${blurPx}px)`;
+        ctx.drawImage(miniEl, 0, 0);
+        miniCanvas.dispose();
+
+        const dataURL = outEl.toDataURL("image/png");
+        fabric.Image.fromURL(dataURL, (img: any) => {
+          img.set({
+            left: pos.left + (srcW / 2) - (cw / 2),
+            top:  pos.top  + (srcH / 2) - (ch / 2),
+            angle: pos.angle,
+            scaleX: 1, scaleY: 1,
+            originX: "left", originY: "top",
+            strokeUniform: true,
+          });
+          img.__uid = uid;
+          fc.current.add(img);
+          fc.current.setActiveObject(img);
+          setSel(img);
+          setSelBlur(currentV);
+          fc.current.requestRenderAll();
+        });
+      });
+    }, 150);
+  };
+
+  const toggleLock = (uid: string) => {
+    if (!fc.current) return;
+    const obj = fc.current.getObjects().find((o: any) => o.__uid === uid);
+    if (!obj) return;
+    const locked = !obj.lockMovementX;
+    obj.set({
+      lockMovementX: locked, lockMovementY: locked,
+      lockRotation: locked, lockScalingX: locked, lockScalingY: locked,
+      selectable: !locked,
+      evented: !locked,
+      hoverCursor: locked ? "default" : "move",
+    });
+    if (locked && fc.current.getActiveObject() === obj) {
+      fc.current.discardActiveObject();
+      syncSel(null);
+    }
+    refreshLayers(fc.current);
+    fc.current.requestRenderAll();
+  };
+
+  const alignObj = (dir: string) => {
+    if (!fc.current || !sel) return;
+    const canvas = fc.current;
+    const cw = canvasWidth;
+    const ch = canvasHeight;
+    sel.setCoords();
+    const br = sel.getBoundingRect(true);
+    if (dir === "left")    sel.set({ left: sel.left - br.left });
+    if (dir === "hcenter") sel.set({ left: sel.left - br.left + (cw - br.width) / 2 });
+    if (dir === "right")   sel.set({ left: sel.left - br.left + cw - br.width });
+    if (dir === "top")     sel.set({ top: sel.top - br.top });
+    if (dir === "vcenter") sel.set({ top: sel.top - br.top + (ch - br.height) / 2 });
+    if (dir === "bottom")  sel.set({ top: sel.top - br.top + ch - br.height });
+    sel.setCoords();
+    canvas.requestRenderAll();
+  };
 
   const add = (fn: (fabric: any) => any) => {
     if (!fc.current) return;
@@ -1427,6 +1741,36 @@ function EditorInner() {
     });
   };
 
+  const updateSaturation = (v: number) => {
+    setSelSaturation(v);
+    if (!fc.current || !sel) return;
+    const fabric = (window as any).fabric;
+    const filters = (sel.filters || []).filter((f: any) => f.type !== "Saturation");
+    filters.push(new fabric.Image.filters.Saturation({ saturation: v }));
+    sel.filters = filters;
+    sel.applyFilters();
+    fc.current.requestRenderAll();
+  };
+
+  const updateTextWidth = (v: number) => {
+    setSelTextWidth(v);
+    upd({ width: v });
+  };
+
+  const updateTextHeight = (v: number) => {
+    setSelTextHeight(v);
+    if (!fc.current || !sel) return;
+    if (v === 0) {
+      sel.set({ minHeight: undefined, __fixedHeight: false });
+      sel.__fixedHeight = false;
+      sel.initDimensions?.();
+      fc.current.requestRenderAll();
+    } else {
+      sel.__fixedHeight = true;
+      sel.set({ height: v, minHeight: v });
+      fc.current.requestRenderAll();
+    }
+  };
   const addRect  = (r=0) => add(fab => new fab.Rect({ left:canvasWidth/2-75, top:canvasHeight/2-50, width:150, height:100, fill:"#3b82f6", rx:r, ry:r, strokeUniform:true }));
   const addCirc  = () => add(fab => new fab.Circle({ left:canvasWidth/2-60, top:canvasHeight/2-60, radius:60, fill:"#3b82f6", strokeUniform:true }));
   const addTri   = () => add(fab => new fab.Triangle({ left:canvasWidth/2-60, top:canvasHeight/2-60, width:120, height:120, fill:"#3b82f6", strokeUniform:true }));
@@ -1458,198 +1802,6 @@ function EditorInner() {
       fc.current.add(img); fc.current.setActiveObject(img); syncSel(img);
     });
     r.readAsDataURL(file); e.target.value = "";
-  };
-
-  const finalizePen = (close: boolean) => {
-    if (!fc.current) return;
-    const canvas = fc.current;
-    const fabric = (window as any).fabric;
-    const pts = penPoints.current;
-    const handles = penCurveHandles.current;
-    if (pts.length < 2) { cancelPen(); return; }
-
-    let d = `M ${pts[0].x} ${pts[0].y}`;
-    for (let i = 1; i < pts.length; i++) {
-      const prev = pts[i - 1];
-      const curr = pts[i];
-      const h1 = handles[i - 1]?.[1] || prev;
-      const h2 = handles[i]?.[0]    || curr;
-      d += ` C ${h1.x} ${h1.y} ${h2.x} ${h2.y} ${curr.x} ${curr.y}`;
-    }
-    if (close && pts.length > 2) {
-      const h1 = handles[pts.length - 1]?.[1] || pts[pts.length - 1];
-      const h2 = handles[0]?.[0] || pts[0];
-      d += ` C ${h1.x} ${h1.y} ${h2.x} ${h2.y} ${pts[0].x} ${pts[0].y} Z`;
-    }
-
-    const path = new fabric.Path(d, {
-      fill: close ? (selFill !== "transparent" ? selFill : "#4f46e5") : "transparent",
-      stroke: "#000000",
-      strokeWidth: 2,
-      strokeUniform: true,
-    });
-
-    penLines.current.forEach(l => canvas.remove(l));
-    penDots.current.forEach(d => canvas.remove(d));
-    if (activeHandleLine.current) {
-      canvas.remove(activeHandleLine.current);
-      activeHandleLine.current = null;
-    }
-    penLines.current = [];
-    penDots.current = [];
-
-    canvas.add(path);
-    canvas.setActiveObject(path);
-    syncSel(path);
-    lastFinalizedPath.current = path;
-
-    activeToolRef.current = "select";
-    setActiveTool("select");
-    canvas.defaultCursor = "default";
-    canvas.hoverCursor = "move";
-    canvas.selection = true;
-    canvas.requestRenderAll();
-  };
-
-  const cancelPen = () => {
-    if (!fc.current) return;
-    penLines.current.forEach(l => fc.current.remove(l));
-    penDots.current.forEach(d => fc.current.remove(d));
-    if (activeHandleLine.current) {
-      fc.current.remove(activeHandleLine.current);
-      activeHandleLine.current = null;
-    }
-    penPoints.current = [];
-    penLines.current = [];
-    penDots.current = [];
-    penCurveHandles.current = [];
-    activeHandleLine.current = null;
-    lastFinalizedPath.current = null;
-    fc.current.requestRenderAll();
-  };
-
-  const startPen = () => {
-    if (isEditingNodes) exitEditNodes();
-    lastFinalizedPath.current = null;
-    setActiveTool("pen"); activeToolRef.current = "pen";
-    if (fc.current) {
-      fc.current.defaultCursor = "crosshair";
-      fc.current.hoverCursor = "crosshair";
-      fc.current.selection = false;
-      fc.current.discardActiveObject();
-      fc.current.requestRenderAll();
-    }
-  };
-
-  const stopPen = () => {
-    setActiveTool("select"); activeToolRef.current = "select";
-    cancelPen();
-    if (fc.current) {
-      fc.current.defaultCursor = "default";
-      fc.current.hoverCursor = "move";
-      fc.current.selection = true;
-      fc.current.isDrawingMode = false;
-    }
-  };
-
-  const createMask = () => {
-    if (!fc.current) return;
-    const canvas = fc.current;
-    const active = canvas.getActiveObject();
-    if (!active || active.type !== "activeSelection") return;
-    const objects = (active as any).getObjects();
-    const image = objects.find((o: any) => o.type === "image");
-    const shape = objects.find((o: any) => o.type !== "image");
-    if (!image || !shape) { alert("Selecione uma imagem e uma forma juntas."); return; }
-
-    canvas.discardActiveObject();
-    canvas.requestRenderAll();
-
-    const imgCenter = image.getCenterPoint();
-    const shapeCenter = shape.getCenterPoint();
-
-    shape.clone((clippedShape: any) => {
-      const imgScaleX = image.scaleX || 1;
-      const imgScaleY = image.scaleY || 1;
-
-      clippedShape.set({
-        left: (shapeCenter.x - imgCenter.x) / imgScaleX,
-        top: (shapeCenter.y - imgCenter.y) / imgScaleY,
-        originX: "center",
-        originY: "center",
-        scaleX: (shape.scaleX || 1) / imgScaleX,
-        scaleY: (shape.scaleY || 1) / imgScaleY,
-        angle: (shape.angle || 0) - (image.angle || 0),
-        absolutePositioned: false,
-      });
-
-      image.__originalShape = shape;
-      image.clipPath = clippedShape;
-      image.setCoords();
-
-      canvas.remove(shape);
-      canvas.setActiveObject(image);
-      syncSel(image);
-      refreshLayers(canvas);
-      canvas.requestRenderAll();
-    });
-  };
-
-  const removeMask = () => {
-    if (!fc.current || !sel || !sel.clipPath) return;
-    const canvas = fc.current;
-    const image = sel;
-    const clip = image.clipPath;
-
-    if (image.__originalShape) {
-      const orig = image.__originalShape;
-      const imgCenter = image.getCenterPoint();
-      const imgScaleX = image.scaleX || 1;
-      const imgScaleY = image.scaleY || 1;
-
-      orig.set({
-        left: imgCenter.x + (clip.left || 0) * imgScaleX,
-        top: imgCenter.y + (clip.top || 0) * imgScaleY,
-        originX: "center",
-        originY: "center",
-        scaleX: (clip.scaleX || 1) * imgScaleX,
-        scaleY: (clip.scaleY || 1) * imgScaleY,
-        angle: (clip.angle || 0) + (image.angle || 0),
-      });
-      orig.setCoords();
-      canvas.add(orig);
-      delete image.__originalShape;
-    }
-
-    image.clipPath = null;
-    image.setCoords();
-    syncSel(image);
-    refreshLayers(canvas);
-    canvas.requestRenderAll();
-  };
-
-  const exportDataUrl = () => {
-    const canvas = fc.current;
-    const dataUrl = canvas.toDataURL({ format:"png", multiplier:1 });
-    return dataUrl;
-  };
-
-  const handleDownload = () => {
-    if (!fc.current) return;
-    const a = document.createElement("a"); a.href = exportDataUrl(); a.download = artName+".png"; a.click();
-  };
-
-  const handleSave = async () => {
-    if (!fc.current || !site) return; setSaving(true);
-    try {
-      const dataUrl = exportDataUrl();
-      const path = `canvas/${site.widgetId}/${Date.now()}.png`;
-      const sRef = ref(storage, path);
-      await uploadString(sRef, dataUrl, "data_url");
-      const url = await getDownloadURL(sRef);
-      await addDoc(collection(db, "canvas_arts"), { widgetId:site.widgetId, name:artName, format:fmt.label, url, storagePath:path, createdAt:Date.now() });
-      setSaved(true); setTimeout(() => setSaved(false), 2500);
-    } finally { setSaving(false); }
   };
 
   const convertTextToPath = async () => {
@@ -1793,6 +1945,213 @@ function EditorInner() {
     worker.addEventListener("message", handler);
     worker.postMessage({ type: "removebg", imageData: pixelData.data.buffer, width: pw, height: ph }, [pixelData.data.buffer]);
   };
+
+  const finalizePen = (close: boolean) => {
+    if (!fc.current) return;
+    const canvas = fc.current;
+    const fabric = (window as any).fabric;
+    const pts = penPoints.current;
+    const handles = penCurveHandles.current;
+    if (pts.length < 2) { cancelPen(); return; }
+
+    let d = `M ${pts[0].x} ${pts[0].y}`;
+    for (let i = 1; i < pts.length; i++) {
+      const prev = pts[i - 1];
+      const curr = pts[i];
+      const h1 = handles[i - 1]?.[1] || prev;
+      const h2 = handles[i]?.[0]    || curr;
+      d += ` C ${h1.x} ${h1.y} ${h2.x} ${h2.y} ${curr.x} ${curr.y}`;
+    }
+    if (close && pts.length > 2) {
+      const h1 = handles[pts.length - 1]?.[1] || pts[pts.length - 1];
+      const h2 = handles[0]?.[0] || pts[0];
+      d += ` C ${h1.x} ${h1.y} ${h2.x} ${h2.y} ${pts[0].x} ${pts[0].y} Z`;
+    }
+
+    const path = new fabric.Path(d, {
+      fill: close ? (selFill !== "transparent" ? selFill : "#4f46e5") : "transparent",
+      stroke: "#000000",
+      strokeWidth: 2,
+      strokeUniform: true,
+    });
+
+    penLines.current.forEach(l => canvas.remove(l));
+    penDots.current.forEach(d => canvas.remove(d));
+    if (activeHandleLine.current) {
+      canvas.remove(activeHandleLine.current);
+      activeHandleLine.current = null;
+    }
+    penLines.current = [];
+    penDots.current = [];
+
+    canvas.add(path);
+    canvas.setActiveObject(path);
+    syncSel(path);
+    lastFinalizedPath.current = path;
+
+    activeToolRef.current = "select";
+    setActiveTool("select");
+    canvas.defaultCursor = "default";
+    canvas.hoverCursor = "move";
+    canvas.selection = true;
+    canvas.requestRenderAll();
+  };
+
+  const cancelPen = () => {
+    if (!fc.current) return;
+    penLines.current.forEach(l => fc.current.remove(l));
+    penDots.current.forEach(d => fc.current.remove(d));
+    if (activeHandleLine.current) {
+      canvas.remove(activeHandleLine.current);
+      activeHandleLine.current = null;
+    }
+    penPoints.current = [];
+    penLines.current = [];
+    penDots.current = [];
+    penCurveHandles.current = [];
+    activeHandleLine.current = null;
+    lastFinalizedPath.current = null;
+    fc.current.requestRenderAll();
+  };
+
+  const startPen = () => {
+    if (isEditingNodes) exitEditNodes();
+    lastFinalizedPath.current = null;
+    setActiveTool("pen"); activeToolRef.current = "pen";
+    if (fc.current) {
+      fc.current.defaultCursor = "crosshair";
+      fc.current.hoverCursor = "crosshair";
+      fc.current.selection = false;
+      fc.current.discardActiveObject();
+      fc.current.requestRenderAll();
+    }
+  };
+
+  const stopPen = () => {
+    setActiveTool("select"); activeToolRef.current = "select";
+    cancelPenRef.current();
+    if (fc.current) {
+      fc.current.defaultCursor = "default";
+      fc.current.hoverCursor = "move";
+      fc.current.selection = true;
+      fc.current.isDrawingMode = false;
+    }
+  };
+
+  finalizePenRef.current = finalizePen;
+  cancelPenRef.current = cancelPen;
+
+  const createMask = () => {
+    if (!fc.current) return;
+    const canvas = fc.current;
+    const active = canvas.getActiveObject();
+    if (!active || active.type !== "activeSelection") return;
+    const objects = (active as any).getObjects();
+    const image = objects.find((o: any) => o.type === "image");
+    const shape = objects.find((o: any) => o.type !== "image");
+    if (!image || !shape) { alert("Selecione uma imagem e uma forma juntas."); return; }
+
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+
+    const imgCenter = image.getCenterPoint();
+    const shapeCenter = shape.getCenterPoint();
+
+    shape.clone((clippedShape: any) => {
+      const imgScaleX = image.scaleX || 1;
+      const imgScaleY = image.scaleY || 1;
+
+      clippedShape.set({
+        left: (shapeCenter.x - imgCenter.x) / imgScaleX,
+        top: (shapeCenter.y - imgCenter.y) / imgScaleY,
+        originX: "center",
+        originY: "center",
+        scaleX: (shape.scaleX || 1) / imgScaleX,
+        scaleY: (shape.scaleY || 1) / imgScaleY,
+        angle: (shape.angle || 0) - (image.angle || 0),
+        absolutePositioned: false,
+      });
+
+      image.__originalShape = shape;
+      image.clipPath = clippedShape;
+      image.setCoords();
+
+      canvas.remove(shape);
+      canvas.setActiveObject(image);
+      syncSel(image);
+      refreshLayers(canvas);
+      canvas.requestRenderAll();
+    });
+  };
+
+  const removeMask = () => {
+    if (!fc.current || !sel || !sel.clipPath) return;
+    const canvas = fc.current;
+    const image = sel;
+    const clip = image.clipPath;
+
+    if (image.__originalShape) {
+      const orig = image.__originalShape;
+      const imgCenter = image.getCenterPoint();
+      const imgScaleX = image.scaleX || 1;
+      const imgScaleY = image.scaleY || 1;
+
+      orig.set({
+        left: imgCenter.x + (clip.left || 0) * imgScaleX,
+        top: imgCenter.y + (clip.top || 0) * imgScaleY,
+        originX: "center",
+        originY: "center",
+        scaleX: (clip.scaleX || 1) * imgScaleX,
+        scaleY: (clip.scaleY || 1) * imgScaleY,
+        angle: (clip.angle || 0) + (image.angle || 0),
+      });
+      orig.setCoords();
+      canvas.add(orig);
+      delete image.__originalShape;
+    }
+
+    image.clipPath = null;
+    image.setCoords();
+    syncSel(image);
+    refreshLayers(canvas);
+    canvas.requestRenderAll();
+  };
+
+  const exportDataUrl = () => {
+    const canvas = fc.current;
+    const dataUrl = canvas.toDataURL({ format:"png", multiplier:1 });
+    return dataUrl;
+  };
+
+  const handleDownload = () => {
+    if (!fc.current) return;
+    const a = document.createElement("a"); a.href = exportDataUrl(); a.download = artName+".png"; a.click();
+  };
+
+  const handleSave = async () => {
+    if (!fc.current || !site) return; setSaving(true);
+    try {
+      const dataUrl = exportDataUrl();
+      const path = `canvas/${site.widgetId}/${Date.now()}.png`;
+      const sRef = ref(storage, path);
+      await uploadString(sRef, dataUrl, "data_url");
+      const url = await getDownloadURL(sRef);
+      await addDoc(collection(db, "canvas_arts"), { widgetId:site.widgetId, name:artName, format:fmt.label, url, storagePath:path, createdAt:Date.now() });
+      setSaved(true); setTimeout(() => setSaved(false), 2500);
+    } finally { setSaving(false); }
+  };
+
+  const isText = sel?.type === "i-text" || sel?.type === "textbox";
+  const isTextbox = sel?.type === "textbox";
+  const isPath = sel?.type === "path";
+  const isRect = sel?.type === "rect";
+  const hasClipPath = !!sel?.clipPath;
+  const isShapeType = (o: any) => o && ["rect", "circle", "triangle", "polygon"].includes(o.type);
+
+  const isMultiShapeSelected = sel?.type === "activeSelection" && (() => {
+    const objs = (sel as any).getObjects();
+    return objs.length >= 2 && objs.every((o: any) => o.type !== "image" && o.type !== "i-text" && o.type !== "textbox");
+  })();
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col overflow-hidden" style={{ fontFamily: "system-ui, sans-serif" }}>
@@ -2027,7 +2386,7 @@ function EditorInner() {
             <div className="p-3 flex flex-col gap-3 border-b border-gray-200">
               <p className="font-semibold text-gray-600 uppercase tracking-wide" style={{fontSize:10}}>Propriedades</p>
 
-              {/* Botão de Edição de Nós */}
+              {/* Botão de Edição de Nós (Disponível para Paths e Formas Primitivas) */}
               {(isPath || isShapeType(sel)) && !isEditingNodes && (
                 <button
                   onClick={() => enterEditNodes(sel)}
@@ -2037,7 +2396,7 @@ function EditorInner() {
                 </button>
               )}
 
-              {/* Operações Booleanas */}
+              {/* Operações Booleanas (Paper.js) */}
               {isMultiShapeSelected && (
                 <div className="flex flex-col gap-1.5 p-2 bg-slate-50 border border-slate-200 rounded-xl">
                   <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider">Operações Booleanas</p>
@@ -2093,7 +2452,7 @@ function EditorInner() {
                 </button>
               )}
 
-              {/* Preenchimento & Gradiente */}
+              {/* Preenchimento & Gradiente (com switch limpo) */}
               {sel.type !== "image" && sel.type !== "activeSelection" && (
                 <>
                   <Sec title="Preenchimento" />
@@ -2160,7 +2519,7 @@ function EditorInner() {
                 </>
               )}
 
-              {/* Controles de Texto */}
+              {/* Controles de Texto (incluindo alinhamento de parágrafo) */}
               {isText && (
                 <>
                   <Sec title="Texto" />
@@ -2172,6 +2531,7 @@ function EditorInner() {
                   </div>
                   <NumRow label="Tamanho" value={selFontSize} min={6} max={400} onChange={updateFontSize} />
 
+                  {/* Formatação e Alinhamento */}
                   <div>
                     <p className="text-gray-400 mb-1.5">Estilo e Alinhamento</p>
                     <div className="flex gap-1.5 mb-1.5">
