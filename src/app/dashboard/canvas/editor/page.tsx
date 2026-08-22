@@ -795,13 +795,52 @@ function EditorInner() {
 
     // Se não é path, converte para path primeiro
     if (pathObj.type !== "path") {
+      // Converte forma para path via pathFromElement
       const svgString = pathObj.toSVG();
       const parser = new DOMParser();
-      const doc = parser.parseFromString(svgString, "image/svg+xml");
-      const pathEl = doc.querySelector("path");
-      if (!pathEl) return;
-      const d = pathEl.getAttribute("d");
-      if (!d) return;
+      const doc = parser.parseFromString(`<svg>${svgString}</svg>`, "image/svg+xml");
+      
+      // Tenta achar qualquer elemento com pontos de forma
+      const rect = doc.querySelector("rect");
+      const circle = doc.querySelector("circle");
+      const polygon = doc.querySelector("polygon");
+      const ellipse = doc.querySelector("ellipse");
+      
+      let d = "";
+      if (rect) {
+        const x = parseFloat(rect.getAttribute("x") || "0");
+        const y = parseFloat(rect.getAttribute("y") || "0");
+        const w = parseFloat(rect.getAttribute("width") || "0");
+        const h = parseFloat(rect.getAttribute("height") || "0");
+        const rx = parseFloat(rect.getAttribute("rx") || "0");
+        if (rx > 0) {
+          d = `M ${x+rx} ${y} L ${x+w-rx} ${y} Q ${x+w} ${y} ${x+w} ${y+rx} L ${x+w} ${y+h-rx} Q ${x+w} ${y+h} ${x+w-rx} ${y+h} L ${x+rx} ${y+h} Q ${x} ${y+h} ${x} ${y+h-rx} L ${x} ${y+rx} Q ${x} ${y} ${x+rx} ${y} Z`;
+        } else {
+          d = `M ${x} ${y} L ${x+w} ${y} L ${x+w} ${y+h} L ${x} ${y+h} Z`;
+        }
+      } else if (circle) {
+        const cx = parseFloat(circle.getAttribute("cx") || "0");
+        const cy = parseFloat(circle.getAttribute("cy") || "0");
+        const r = parseFloat(circle.getAttribute("r") || "0");
+        const k = 0.5522848;
+        d = `M ${cx} ${cy-r} C ${cx+r*k} ${cy-r} ${cx+r} ${cy-r*k} ${cx+r} ${cy} C ${cx+r} ${cy+r*k} ${cx+r*k} ${cy+r} ${cx} ${cy+r} C ${cx-r*k} ${cy+r} ${cx-r} ${cy+r*k} ${cx-r} ${cy} C ${cx-r} ${cy-r*k} ${cx-r*k} ${cy-r} ${cx} ${cy-r} Z`;
+      } else if (ellipse) {
+        const cx = parseFloat(ellipse.getAttribute("cx") || "0");
+        const cy = parseFloat(ellipse.getAttribute("cy") || "0");
+        const rx2 = parseFloat(ellipse.getAttribute("rx") || "0");
+        const ry2 = parseFloat(ellipse.getAttribute("ry") || "0");
+        const k = 0.5522848;
+        d = `M ${cx} ${cy-ry2} C ${cx+rx2*k} ${cy-ry2} ${cx+rx2} ${cy-ry2*k} ${cx+rx2} ${cy} C ${cx+rx2} ${cy+ry2*k} ${cx+rx2*k} ${cy+ry2} ${cx} ${cy+ry2} C ${cx-rx2*k} ${cy+ry2} ${cx-rx2} ${cy+ry2*k} ${cx-rx2} ${cy} C ${cx-rx2} ${cy-ry2*k} ${cx-rx2*k} ${cy-ry2} ${cx} ${cy-ry2} Z`;
+      } else if (polygon) {
+        const pts2 = (polygon.getAttribute("points") || "").trim().split(/\s+|,/).map(Number);
+        for (let i = 0; i < pts2.length; i += 2) {
+          d += `${i === 0 ? "M" : "L"} ${pts2[i]} ${pts2[i+1]} `;
+        }
+        d += "Z";
+      }
+      
+      if (!d) { console.warn("Não foi possível converter forma para path"); return; }
+      
       const newPath = new fabric.Path(d, {
         left: pathObj.left,
         top: pathObj.top,
@@ -819,7 +858,6 @@ function EditorInner() {
       canvas.remove(pathObj);
       canvas.add(newPath);
       canvas.requestRenderAll();
-      // Chama de novo com o path convertido
       enterEditNodes(newPath);
       return;
     }
