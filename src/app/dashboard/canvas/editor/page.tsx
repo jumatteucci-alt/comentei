@@ -795,6 +795,7 @@ function EditorInner() {
 
     // Se não é path, converte para path primeiro
     if (pathObj.type !== "path") {
+      console.log("path commands:", JSON.stringify(pathObj.path?.slice(0, 5)));
       // Converte forma para path via pathFromElement
       const svgString = pathObj.toSVG();
       const parser = new DOMParser();
