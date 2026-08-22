@@ -1212,13 +1212,14 @@ function EditorInner() {
       window.addEventListener("keydown", onKey);
       return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
     } else {
-      fc.current.setDimensions({
+      const canvas = fc.current;
+      canvas.setDimensions({
         width: currentW,
         height: currentH
       }, { backstoreOnly: false });
-      fc.current.setZoom(z);
-      fc.current.calcOffset();
-      fc.current.requestRenderAll();
+      canvas.setZoom(z);
+      canvas.calcOffset();
+      canvas.requestRenderAll();
     }
   }, [fabricLoaded, canvasWidth, canvasHeight, zoom]);
 
@@ -1761,10 +1762,7 @@ function EditorInner() {
     if (!fc.current) return;
     penLines.current.forEach(l => fc.current.remove(l));
     penDots.current.forEach(d => fc.current.remove(d));
-    if (activeHandleLine.current) {
-      canvas.remove(activeHandleLine.current);
-      activeHandleLine.current = null;
-    }
+    if (activeHandleLine.current) fc.current.remove(activeHandleLine.current);
     penPoints.current = [];
     penLines.current = [];
     penDots.current = [];
