@@ -327,6 +327,8 @@ function EditorInner() {
   const [pixelEditMode, setPixelEditMode] = useState(false);
   const [pixelTool, setPixelTool] = useState<"eraser"|"stamp"|"lasso">("eraser");
   const [pixelBrushSize, setPixelBrushSize] = useState(20);
+  const [pixelSoftness, setPixelSoftness] = useState(0); // 0=hard, 1=soft
+  const pixelSnapshotRef = useRef<ImageData|null>(null); // snapshot before brush stroke
   const pixelCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const pixelEditImgRef = useRef<any>(null);
   const pixelOrigSrcRef = useRef<string>("");
@@ -2348,8 +2350,6 @@ function EditorInner() {
           {pixelEditMode ? (
             /* ── Pixel edit tools ── */
             <>
-              <p className="text-gray-400 mb-1" style={{fontSize:9}}>PIXELS</p>
-
               {/* Eraser */}
               <button onClick={() => setPixelTool("eraser")} title="Borracha"
                 className={`w-10 h-10 rounded-xl flex items-center justify-center transition ${pixelTool==="eraser" ? "bg-blue-100 text-blue-700" : "text-gray-500 hover:bg-gray-100"}`}>
@@ -2393,6 +2393,11 @@ function EditorInner() {
                   <input type="range" min={2} max={200} value={pixelBrushSize}
                     onChange={e => setPixelBrushSize(+e.target.value)}
                     className="w-8 accent-blue-600" style={{writingMode:"vertical-lr", direction:"rtl", height:60}} />
+                  <div className="w-8 border-t border-gray-100 my-1" />
+                  <span className="text-gray-400" style={{fontSize:8}}>Suav.</span>
+                  <input type="range" min={0} max={1} step={0.05} value={pixelSoftness}
+                    onChange={e => setPixelSoftness(+e.target.value)}
+                    className="w-8 accent-blue-600" style={{writingMode:"vertical-lr", direction:"rtl", height:40}} />
                 </div>
               )}
 
@@ -2597,15 +2602,18 @@ function EditorInner() {
                       el.height = imgEl.naturalHeight || pixelEditImgRef.current.height;
                       const ctx = el.getContext("2d")!;
                       ctx.drawImage(imgEl, 0, 0);
-                      pixelUndoStack.current = [ctx.getImageData(0, 0, el.width, el.height)];
+                      const snap = ctx.getImageData(0, 0, el.width, el.height);
+                      pixelUndoStack.current = [snap];
+                      pixelSnapshotRef.current = snap;
                     }
                   }}
                   style={{
                     position: "absolute", left: il, top: it, width: iw, height: ih,
-                    cursor: pixelTool === "eraser" ? "cell" : pixelTool === "stamp" ? "crosshair" : "crosshair",
+                    cursor: pixelTool === "lasso" ? "crosshair" : "cell",
                     border: "2px solid #4f46e5", boxSizing: "border-box", imageRendering: "pixelated",
                   }}
                   onMouseDown={ev => {
+                    if (ev.detail >= 2) { exitPixelEdit(true); return; } // double click exits
                     const el = pixelCanvasRef.current!;
                     const rect = el.getBoundingClientRect();
                     const sx = el.width / rect.width; const sy = el.height / rect.height;
@@ -2616,6 +2624,11 @@ function EditorInner() {
                     if (pixelTool === "stamp" && ev.altKey) { stampSourceRef.current = { x, y }; return; }
 
                     if (pixelTool === "lasso") {
+                      // Clear previous lasso selection by restoring last saved state
+                      if (pixelUndoStack.current.length > 0) {
+                        const last = pixelUndoStack.current[pixelUndoStack.current.length - 1];
+                        ctx.putImageData(last, 0, 0);
+                      }
                       lassoActiveRef.current = true;
                       lassoPointsRef.current = [{ x, y }];
                       lassoSelectionRef.current = [];
@@ -2623,16 +2636,37 @@ function EditorInner() {
                       return;
                     }
 
-                    // Save undo state
-                    pixelUndoStack.current.push(ctx.getImageData(0, 0, el.width, el.height));
+                    // Save undo snapshot at start of stroke
+                    const snap = ctx.getImageData(0, 0, el.width, el.height);
+                    pixelSnapshotRef.current = snap;
+                    pixelUndoStack.current.push(snap);
                     if (pixelUndoStack.current.length > 30) pixelUndoStack.current.shift();
                     pixelDrawingRef.current = true;
 
-                    if (pixelTool === "eraser") {
-                      ctx.globalCompositeOperation = "destination-out";
-                      ctx.beginPath(); ctx.arc(x, y, pixelBrushSize / 2, 0, Math.PI * 2); ctx.fill();
-                      ctx.globalCompositeOperation = "source-over";
-                    } else if (pixelTool === "stamp" && stampSourceRef.current) {
+                    const applyEraser = (px: number, py: number) => {
+                      const r = pixelBrushSize / 2;
+                      if (pixelSoftness === 0) {
+                        ctx.globalCompositeOperation = "destination-out";
+                        ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill();
+                        ctx.globalCompositeOperation = "source-over";
+                      } else {
+                        // Soft eraser: radial gradient alpha mask
+                        const offC = document.createElement("canvas");
+                        offC.width = el.width; offC.height = el.height;
+                        const offCtx = offC.getContext("2d")!;
+                        offCtx.drawImage(el, 0, 0);
+                        const grad = ctx.createRadialGradient(px, py, 0, px, py, r);
+                        grad.addColorStop(0, `rgba(0,0,0,${pixelSoftness})`);
+                        grad.addColorStop(1, "rgba(0,0,0,0)");
+                        ctx.globalCompositeOperation = "destination-out";
+                        ctx.fillStyle = grad;
+                        ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill();
+                        ctx.globalCompositeOperation = "source-over";
+                      }
+                    };
+
+                    if (pixelTool === "eraser") applyEraser(x, y);
+                    else if (pixelTool === "stamp" && stampSourceRef.current) {
                       const src = stampSourceRef.current; const r = pixelBrushSize / 2;
                       ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.clip();
                       ctx.drawImage(el, src.x - r, src.y - r, pixelBrushSize, pixelBrushSize, x - r, y - r, pixelBrushSize, pixelBrushSize);
@@ -2649,21 +2683,37 @@ function EditorInner() {
 
                     if (pixelTool === "lasso" && lassoActiveRef.current) {
                       lassoPointsRef.current.push({ x, y });
-                      // Redraw image + lasso outline
                       const pts = lassoPointsRef.current;
-                      ctx.setLineDash([6, 3]);
-                      ctx.strokeStyle = "#4f46e5"; ctx.lineWidth = 1.5;
+                      // Draw incremental lasso line
+                      ctx.save();
+                      ctx.setLineDash([5, 4]);
+                      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
                       ctx.beginPath();
                       ctx.moveTo(pts[pts.length-2]?.x ?? x, pts[pts.length-2]?.y ?? y);
                       ctx.lineTo(x, y); ctx.stroke();
-                      ctx.setLineDash([]);
+                      ctx.strokeStyle = "#000"; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+                      ctx.beginPath();
+                      ctx.moveTo(pts[pts.length-2]?.x ?? x, pts[pts.length-2]?.y ?? y);
+                      ctx.lineTo(x, y); ctx.stroke();
+                      ctx.setLineDash([]); ctx.restore();
                       return;
                     }
                     if (!pixelDrawingRef.current) return;
                     if (pixelTool === "eraser") {
-                      ctx.globalCompositeOperation = "destination-out";
-                      ctx.beginPath(); ctx.arc(x, y, pixelBrushSize / 2, 0, Math.PI * 2); ctx.fill();
-                      ctx.globalCompositeOperation = "source-over";
+                      const r = pixelBrushSize / 2;
+                      if (pixelSoftness === 0) {
+                        ctx.globalCompositeOperation = "destination-out";
+                        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+                        ctx.globalCompositeOperation = "source-over";
+                      } else {
+                        const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+                        grad.addColorStop(0, `rgba(0,0,0,${pixelSoftness})`);
+                        grad.addColorStop(1, "rgba(0,0,0,0)");
+                        ctx.globalCompositeOperation = "destination-out";
+                        ctx.fillStyle = grad;
+                        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+                        ctx.globalCompositeOperation = "source-over";
+                      }
                     } else if (pixelTool === "stamp" && stampSourceRef.current) {
                       const src = stampSourceRef.current; const r = pixelBrushSize / 2;
                       ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.clip();
@@ -2679,30 +2729,24 @@ function EditorInner() {
                       if (pts.length < 3) return;
                       lassoSelectionRef.current = [...pts];
                       setLassoSelected(true);
-                      // Draw marching ants selection outline
+                      // Draw closed marching ants
                       const el = pixelCanvasRef.current!;
                       const ctx = el.getContext("2d")!;
                       ctx.save();
                       ctx.setLineDash([6, 3]);
                       ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
                       ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
-                      pts.forEach(p => ctx.lineTo(p.x, p.y));
-                      ctx.closePath(); ctx.stroke();
-                      ctx.strokeStyle = "#000"; ctx.lineWidth = 1;
-                      ctx.setLineDash([6, 3]);
+                      pts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath(); ctx.stroke();
+                      ctx.strokeStyle = "#222"; ctx.lineWidth = 1;
                       ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
-                      pts.forEach(p => ctx.lineTo(p.x, p.y));
-                      ctx.closePath(); ctx.stroke();
-                      ctx.setLineDash([]);
-                      ctx.restore();
+                      pts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath(); ctx.stroke();
+                      ctx.setLineDash([]); ctx.restore();
                     }
                   }}
-                  onDoubleClick={() => exitPixelEdit(true)}
                   onKeyDown={ev => {
-                    ev.preventDefault();
+                    ev.stopPropagation();
                     const el = pixelCanvasRef.current!;
                     const ctx = el.getContext("2d")!;
-                    // Ctrl+Z undo
                     if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && ev.key.toLowerCase() === "z") {
                       const prev = pixelUndoStack.current.pop();
                       if (prev) { ctx.putImageData(prev, 0, 0); setLassoSelected(false); lassoSelectionRef.current = []; }
@@ -2710,7 +2754,6 @@ function EditorInner() {
                     }
                     const pts = lassoSelectionRef.current;
                     if (!pts.length) return;
-                    // Delete: erase inside selection
                     if (ev.key === "Delete" || ev.key === "Backspace") {
                       pixelUndoStack.current.push(ctx.getImageData(0, 0, el.width, el.height));
                       ctx.save();
@@ -2720,7 +2763,6 @@ function EditorInner() {
                       ctx.restore();
                       setLassoSelected(false); lassoSelectionRef.current = [];
                     }
-                    // Ctrl+Shift+I: invert selection (erase outside)
                     if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && ev.key.toLowerCase() === "i") {
                       pixelUndoStack.current.push(ctx.getImageData(0, 0, el.width, el.height));
                       ctx.save();
@@ -2733,6 +2775,7 @@ function EditorInner() {
                     }
                   }}
                   tabIndex={0}
+                  autoFocus
                 />
               );
             })()}
@@ -2741,7 +2784,43 @@ function EditorInner() {
 
         {/* ── RIGHT: PROPERTIES + LAYERS ───────────────── */}
         <div className="w-56 bg-white border-l border-gray-200 flex flex-col flex-shrink-0 overflow-y-auto text-xs">
-          {isEditingNodes && (
+          {pixelEditMode ? (
+            <div className="p-3 flex flex-col gap-3">
+              <p className="font-semibold text-blue-900 text-xs uppercase tracking-wide">Edição de pixels</p>
+              <p className="text-blue-700 text-xs leading-relaxed">
+                <b>Duplo clique</b> na imagem — aplica e sai
+              </p>
+              <p className="text-gray-500 text-xs leading-relaxed">
+                <b>Ctrl+Z</b> — desfazer<br/>
+                <b>Esc</b> — sair sem salvar
+              </p>
+              {pixelTool === "lasso" && (
+                <div className="bg-blue-50 rounded-lg p-2 flex flex-col gap-1">
+                  <p className="text-blue-700 text-xs font-medium">Laço</p>
+                  <p className="text-blue-600 text-xs leading-relaxed">
+                    Arraste para selecionar.<br/>
+                    <b>Delete</b> — apaga seleção<br/>
+                    <b>Ctrl+Shift+I</b> — inverte seleção
+                  </p>
+                  {lassoSelected && <p className="text-green-600 text-xs">✓ Seleção ativa</p>}
+                </div>
+              )}
+              {pixelTool === "stamp" && (
+                <div className="bg-blue-50 rounded-lg p-2">
+                  <p className="text-blue-700 text-xs font-medium mb-1">Carimbo clone</p>
+                  <p className="text-blue-600 text-xs leading-relaxed">
+                    <b>Alt+clique</b> — define fonte<br/>
+                    Arraste para clonar
+                  </p>
+                  {stampSourceRef.current
+                    ? <p className="text-green-600 text-xs mt-1">✓ Fonte definida</p>
+                    : <p className="text-orange-500 text-xs mt-1">Fonte não definida</p>
+                  }
+                </div>
+              )}
+            </div>
+          ) : null}
+          {!pixelEditMode && isEditingNodes && (
             <div className="p-3 bg-indigo-50 border-b border-indigo-100 flex flex-col gap-2">
               <p className="font-semibold text-indigo-900">Modo Edição de Nós</p>
               <p className="text-[11px] text-indigo-700">
@@ -2766,9 +2845,8 @@ function EditorInner() {
             </div>
           )}
 
-          {sel ? (
+          {!pixelEditMode && (sel ? (
             <div className="p-3 flex flex-col gap-3 border-b border-gray-200">
-              <p className="font-semibold text-gray-600 uppercase tracking-wide" style={{fontSize:10}}>Propriedades</p>
 
               {isEditableShape && !isEditingNodes && (
                 <button
@@ -3101,9 +3179,9 @@ function EditorInner() {
               <ColorPicker value={bgSolid} onChange={bg => { setBgSolid(bg); setBgGradient(null); }} label="" />
               <GradientEditor value={bgGradient} onChange={g => { if (g) setBgGradient(g); else setBgGradient(null); }} />
             </div>
-          )}
+          ))}
 
-          <div className="flex flex-col flex-1">
+          {!pixelEditMode && <div className="flex flex-col flex-1">
             <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
               <p className="font-semibold text-gray-500 uppercase tracking-wide" style={{fontSize:10}}>Camadas</p>
               {selectedUids.length > 1 && (
@@ -3180,7 +3258,7 @@ function EditorInner() {
               <p>Ctrl+Z/Y Desfazer/Refazer &nbsp; Del Remover</p>
               <p>↑↓←→ Mover 1px &nbsp; Shift+↑ 10px</p>
             </div>
-          </div>
+          </div>}
         </div>
       </div>
     </div>
