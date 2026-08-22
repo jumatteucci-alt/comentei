@@ -2191,7 +2191,7 @@ function EditorInner() {
         </div>
 
         {/* ── CANVAS VIEWPORT ───────────────────────────── */}
-        <div ref={canvasContainerRef} className="flex-1 overflow-auto flex items-center justify-center p-8 bg-gray-100">
+        <div ref={canvasContainerRef} className="flex-1 overflow-auto flex items-start justify-center p-8 bg-gray-100">
           <div className="shadow-2xl">
             {!fabricLoaded ? (
               <div style={{ width: Math.round(canvasWidth * (zoom / 100)), height: Math.round(canvasHeight * (zoom / 100)) }} className="bg-white flex items-center justify-center">
