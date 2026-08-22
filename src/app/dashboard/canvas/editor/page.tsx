@@ -231,6 +231,8 @@ function EditorInner() {
   const [canvasHeight, setCanvasHeight] = useState(fmt.h);
   const [inputWidth, setInputWidth] = useState(String(fmt.w));
   const [inputHeight, setInputHeight] = useState(String(fmt.h));
+  const [brushSize, setBrushSize] = useState(4);
+  const [brushColor, setBrushColor] = useState("#000000");
 
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -2196,14 +2198,39 @@ function EditorInner() {
                 const fabric = (window as any).fabric;
                 fc.current.isDrawingMode = true;
                 fc.current.freeDrawingBrush = new fabric.PencilBrush(fc.current);
-                fc.current.freeDrawingBrush.color = selFill !== "transparent" ? selFill : "#000000";
-                fc.current.freeDrawingBrush.width = selStrokeW > 0 ? selStrokeW : 4;
+                fc.current.freeDrawingBrush.color = brushColor;
+                fc.current.freeDrawingBrush.width = brushSize;
               }
             }
           }} title="Pincel"
             className={`w-10 h-10 rounded-xl flex items-center justify-center transition ${activeTool==="brush" ? "bg-indigo-100 text-indigo-700" : "text-gray-500 hover:bg-gray-100"}`}>
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 15c1-1 2-3 4-3s2 2 4 2c1 0 2-1 2-2V4l-2-2-8 8-2 4z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>
           </button>
+
+          {activeTool === "brush" && (
+            <div className="w-10 flex flex-col gap-1 items-center">
+              <div className="w-10 border-t border-gray-100" />
+              {/* Preview do traço */}
+              <div className="w-8 flex items-center justify-center" style={{ height: 24 }}>
+                <div style={{ width: 28, height: Math.min(brushSize, 16), borderRadius: brushSize, background: brushColor }} />
+              </div>
+              {/* Tamanhos predefinidos */}
+              {[2, 6, 12, 20].map(s => (
+                <button key={s} onClick={() => {
+                  setBrushSize(s);
+                  if (fc.current?.freeDrawingBrush) fc.current.freeDrawingBrush.width = s;
+                }}
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition ${brushSize === s ? "bg-indigo-100" : "hover:bg-gray-100"}`}>
+                  <div style={{ width: Math.min(s * 1.2, 22), height: Math.min(s * 1.2, 22), borderRadius: "50%", background: brushColor }} />
+                </button>
+              ))}
+              {/* Cor */}
+              <input type="color" value={brushColor} onChange={e => {
+                setBrushColor(e.target.value);
+                if (fc.current?.freeDrawingBrush) fc.current.freeDrawingBrush.color = e.target.value;
+              }} className="w-8 h-8 rounded-lg border border-gray-200 cursor-pointer p-0.5 mt-1" />
+            </div>
+          )}
 
           <div className="w-8 border-t border-gray-100 my-1" />
 
