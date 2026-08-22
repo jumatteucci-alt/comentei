@@ -33,7 +33,6 @@ function loadGoogleFonts() {
   document.head.appendChild(l);
 }
 
-// ─── Color Picker com quadrado 'sem cor' inline ──────────
 function ColorPicker({ value, onChange, label, allowTransparent = true }: { value: string; onChange: (c: string) => void; label?: string; allowTransparent?: boolean }) {
   const isNone = value === "transparent" || value === "" || value === "none";
   return (
@@ -79,7 +78,6 @@ function ColorPicker({ value, onChange, label, allowTransparent = true }: { valu
   );
 }
 
-// ─── Gradient Editor Multiparadas com Opacidade ─────────
 export type GradStop = { offset: number; color: string; opacity: number };
 export type GradConfig = { angle: number; stops: GradStop[] };
 
@@ -100,8 +98,7 @@ function GradientEditor({ value, onChange }: { value: GradConfig | null; onChang
   };
 
   const updateAngle = (angle: number) => {
-    const next = { ...grad, angle };
-    onChange(next);
+    onChange({ ...grad, angle });
   };
 
   const updateStop = (idx: number, prop: Partial<GradStop>) => {
@@ -162,10 +159,8 @@ function GradientEditor({ value, onChange }: { value: GradConfig | null; onChang
             />
           </div>
 
-          {/* Preview da barra de gradiente */}
           <div style={{ background: getCssGradient(), height: 20, borderRadius: 6, border: "1px solid #e2e8f0" }} />
 
-          {/* Lista de cores / paradas */}
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <span className="text-xs text-gray-400">Cores do gradiente</span>
@@ -410,7 +405,6 @@ function EditorInner() {
   const [bgSolid, setBgSolid] = useState("#ffffff");
   const [bgGradient, setBgGradient] = useState<{c1:string;c2:string;angle:number}|null>(null);
 
-  // Auto-fit responsivo inicial
   const fitCanvasToScreen = useCallback(() => {
     if (!canvasContainerRef.current) return;
     const container = canvasContainerRef.current;
@@ -552,7 +546,6 @@ function EditorInner() {
     refreshLayers(canvas);
   };
 
-  // ── Converte qualquer Shape Fabric (Rect, Circle, Triangle, Polygon) em Path nativo ──
   const convertShapeToFabricPath = (obj: any): any => {
     if (obj.type === "path") return obj;
     const fabric = (window as any).fabric;
@@ -619,7 +612,6 @@ function EditorInner() {
     return path;
   };
 
-  // ── Boolean Operations Engine (Paper.js) ───────────
   const applyBooleanOperation = (operation: "unite" | "subtract" | "intersect" | "exclude") => {
     if (!fc.current || !sel || sel.type !== "activeSelection") return;
     const paper = (window as any).paper;
@@ -1124,7 +1116,6 @@ function EditorInner() {
   };
   undoLastPenPointRef.current = undoLastPenPoint;
 
-  // Inicialização estável do Fabric Canvas (resolução real 1:1 mantida, visual zoom via CSS)
   useEffect(() => {
     if (!fabricLoaded || !canvasRef.current) return;
 
@@ -1456,11 +1447,13 @@ function EditorInner() {
       };
       window.addEventListener("keydown", onKey);
       return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
-    } else if (fc.current) {
-      fc.current.setWidth(canvasWidth);
-      fc.current.setHeight(canvasHeight);
-      fc.current.calcOffset();
-      fc.current.requestRenderAll();
+    } else {
+      if (fc.current) {
+        fc.current.setWidth(canvasWidth);
+        fc.current.setHeight(canvasHeight);
+        fc.current.calcOffset();
+        fc.current.requestRenderAll();
+      }
     }
   }, [fabricLoaded, canvasWidth, canvasHeight]);
 
