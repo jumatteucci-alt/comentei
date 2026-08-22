@@ -1319,695 +1319,147 @@ function EditorInner() {
     renderEditControls();
   };
 
-  const redrawPenCanvas = () => {
-    if (!fc.current) return;
-    const canvas = fc.current;
-    const fabric = (window as any).fabric;
-    const pts = penPoints.current;
-    const handles = penCurveHandles.current;
+  const convertTextToPath = async () => {
+    if (!fc.current || !sel || !isText) return;
+    const opentype = (window as any).opentype;
+    if (!opentype) { alert("opentype.js ainda carregando, tente novamente."); return; }
+    setConverting(true);
+    try {
+      const fabric = (window as any).fabric;
+      const fontFamily = sel.fontFamily || "Arial";
+      const fontSize   = sel.fontSize   || 48;
+      const fillColor  = typeof sel.fill === "string" ? sel.fill : "#000000";
+      const text       = sel.text || "";
+      const objLeft    = sel.left;
+      const objTop     = sel.top;
+      const uid        = sel.__uid;
 
-    penDots.current.forEach(d => canvas.remove(d));
-    penLines.current.forEach(l => canvas.remove(l));
-    penDots.current = [];
-    penLines.current = [];
+      const FONT_URLS: Record<string, string> = {
+        "Montserrat":       "https://fonts.gstatic.com/s/montserrat/v29/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCtr6Hw5aXo.woff",
+        "Playfair Display": "https://fonts.gstatic.com/s/playfairdisplay/v36/nuFiD-vYSZviVYUb_rj3ij__anPXDTnCjmHKM4nYO7KN_qiTbtA.woff",
+        "Roboto":           "https://fonts.gstatic.com/s/roboto/v32/KFOmCnqEu92Fr1Mu4mxKKTU1Kg.woff",
+        "Oswald":           "https://fonts.gstatic.com/s/oswald/v53/TK3_WkUHHAIjg75cFRf3bXL8LICs13NvgUFoZAaRliE.woff",
+        "Lato":             "https://fonts.gstatic.com/s/lato/v24/S6uyw4BMUTPHjx4wXiWtFCc.woff",
+        "Raleway":          "https://fonts.gstatic.com/s/raleway/v34/1Ptxg8zYS_SKggPN4iEgvnHyvveLxVsEpYCP.woff",
+        "Pacifico":         "https://fonts.gstatic.com/s/pacifico/v22/FwZY7-Qmy14u9lezJ96A4sijpFu_.woff",
+        "Dancing Script":   "https://fonts.gstatic.com/s/dancingscript/v25/If2cXTr6YS-zF4S-kcSWSVi_sxjsohD9F50Ruu7BMSo3ROp6.woff",
+        "Bebas Neue":       "https://fonts.gstatic.com/s/bebasneue/v14/JTUSjIg69CK48gW7PXoo9WlhyyTh89Y.woff",
+      };
 
-    pts.forEach((pt, i) => {
-      const dot = new fabric.Circle({
-        left: pt.x, top: pt.y, radius: 4, originX: "center", originY: "center",
-        fill: i === 0 ? "#22c55e" : "#4f46e5",
-        stroke: "white", strokeWidth: 1.5,
-        selectable: false, evented: false,
-      });
-      canvas.add(dot);
-      penDots.current.push(dot);
+      const loadFont = async (family: string): Promise<any> => {
+        const url = FONT_URLS[family];
+        if (url) {
+          try { return await opentype.load(url); } catch {}
+        }
+        return null;
+      };
 
-      if (i > 0) {
-        const prev = pts[i - 1];
-        const prevH = handles[i - 1]?.[1] || prev;
-        const currH = handles[i]?.[0] || pt;
-        const curvePath = new fabric.Path(`M ${prev.x} ${prev.y} C ${prevH.x} ${prevH.y} ${currH.x} ${currH.y} ${pt.x} ${pt.y}`, {
-          stroke: "#4f46e5", strokeWidth: 1.5, strokeDashArray: [4, 3], fill: "transparent",
-          selectable: false, evented: false,
+      const font = await loadFont(fontFamily);
+
+      if (!font) {
+        const svgData = sel.toSVG();
+        const path = new fabric.Path(svgData, {
+          left: objLeft, top: objTop,
+          fill: fillColor, strokeUniform: true,
         });
-        canvas.add(curvePath);
-        penLines.current.push(curvePath);
+        path.__uid = uid;
+        fc.current.remove(sel);
+        fc.current.add(path);
+        fc.current.setActiveObject(path);
+        syncSel(path);
+        fc.current.requestRenderAll();
+        return;
       }
-    });
 
-    canvas.requestRenderAll();
+      const svgPath = font.getPath(text, 0, 0, fontSize);
+      const pathData = svgPath.toPathData(2);
+
+      const path = new fabric.Path(pathData, {
+        left: objLeft,
+        top:  objTop,
+        fill: fillColor,
+        strokeUniform: true,
+        scaleX: sel.scaleX || 1,
+        scaleY: sel.scaleY || 1,
+      });
+      path.__uid = uid;
+      fc.current.remove(sel);
+      fc.current.add(path);
+      fc.current.setActiveObject(path);
+      syncSel(path);
+      fc.current.requestRenderAll();
+    } finally {
+      setConverting(false);
+    }
   };
 
-  const undoLastPenPoint = () => {
-    if (!fc.current) return;
-    const canvas = fc.current;
-
-    if (lastFinalizedPath.current) {
-      canvas.remove(lastFinalizedPath.current);
-      lastFinalizedPath.current = null;
-      activeToolRef.current = "pen";
-      setActiveTool("pen");
-      canvas.defaultCursor = "crosshair";
-      canvas.hoverCursor = "crosshair";
-      canvas.selection = false;
-      redrawPenCanvas();
+  const removeBackgroundLocal = () => {
+    if (!fc.current || !sel || sel.type !== "image") return;
+    if (!rmbgWorker.current) {
+      alert("Worker não disponível. Tente recarregar a página.");
       return;
     }
-
-    if (penPoints.current.length === 0) return;
-
-    penPoints.current.pop();
-    penCurveHandles.current.pop();
-
-    const lastDot = penDots.current.pop();
-    if (lastDot) canvas.remove(lastDot);
-
-    const lastLine = penLines.current.pop();
-    if (lastLine) canvas.remove(lastLine);
-
-    if (activeHandleLine.current) {
-      canvas.remove(activeHandleLine.current);
-      activeHandleLine.current = null;
-    }
-
-    if (penPoints.current.length === 0) {
-      cancelPen();
-    } else {
-      canvas.requestRenderAll();
-    }
-  };
-  const undoLastPenPointRef = useRef<()=>void>(() => {});
-  undoLastPenPointRef.current = undoLastPenPoint;
-
-  const add = (fn: (fabric: any) => any) => {
-    if (!fc.current) return;
-    const obj = fn((window as any).fabric);
-    fc.current.add(obj); fc.current.setActiveObject(obj); syncSel(obj);
-  };
-  const addText = () => {
-    if (!fc.current) return;
-    const fab = (window as any).fabric;
-    const fontToLoad = `${selFontSize}px "${selFontFamily}"`;
-    document.fonts.load(fontToLoad).finally(() => {
-      const t = new fab.Textbox("Texto aqui", {
-        left: canvasWidth / 2,
-        top: canvasHeight / 2,
-        originX: "center",
-        originY: "center",
-        width: 300,
-        fontSize: selFontSize,
-        fontFamily: selFontFamily,
-        textAlign: selTextAlign,
-        fill: "#000000",
-        strokeUniform: true,
-        splitByGrapheme: false,
-      });
-      fc.current.add(t);
-      fc.current.setActiveObject(t);
-      syncSel(t);
-      fc.current.requestRenderAll();
-      t.enterEditing();
-    });
-  };
-
-  const addRect  = (r=0) => add(fab => new fab.Rect({ left:canvasWidth/2-75, top:canvasHeight/2-50, width:150, height:100, fill:"#3b82f6", rx:r, ry:r, strokeUniform:true }));
-  const addCirc  = () => add(fab => new fab.Circle({ left:canvasWidth/2-60, top:canvasHeight/2-60, radius:60, fill:"#3b82f6", strokeUniform:true }));
-  const addTri   = () => add(fab => new fab.Triangle({ left:canvasWidth/2-60, top:canvasHeight/2-60, width:120, height:120, fill:"#3b82f6", strokeUniform:true }));
-  const addLine  = () => add(fab => new fab.Line([canvasWidth/2-80, canvasHeight/2, canvasWidth/2+80, canvasHeight/2], { stroke:"#000000", strokeWidth:3, strokeUniform:true }));
-  const addStar  = () => {
-    const points: { x: number; y: number }[] = [];
-    for (let i=0;i<10;i++) { const r = i%2===0?60:24; const a = (Math.PI/5)*i - Math.PI/2; points.push({ x: r*Math.cos(a), y: r*Math.sin(a) }); }
-    add(fab => new fab.Polygon(points, { left:canvasWidth/2, top:canvasHeight/2, originX:"center", originY:"center", fill:"#eab308", strokeUniform:true }));
-  };
-  const addArrow = () => {
-    const points: { x: number; y: number }[] = [{ x:0,y:20 },{ x:80,y:20 },{ x:80,y:0 },{ x:120,y:35 },{ x:80,y:70 },{ x:80,y:50 },{ x:0,y:50 }];
-    add(fab => new fab.Polygon(points, { left:canvasWidth/2-60, top:canvasHeight/2-35, fill:"#3b82f6", strokeUniform:true }));
-  };
-
-  const handleImg = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !fc.current) return;
-    const r = new FileReader();
-    r.onload = ev => (window as any).fabric.Image.fromURL(ev.target?.result as string, (img: any) => {
-      if (img.width > canvasWidth * 0.8) img.scaleToWidth(canvasWidth * 0.8);
-      const scaledW = img.getScaledWidth();
-      const scaledH = img.getScaledHeight();
-      img.set({
-        left: (canvasWidth - scaledW) / 2,
-        top: (canvasHeight - scaledH) / 2,
-        originX: "left",
-        originY: "top",
-      });
-      fc.current.add(img); fc.current.setActiveObject(img); syncSel(img);
-    });
-    r.readAsDataURL(file); e.target.value = "";
-  };
-
-  const finalizePen = (close: boolean) => {
-    if (!fc.current) return;
-    const canvas = fc.current;
+    setRemovingBg(true);
+    setRmbgProgress("Preparando imagem...");
     const fabric = (window as any).fabric;
-    const pts = penPoints.current;
-    const handles = penCurveHandles.current;
-    if (pts.length < 2) { cancelPen(); return; }
 
-    let d = `M ${pts[0].x} ${pts[0].y}`;
-    for (let i = 1; i < pts.length; i++) {
-      const prev = pts[i - 1];
-      const curr = pts[i];
-      const h1 = handles[i - 1]?.[1] || prev;
-      const h2 = handles[i]?.[0]    || curr;
-      d += ` C ${h1.x} ${h1.y} ${h2.x} ${h2.y} ${curr.x} ${curr.y}`;
-    }
-    if (close && pts.length > 2) {
-      const h1 = handles[pts.length - 1]?.[1] || pts[pts.length - 1];
-      const h2 = handles[0]?.[0] || pts[0];
-      d += ` C ${h1.x} ${h1.y} ${h2.x} ${h2.y} ${pts[0].x} ${pts[0].y} Z`;
-    }
+    const origW = Math.round(sel.width  * (sel.scaleX || 1));
+    const origH = Math.round(sel.height * (sel.scaleY || 1));
+    const MAX = 1024;
+    const ratio = Math.min(MAX / origW, MAX / origH, 1);
+    const pw = Math.round(origW * ratio);
+    const ph = Math.round(origH * ratio);
 
-    const path = new fabric.Path(d, {
-      fill: close ? (selFill !== "transparent" ? selFill : "#4f46e5") : "transparent",
-      stroke: "#000000",
-      strokeWidth: 2,
-      strokeUniform: true,
-    });
+    const tmpCanvas = document.createElement("canvas");
+    tmpCanvas.width = pw; tmpCanvas.height = ph;
+    const ctx = tmpCanvas.getContext("2d")!;
+    const imgEl = (sel as any)._element as HTMLImageElement;
+    ctx.drawImage(imgEl, 0, 0, pw, ph);
+    const pixelData = ctx.getImageData(0, 0, pw, ph);
 
-    penLines.current.forEach(l => canvas.remove(l));
-    penDots.current.forEach(d => canvas.remove(d));
-    if (activeHandleLine.current) {
-      canvas.remove(activeHandleLine.current);
-      activeHandleLine.current = null;
-    }
-    penLines.current = [];
-    penDots.current = [];
+    const left = sel.left;
+    const top  = sel.top;
+    const angle = sel.angle || 0;
+    const uid  = sel.__uid;
+    const scaleX = sel.scaleX || 1;
 
-    canvas.add(path);
-    canvas.setActiveObject(path);
-    syncSel(path);
-    lastFinalizedPath.current = path;
+    const worker = rmbgWorker.current;
 
-    activeToolRef.current = "select";
-    setActiveTool("select");
-    canvas.defaultCursor = "default";
-    canvas.hoverCursor = "move";
-    canvas.selection = true;
-    canvas.requestRenderAll();
-  };
-
-  const cancelPen = () => {
-    if (!fc.current) return;
-    penLines.current.forEach(l => fc.current.remove(l));
-    penDots.current.forEach(d => fc.current.remove(d));
-    if (activeHandleLine.current) {
-      fc.current.remove(activeHandleLine.current);
-      activeHandleLine.current = null;
-    }
-    penPoints.current = [];
-    penLines.current = [];
-    penDots.current = [];
-    penCurveHandles.current = [];
-    activeHandleLine.current = null;
-    lastFinalizedPath.current = null;
-    fc.current.requestRenderAll();
-  };
-
-  const startPen = () => {
-    if (isEditingNodes) exitEditNodes();
-    lastFinalizedPath.current = null;
-    setActiveTool("pen"); activeToolRef.current = "pen";
-    if (fc.current) {
-      fc.current.defaultCursor = "crosshair";
-      fc.current.hoverCursor = "crosshair";
-      fc.current.selection = false;
-      fc.current.discardActiveObject();
-      fc.current.requestRenderAll();
-    }
-  };
-
-  const stopPen = () => {
-    setActiveTool("select"); activeToolRef.current = "select";
-    cancelPen();
-    if (fc.current) {
-      fc.current.defaultCursor = "default";
-      fc.current.hoverCursor = "move";
-      fc.current.selection = true;
-      fc.current.isDrawingMode = false;
-    }
-  };
-
-  const createMask = () => {
-    if (!fc.current) return;
-    const canvas = fc.current;
-    const active = canvas.getActiveObject();
-    if (!active || active.type !== "activeSelection") return;
-    const objects = (active as any).getObjects();
-    const image = objects.find((o: any) => o.type === "image");
-    const shape = objects.find((o: any) => o.type !== "image");
-    if (!image || !shape) { alert("Selecione uma imagem e uma forma juntas."); return; }
-
-    canvas.discardActiveObject();
-    canvas.requestRenderAll();
-
-    const imgCenter = image.getCenterPoint();
-    const shapeCenter = shape.getCenterPoint();
-
-    shape.clone((clippedShape: any) => {
-      const imgScaleX = image.scaleX || 1;
-      const imgScaleY = image.scaleY || 1;
-
-      clippedShape.set({
-        left: (shapeCenter.x - imgCenter.x) / imgScaleX,
-        top: (shapeCenter.y - imgCenter.y) / imgScaleY,
-        originX: "center",
-        originY: "center",
-        scaleX: (shape.scaleX || 1) / imgScaleX,
-        scaleY: (shape.scaleY || 1) / imgScaleY,
-        angle: (shape.angle || 0) - (image.angle || 0),
-        absolutePositioned: false,
-      });
-
-      image.__originalShape = shape;
-      image.clipPath = clippedShape;
-      image.setCoords();
-
-      canvas.remove(shape);
-      canvas.setActiveObject(image);
-      syncSel(image);
-      refreshLayers(canvas);
-      canvas.requestRenderAll();
-    });
-  };
-
-  const removeMask = () => {
-    if (!fc.current || !sel || !sel.clipPath) return;
-    const canvas = fc.current;
-    const image = sel;
-    const clip = image.clipPath;
-
-    if (image.__originalShape) {
-      const orig = image.__originalShape;
-      const imgCenter = image.getCenterPoint();
-      const imgScaleX = image.scaleX || 1;
-      const imgScaleY = image.scaleY || 1;
-
-      orig.set({
-        left: imgCenter.x + (clip.left || 0) * imgScaleX,
-        top: imgCenter.y + (clip.top || 0) * imgScaleY,
-        originX: "center",
-        originY: "center",
-        scaleX: (clip.scaleX || 1) * imgScaleX,
-        scaleY: (clip.scaleY || 1) * imgScaleY,
-        angle: (clip.angle || 0) + (image.angle || 0),
-      });
-      orig.setCoords();
-      canvas.add(orig);
-      delete image.__originalShape;
-    }
-
-    image.clipPath = null;
-    image.setCoords();
-    syncSel(image);
-    refreshLayers(canvas);
-    canvas.requestRenderAll();
-  };
-
-  const exportDataUrl = () => {
-    const canvas = fc.current;
-    const dataUrl = canvas.toDataURL({ format:"png", multiplier:1 });
-    return dataUrl;
-  };
-
-  const handleDownload = () => {
-    if (!fc.current) return;
-    const a = document.createElement("a"); a.href = exportDataUrl(); a.download = artName+".png"; a.click();
-  };
-
-  const handleSave = async () => {
-    if (!fc.current || !site) return; setSaving(true);
-    try {
-      const dataUrl = exportDataUrl();
-      const path = `canvas/${site.widgetId}/${Date.now()}.png`;
-      const sRef = ref(storage, path);
-      await uploadString(sRef, dataUrl, "data_url");
-      const url = await getDownloadURL(sRef);
-      await addDoc(collection(db, "canvas_arts"), { widgetId:site.widgetId, name:artName, format:fmt.label, url, storagePath:path, createdAt:Date.now() });
-      setSaved(true); setTimeout(() => setSaved(false), 2500);
-    } finally { setSaving(false); }
-  };
-
-  // ── Inicialização de eventos e Canvas Fabric ──────────
-  useEffect(() => {
-    if (!fabricLoaded || !canvasRef.current) return;
-
-    if (!fc.current) {
-      const canvas = new (window as any).fabric.Canvas(canvasRef.current, {
-        width: canvasWidth,
-        height: canvasHeight,
-        backgroundColor: "#ffffff",
-        selection: true,
-        centeredRotation: true,
-      });
-      fc.current = canvas;
-      const canvasEl = canvas.upperCanvasEl;
-      canvasElRef.current = canvasEl;
-      canvasEl.setAttribute("tabindex", "0");
-
-      const saveState = () => {
-        if (savingHistory.current) return;
-        try { historyRef.current.undo.push(JSON.stringify(canvas.toJSON())); historyRef.current.redo = []; if (historyRef.current.undo.length > 50) historyRef.current.undo.shift(); } catch {}
-      };
-      const restoreState = (json: string) => {
-        savingHistory.current = true;
-        try { canvas.loadFromJSON(JSON.parse(json), () => { try { canvas.renderAll(); refreshLayers(canvas); } catch {} savingHistory.current = false; }); } catch { savingHistory.current = false; }
-      };
-
-      canvas.on("selection:created", () => syncSel(canvas.getActiveObject()));
-      canvas.on("selection:updated", () => syncSel(canvas.getActiveObject()));
-      canvas.on("selection:cleared", () => syncSel(null));
-      canvas.on("object:modified", (e: any) => {
-        if (!savingHistory.current) {
-          saveState();
-          refreshLayers(canvas);
-          const obj = e.target;
-          if (obj?.type !== "textbox" && obj?.type !== "i-text") {
-            syncSel(obj);
-          }
-        }
-      });
-      canvas.on("object:added",    () => { if (!savingHistory.current) { saveState(); refreshLayers(canvas); } });
-      canvas.on("object:removed",  () => { if (!savingHistory.current) refreshLayers(canvas); });
-
-      canvas.on("mouse:dblclick", (e: any) => {
-        if (isEditingNodesRef.current) return;
-        if (e.target && !e.target.isControlHelper && (e.target.type === "path" || isShapeType(e.target))) {
-          enterEditNodes(e.target);
-        }
-      });
-
-      canvas.on("object:scaling", (e: any) => {
-        const obj = e.target;
-        if (!obj) return;
-        if (obj.type === "textbox" || obj.type === "i-text") {
-          const newSize = Math.round(obj.fontSize * obj.scaleY);
-          setSelFontSize(newSize);
-        }
-        if (obj.type === "rect") {
-          const storedRx = rectBeforeScale.current?.rx ?? (obj.rx || 0);
-          const sx = obj.scaleX || 1;
-          const sy = obj.scaleY || 1;
-          const newW = obj.width * sx;
-          const newH = obj.height * sy;
-          const maxRx = Math.min(newW, newH) / 2;
-          const newRx = Math.min(storedRx, maxRx);
-          obj.set({ width: newW, height: newH, rx: newRx, ry: newRx, scaleX: 1, scaleY: 1 });
-          rectBeforeScale.current = { rx: newRx, ry: newRx };
-          obj.setCoords();
-        }
-      });
-
-      canvas.on("object:scaled", (e: any) => {
-        const obj = e.target;
-        if (!obj) return;
-        if (obj.type === "textbox" || obj.type === "i-text") {
-          const newFontSize = Math.round(obj.fontSize * obj.scaleY);
-          const newWidth = obj.type === "textbox" ? obj.width * obj.scaleX : obj.width;
-          obj.set({ fontSize: newFontSize, width: newWidth, scaleX: 1, scaleY: 1 });
-          canvas.requestRenderAll();
-          syncSel(obj);
-        }
-        if (obj.type === "rect") {
-          rectBeforeScale.current = { rx: obj.rx || 0, ry: obj.ry || 0 };
-          canvas.requestRenderAll();
-          syncSel(obj);
-        }
-      });
-
-      canvas.on("mouse:down:before", (e: any) => {
-        if (activeToolRef.current !== "pen") return;
-        e.e.stopPropagation?.();
-      });
-
-      canvas.on("mouse:down", (e: any) => {
-        if (isEditingNodesRef.current && editingData.current) {
-          const p = canvas.getPointer(e.e);
-          const target = canvas.findTarget(e.e, false);
-          const isTargetHelper = target && target.isControlHelper;
-
-          if (!isTargetHelper) {
-            const { commands } = editingData.current;
-            let closestIdx = -1;
-            let closestDist = 25;
-
-            for (let i = 1; i < commands.length; i++) {
-              const cmd = commands[i];
-              if (cmd.type === "Z") continue;
-              const prevCmd = commands[i - 1];
-              if (!prevCmd) continue;
-
-              const px = prevCmd.x ?? 0;
-              const py = prevCmd.y ?? 0;
-              const cx = cmd.x ?? 0;
-              const cy = cmd.y ?? 0;
-              const mx = (px + cx) / 2;
-              const my = (py + cy) / 2;
-              const dist = Math.hypot(p.x - mx, p.y - my);
-
-              if (dist < closestDist) {
-                closestDist = dist;
-                closestIdx = i;
-              }
-            }
-
-            if (closestIdx !== -1) {
-              const prevCmd = commands[closestIdx - 1];
-              const nextCmd = commands[closestIdx];
-              const t = 0.5;
-
-              const p1x = prevCmd.x, p1y = prevCmd.y;
-              const c1x = nextCmd.type === "C" ? nextCmd.cp1x : p1x;
-              const c1y = nextCmd.type === "C" ? nextCmd.cp1y : p1y;
-              const c2x = nextCmd.type === "C" ? nextCmd.cp2x : nextCmd.x;
-              const c2y = nextCmd.type === "C" ? nextCmd.cp2y : nextCmd.y;
-              const p2x = nextCmd.x, p2y = nextCmd.y;
-
-              const m1x = p1x + (c1x - p1x) * t, m1y = p1y + (c1y - p1y) * t;
-              const m2x = c1x + (c2x - c1x) * t, m2y = c1y + (c2y - c1y) * t;
-              const m3x = c2x + (p2x - c2x) * t, m3y = c2y + (p2y - c2y) * t;
-              const m4x = m1x + (m2x - m1x) * t, m4y = m1y + (m2y - m1y) * t;
-              const m5x = m2x + (m3x - m2x) * t, m5y = m2y + (m3y - m2y) * t;
-              const midX = m4x + (m5x - m4x) * t, midY = m4y + (m5y - m4y) * t;
-
-              if (nextCmd.type === "C") {
-                nextCmd.cp1x = m3x; nextCmd.cp1y = m3y;
-                nextCmd.cp2x = m5x; nextCmd.cp2y = m5y;
-              }
-
-              commands.splice(closestIdx, 0, {
-                type: "C",
-                cp1x: m1x, cp1y: m1y,
-                cp2x: m4x, cp2y: m4y,
-                x: midX, y: midY,
-              });
-
-              renderEditControls();
-              return;
-            }
-          }
-        }
-
-        if (activeToolRef.current !== "pen" || isEditingNodesRef.current) return;
-        const fabric = (window as any).fabric;
-        const p = canvas.getPointer(e.e);
-        const pts = penPoints.current;
-
-        if (pts.length > 1) {
-          const first = pts[0];
-          const dist = Math.hypot(p.x - first.x, p.y - first.y);
-          if (dist < 14) { finalizePen(true); return; }
-        }
-
-        isPenDragging.current = true;
-        pts.push({ x: p.x, y: p.y });
-        penCurveHandles.current.push([{ x: p.x, y: p.y }, { x: p.x, y: p.y }]);
-
-        const dot = new fabric.Circle({
-          left: p.x, top: p.y, radius: 4, originX: "center", originY: "center",
-          fill: pts.length === 1 ? "#22c55e" : "#4f46e5",
-          stroke: "white", strokeWidth: 1.5,
-          selectable: false, evented: false,
-        });
-        canvas.add(dot);
-        penDots.current.push(dot);
-
-        if (pts.length > 1) {
-          const prev = pts[pts.length - 2];
-          const prevHandle = penCurveHandles.current[pts.length - 2][1];
-          const currHandle = penCurveHandles.current[pts.length - 1][0];
-          const curvePath = new fabric.Path(`M ${prev.x} ${prev.y} C ${prevHandle.x} ${prevHandle.y} ${currHandle.x} ${currHandle.y} ${p.x} ${p.y}`, {
-            stroke: "#4f46e5", strokeWidth: 1.5, strokeDashArray: [4, 3], fill: "transparent",
-            selectable: false, evented: false,
-          });
-          canvas.add(curvePath);
-          penLines.current.push(curvePath);
-        }
-
-        canvas.requestRenderAll();
-      });
-
-      canvas.on("mouse:move", (e: any) => {
-        if (activeToolRef.current === "select" && !isEditingNodesRef.current) {
-          const target = canvas.findTarget(e.e, false);
-          canvas.defaultCursor = (target && !target.isControlHelper && (target.type === "path" || isShapeType(target))) ? "crosshair" : "default";
-        }
-
-        if (activeToolRef.current !== "pen" || !isPenDragging.current) return;
-        const fabric = (window as any).fabric;
-        const p = canvas.getPointer(e.e);
-        const pts = penPoints.current;
-        const currIdx = pts.length - 1;
-        const anchor = pts[currIdx];
-
-        const dx = p.x - anchor.x;
-        const dy = p.y - anchor.y;
-
-        penCurveHandles.current[currIdx] = [
-          { x: anchor.x - dx, y: anchor.y - dy },
-          { x: anchor.x + dx, y: anchor.y + dy }
-        ];
-
-        if (activeHandleLine.current) canvas.remove(activeHandleLine.current);
-        activeHandleLine.current = new fabric.Line([anchor.x - dx, anchor.y - dy, anchor.x + dx, anchor.y + dy], {
-          stroke: "#ef4444", strokeWidth: 1, selectable: false, evented: false, strokeDashArray: [2, 2]
-        });
-        canvas.add(activeHandleLine.current);
-
-        if (pts.length > 1) {
-          const prev = pts[pts.length - 2];
-          const prevH = penCurveHandles.current[pts.length - 2][1];
-          const currH = penCurveHandles.current[currIdx][0];
-          const lastLine = penLines.current[penLines.current.length - 1];
-          if (lastLine) canvas.remove(lastLine);
-
-          const newPath = new fabric.Path(`M ${prev.x} ${prev.y} C ${prevH.x} ${prevH.y} ${currH.x} ${currH.y} ${anchor.x} ${anchor.y}`, {
-            stroke: "#4f46e5", strokeWidth: 1.5, strokeDashArray: [4, 3], fill: "transparent", selectable: false, evented: false,
-          });
-          canvas.add(newPath);
-          penLines.current[penLines.current.length - 1] = newPath;
-        }
-
-        canvas.requestRenderAll();
-      });
-
-      canvas.on("mouse:up", () => {
-        if (activeToolRef.current !== "pen") return;
-        isPenDragging.current = false;
-        if (activeHandleLine.current) {
-          canvas.remove(activeHandleLine.current);
-          activeHandleLine.current = null;
-          canvas.requestRenderAll();
-        }
-      });
-
-      const onKey = (e: KeyboardEvent) => {
-        const tag = (document.activeElement as HTMLElement)?.tagName;
-        const isInput = tag === "INPUT" || tag === "TEXTAREA";
-        const ctrl = e.ctrlKey || e.metaKey;
-        const obj = canvas.getActiveObject();
-
-        if ((e.key === "Delete" || e.key === "Backspace") && !isInput) {
-          if (isEditingNodesRef.current) {
-            e.preventDefault();
-            deleteSelectedNode();
-            return;
-          }
-          if (obj && !obj.lockMovementX && !obj.isControlHelper && !obj.isEditPreview) {
-            if (obj.type === "i-text" && obj.isEditing) return;
-            saveState();
-            deleteSelected();
-          }
-          return;
-        }
-        if (isInput) return;
-
-        if (ctrl) {
-          switch (e.key.toLowerCase()) {
-            case "c": e.preventDefault(); if (obj) obj.clone((c: any) => { clipboardRef.current = c; }); break;
-            case "v": e.preventDefault();
-              if (!clipboardRef.current) return;
-              clipboardRef.current.clone((c: any) => {
-                c.set({ left: c.left + 20, top: c.top + 20, evented: true });
-                if (c.type === "activeSelection") { c.canvas = canvas; c.forEachObject((o: any) => canvas.add(o)); c.setCoords(); }
-                else canvas.add(c);
-                clipboardRef.current.top += 20; clipboardRef.current.left += 20;
-                canvas.setActiveObject(c); canvas.requestRenderAll();
-              }); break;
-            case "d": e.preventDefault();
-              if (isEditingNodesRef.current) { toggleNodeSmooth(); return; }
-              if (!obj) return;
-              obj.clone((c: any) => { c.set({ left: obj.left+20, top: obj.top+20 }); canvas.add(c); canvas.setActiveObject(c); canvas.requestRenderAll(); }); break;
-            case "z": e.preventDefault();
-              if (lastFinalizedPath.current || (activeToolRef.current === "pen" && penPoints.current.length > 0)) {
-                undoLastPenPoint();
-                return;
-              }
-              if (e.shiftKey) { const n = historyRef.current.redo.pop(); if (!n) return; historyRef.current.undo.push(JSON.stringify(canvas.toJSON())); restoreState(n); }
-              else { const p = historyRef.current.undo.pop(); if (!p) return; historyRef.current.redo.push(JSON.stringify(canvas.toJSON())); restoreState(p); }
-              break;
-            case "y": e.preventDefault(); { const n = historyRef.current.redo.pop(); if (!n) return; historyRef.current.undo.push(JSON.stringify(canvas.toJSON())); restoreState(n); } break;
-            case "a": e.preventDefault(); { const all = new (window as any).fabric.ActiveSelection(canvas.getObjects().filter((o: any) => !o.isControlHelper && !o.isEditPreview), { canvas }); canvas.setActiveObject(all); canvas.requestRenderAll(); } break;
-            case "g": e.preventDefault(); if (obj?.type === "activeSelection") { canvas.setActiveObject(obj.toGroup()); canvas.requestRenderAll(); } break;
-          }
-          return;
-        }
-        if (obj && ["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key)) {
-          e.preventDefault(); const s = e.shiftKey ? 10 : 1;
-          if (e.key==="ArrowLeft") obj.set("left", obj.left-s);
-          if (e.key==="ArrowRight") obj.set("left", obj.left+s);
-          if (e.key==="ArrowUp") obj.set("top", obj.top-s);
-          if (e.key==="ArrowDown") obj.set("top", obj.top+s);
-          obj.setCoords(); canvas.requestRenderAll();
-        }
-        if (e.key === "Escape") {
-          if (isEditingNodesRef.current) {
-            exitEditNodes();
-          } else if (activeToolRef.current === "pen") {
-            cancelPen(); activeToolRef.current = "select"; setActiveTool("select");
-            if (fc.current) { fc.current.defaultCursor="default"; fc.current.hoverCursor="move"; fc.current.selection=true; }
-          } else {
-            canvas.discardActiveObject(); canvas.requestRenderAll();
-          }
-        }
-        if (e.key === "Enter") {
-          if (isEditingNodesRef.current) {
-            exitEditNodes();
-          } else if (activeToolRef.current === "pen") {
-            finalizePen(true);
-          }
-        }
-      };
-      window.addEventListener("keydown", onKey);
-      return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
-    } else {
-      if (fc.current) {
-        fc.current.setWidth(canvasWidth);
-        fc.current.setHeight(canvasHeight);
-        fc.current.calcOffset();
-        fc.current.requestRenderAll();
+    const handler = (e: MessageEvent) => {
+      const { type, message, imageData, width, height } = e.data;
+      if (type === "progress") { setRmbgProgress(message); return; }
+      if (type === "error") {
+        setRemovingBg(false); setRmbgProgress("");
+        alert("Erro: " + message);
+        worker.removeEventListener("message", handler);
+        return;
       }
-    }
-  }, [fabricLoaded, canvasWidth, canvasHeight]);
+      if (type === "result") {
+        worker.removeEventListener("message", handler);
+        const outCanvas = document.createElement("canvas");
+        outCanvas.width = width; outCanvas.height = height;
+        const outCtx = outCanvas.getContext("2d")!;
+        const outImgData = new ImageData(new Uint8ClampedArray(imageData), width, height);
+        outCtx.putImageData(outImgData, 0, 0);
+        const dataURL = outCanvas.toDataURL("image/png");
+        fc.current.remove(sel);
+        fabric.Image.fromURL(dataURL, (img: any) => {
+          const scaleToW = (origW / img.width) * (scaleX);
+          img.set({ left, top, angle, scaleX: scaleToW, scaleY: scaleToW, strokeUniform: true });
+          img.__uid = uid;
+          fc.current.add(img);
+          fc.current.setActiveObject(img);
+          syncSel(img);
+          fc.current.requestRenderAll();
+          setRemovingBg(false);
+          setRmbgProgress("");
+        });
+      }
+    };
 
-  useEffect(() => {
-    if (!fc.current) return;
-    if (bgGradient) {
-      const fab = (window as any).fabric;
-      if (!fab) return;
-      const rad = (bgGradient.angle * Math.PI) / 180;
-      const grad = new fab.Gradient({ type: "linear", coords: { x1: (Math.cos(rad+Math.PI)+1)/2*canvasWidth, y1: (Math.sin(rad+Math.PI)+1)/2*canvasHeight, x2: (Math.cos(rad)+1)/2*canvasWidth, y2: (Math.sin(rad)+1)/2*canvasHeight }, colorStops: [{ offset:0, color: bgGradient.c1 },{ offset:1, color: bgGradient.c2 }] });
-      fc.current.setBackgroundColor(grad, () => fc.current?.renderAll());
-    } else {
-      fc.current.setBackgroundColor(bgSolid, () => fc.current?.renderAll());
-    }
-  }, [bgSolid, bgGradient, canvasWidth, canvasHeight]);
+    worker.addEventListener("message", handler);
+    worker.postMessage({ type: "removebg", imageData: pixelData.data.buffer, width: pw, height: ph }, [pixelData.data.buffer]);
+  };
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col overflow-hidden" style={{ fontFamily: "system-ui, sans-serif" }}>
@@ -2193,7 +1645,7 @@ function EditorInner() {
           )}
         </div>
 
-        {/* ── CANVAS VIEWPORT ───────────────────────────── */}
+        {/* ── CANVAS VIEWPORT (Zoom via CSS Transform) ────── */}
         <div ref={canvasContainerRef} className="flex-1 overflow-auto flex items-center justify-center p-8 bg-gray-100">
           <div
             style={{
