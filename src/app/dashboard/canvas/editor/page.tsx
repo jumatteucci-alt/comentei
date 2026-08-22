@@ -2700,26 +2700,31 @@ function EditorInner() {
 
                     if (pixelTool === "eraser") {
                       const r = pixelBrushSize / 2;
-                      if (!pixelDrawingRef.current) {
-                        // Preview: restore snapshot and draw circle outline
+                      if (pixelDrawingRef.current) {
+                        // Apaga
+                        if (pixelSoftness === 0) {
+                          ctx.globalCompositeOperation = "destination-out";
+                          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+                          ctx.globalCompositeOperation = "source-over";
+                        } else {
+                          const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+                          grad.addColorStop(0, `rgba(0,0,0,${pixelSoftness})`);
+                          grad.addColorStop(1, "rgba(0,0,0,0)");
+                          ctx.globalCompositeOperation = "destination-out";
+                          ctx.fillStyle = grad;
+                          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+                          ctx.globalCompositeOperation = "source-over";
+                        }
+                      } else {
+                        // Preview cursor
                         const snap = pixelUndoStack.current[pixelUndoStack.current.length - 1];
-                        if (snap) ctx.putImageData(snap, 0, 0);
+                        if (snap) {
+                          ctx.putImageData(snap, 0, 0);
+                        }
                         ctx.save();
                         ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
                         ctx.strokeStyle = "#4f46e5"; ctx.lineWidth = 1.5; ctx.setLineDash([3, 2]);
                         ctx.stroke(); ctx.setLineDash([]); ctx.restore();
-                      } else if (pixelSoftness === 0) {
-                        ctx.globalCompositeOperation = "destination-out";
-                        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-                        ctx.globalCompositeOperation = "source-over";
-                      } else {
-                        const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
-                        grad.addColorStop(0, `rgba(0,0,0,${pixelSoftness})`);
-                        grad.addColorStop(1, "rgba(0,0,0,0)");
-                        ctx.globalCompositeOperation = "destination-out";
-                        ctx.fillStyle = grad;
-                        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-                        ctx.globalCompositeOperation = "source-over";
                       }
                       return;
                     }
