@@ -275,8 +275,9 @@ function EditorInner() {
     otScript.onload = () => setOpenTypeLoaded(true);
     document.head.appendChild(otScript);
 
+    // Carrega o pacote COMPLETO do Paper.js (paper-full.min.js para suporte a boolean operations)
     const paperScript = document.createElement("script");
-    paperScript.src = "https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.18/paper-core.min.js";
+    paperScript.src = "https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.18/paper-full.min.js";
     paperScript.onload = () => setPaperLoaded(true);
     document.head.appendChild(paperScript);
 
@@ -398,27 +399,56 @@ function EditorInner() {
     paperCanvas.height = canvasHeight;
     paper.setup(paperCanvas);
 
+    // Converte qualquer elemento SVG importado (Shape/Group) para PathItem
+    const getPathItem = (item: any): any => {
+      if (!item) return null;
+      if (item.className === "Shape" || typeof item.toPath === "function") {
+        return item.toPath(true);
+      }
+      if (item.className === "Path" || item.className === "CompoundPath") {
+        return item;
+      }
+      if (item.children && item.children.length > 0) {
+        const paths = item.children.map((c: any) => getPathItem(c)).filter(Boolean);
+        if (paths.length === 0) return null;
+        let combined = paths[0];
+        for (let k = 1; k < paths.length; k++) {
+          if (combined && typeof combined.unite === "function") {
+            combined = combined.unite(paths[k]);
+          }
+        }
+        return combined;
+      }
+      return null;
+    };
+
     try {
-      const paperItems: any[] = [];
+      const pathItems: any[] = [];
       objects.forEach(obj => {
         const svg = obj.toSVG();
-        const item = paper.project.importSVG(svg);
-        // Extrai caminhos se importado como grupo
-        if (item.children && item.children.length > 0) {
-          item.children.forEach((c: any) => paperItems.push(c));
-        } else {
-          paperItems.push(item);
-        }
+        const imported = paper.project.importSVG(svg, { expandShapes: true });
+        const pathItem = getPathItem(imported);
+        if (pathItem) pathItems.push(pathItem);
       });
 
-      if (paperItems.length < 2) return;
+      if (pathItems.length < 2) {
+        canvas.setActiveObject(activeSel);
+        canvas.requestRenderAll();
+        return;
+      }
 
-      let result = paperItems[0];
-      for (let i = 1; i < paperItems.length; i++) {
-        if (operation === "unite") result = result.unite(paperItems[i]);
-        else if (operation === "subtract") result = result.subtract(paperItems[i]);
-        else if (operation === "intersect") result = result.intersect(paperItems[i]);
-        else if (operation === "exclude") result = result.exclude(paperItems[i]);
+      let result = pathItems[0];
+      for (let i = 1; i < pathItems.length; i++) {
+        if (operation === "unite" && result.unite) result = result.unite(pathItems[i]);
+        else if (operation === "subtract" && result.subtract) result = result.subtract(pathItems[i]);
+        else if (operation === "intersect" && result.intersect) result = result.intersect(pathItems[i]);
+        else if (operation === "exclude" && result.exclude) result = result.exclude(pathItems[i]);
+      }
+
+      if (!result) {
+        canvas.setActiveObject(activeSel);
+        canvas.requestRenderAll();
+        return;
       }
 
       const resultSvg = result.exportSVG({ asString: true }) as string;
@@ -1850,7 +1880,7 @@ function EditorInner() {
   const isRect = sel?.type === "rect";
   const hasClipPath = !!sel?.clipPath;
 
-  // Verifica se há formas selecionadas para operações booleanas
+  // Verifica se há 2 ou mais formas/vetores selecionados para operações booleanas
   const isMultiShapeSelected = sel?.type === "activeSelection" && (() => {
     const objs = (sel as any).getObjects();
     return objs.length >= 2 && objs.every((o: any) => o.type !== "image" && o.type !== "i-text" && o.type !== "textbox");
@@ -1931,7 +1961,7 @@ function EditorInner() {
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 2l12 7-6 1-3 6L3 2z" fill="currentColor"/></svg>
           </button>
 
-          {/* Pen (Ícone Clássico de Caneta Tinteiro / Pen Tool) */}
+          {/* Pen */}
           <button onClick={() => activeTool==="pen" ? stopPen() : startPen()} title="Caneta (P) - Clique e arraste para curvas">
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition ${activeTool==="pen" ? "bg-indigo-100 text-indigo-700" : "text-gray-500 hover:bg-gray-100"}`}>
               <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
@@ -2091,7 +2121,7 @@ function EditorInner() {
                 </button>
               )}
 
-              {/* Operações Booleanas (Figma/Illustrator Style) */}
+              {/* Operações Booleanas (Paper.js) */}
               {isMultiShapeSelected && (
                 <div className="flex flex-col gap-1.5 p-2 bg-slate-50 border border-slate-200 rounded-xl">
                   <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider">Operações Booleanas</p>
@@ -2274,17 +2304,17 @@ function EditorInner() {
                   <div className="flex items-center justify-between">
                     <span className="text-gray-400">Ativar sombra</span>
                     <button onClick={() => updateShadow(!selShadow)} className={`w-9 h-5 rounded-full transition ${selShadow?"bg-indigo-500":"bg-gray-200"}`}>
-                      <span className={`block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${selShadow?"translate-x-4":""}`} />
-                    </button>
-                  </div>
-                  {selShadow && (
-                    <div className="flex flex-col gap-2">
-                      <ColorPicker value={selShadowColor} onChange={c => { setSelShadowColor(c); applyShadow(c, selShadowBlur, selShadowX, selShadowY); }} label="Cor" />
-                      <SliderRow label="Blur" value={selShadowBlur} min={0} max={60} onChange={v => { setSelShadowBlur(v); applyShadow(selShadowColor, v, selShadowX, selShadowY); }} />
-                      <SliderRow label="X" value={selShadowX} min={-50} max={50} onChange={v => { setSelShadowX(v); applyShadow(selShadowColor, selShadowBlur, v, selShadowY); }} />
-                      <SliderRow label="Y" value={selShadowY} min={-50} max={50} onChange={v => { setSelShadowY(v); applyShadow(selShadowColor, selShadowBlur, selShadowX, v); }} />
-                    </div>
-                  )}
+                  <span className={`block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${selShadow?"translate-x-4":""}`} />
+                </button>
+              </div>
+              {selShadow && (
+                <div className="flex flex-col gap-2">
+                  <ColorPicker value={selShadowColor} onChange={c => { setSelShadowColor(c); applyShadow(c, selShadowBlur, selShadowX, selShadowY); }} label="Cor" />
+                  <SliderRow label="Blur" value={selShadowBlur} min={0} max={60} onChange={v => { setSelShadowBlur(v); applyShadow(selShadowColor, v, selShadowX, selShadowY); }} />
+                  <SliderRow label="X" value={selShadowX} min={-50} max={50} onChange={v => { setSelShadowX(v); applyShadow(selShadowColor, selShadowBlur, v, selShadowY); }} />
+                  <SliderRow label="Y" value={selShadowY} min={-50} max={50} onChange={v => { setSelShadowY(v); applyShadow(selShadowColor, selShadowBlur, selShadowX, v); }} />
+                </div>
+              )}
                 </>
               )}
 
