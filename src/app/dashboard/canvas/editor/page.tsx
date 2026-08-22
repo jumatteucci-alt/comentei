@@ -246,8 +246,8 @@ function EditorInner() {
     if (!canvasContainerRef.current) return;
     const container = canvasContainerRef.current;
     const padding = 64;
-    const availW = Math.max(300, container.clientWidth - padding);
-    const availH = Math.max(300, container.clientHeight - padding);
+    const availW = Math.max(200, container.clientWidth - padding);
+    const availH = Math.max(200, container.clientHeight - padding);
 
     const fitRatio = Math.min(availW / canvasWidth, availH / canvasHeight, 1);
     const autoZoom = Math.max(10, Math.round(fitRatio * 100));
@@ -374,7 +374,6 @@ function EditorInner() {
     refreshLayers(canvas);
   };
 
-  // ── Boolean Operations Engine (Paper.js) ───────────
   const applyBooleanOperation = (operation: "unite" | "subtract" | "intersect" | "exclude") => {
     if (!fc.current || !sel || sel.type !== "activeSelection") return;
     const paper = (window as any).paper;
@@ -876,6 +875,7 @@ function EditorInner() {
   };
   undoLastPenPointRef.current = undoLastPenPoint;
 
+  // Renderizador principal e controle de redimensionamento e Zoom
   useEffect(() => {
     if (!fabricLoaded || !canvasRef.current) return;
     const z = zoom / 100;
@@ -884,7 +884,10 @@ function EditorInner() {
 
     if (!fc.current) {
       const canvas = new (window as any).fabric.Canvas(canvasRef.current, {
-        width: currentW, height: currentH, backgroundColor: "#ffffff", selection: true,
+        width: currentW,
+        height: currentH,
+        backgroundColor: "#ffffff",
+        selection: true,
         centeredRotation: true,
       });
       canvas.setZoom(z);
@@ -1209,9 +1212,12 @@ function EditorInner() {
       window.addEventListener("keydown", onKey);
       return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
     } else {
-      fc.current.setWidth(currentW);
-      fc.current.setHeight(currentH);
+      fc.current.setDimensions({
+        width: currentW,
+        height: currentH
+      }, { backstoreOnly: false });
       fc.current.setZoom(z);
+      fc.current.calcOffset();
       fc.current.requestRenderAll();
     }
   }, [fabricLoaded, canvasWidth, canvasHeight, zoom]);
@@ -1755,7 +1761,10 @@ function EditorInner() {
     if (!fc.current) return;
     penLines.current.forEach(l => fc.current.remove(l));
     penDots.current.forEach(d => fc.current.remove(d));
-    if (activeHandleLine.current) fc.current.remove(activeHandleLine.current);
+    if (activeHandleLine.current) {
+      canvas.remove(activeHandleLine.current);
+      activeHandleLine.current = null;
+    }
     penPoints.current = [];
     penLines.current = [];
     penDots.current = [];
