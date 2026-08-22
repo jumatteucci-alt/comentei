@@ -1456,7 +1456,7 @@ function EditorInner() {
       };
       window.addEventListener("keydown", onKey);
       return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
-    } else if (fc.current) {
+    } else {
       fc.current.setWidth(canvasWidth);
       fc.current.setHeight(canvasHeight);
       fc.current.calcOffset();
