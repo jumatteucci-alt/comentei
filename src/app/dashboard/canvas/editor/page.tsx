@@ -374,7 +374,7 @@ function EditorInner() {
     refreshLayers(canvas);
   };
 
-  // ── Boolean Operations Engine (100% Preciso & Nativo no Paper.js) ───────────
+  // ── Boolean Operations Engine (Paper.js) ───────────
   const applyBooleanOperation = (operation: "unite" | "subtract" | "intersect" | "exclude") => {
     if (!fc.current || !sel || sel.type !== "activeSelection") return;
     const paper = (window as any).paper;
@@ -387,18 +387,15 @@ function EditorInner() {
     const activeSel = sel;
     const fabric = (window as any).fabric;
 
-    // Desfaz seleção ativa para garantir coordenadas globais absolutas
     const objects = [...(activeSel as any).getObjects()];
     canvas.discardActiveObject();
     canvas.requestRenderAll();
 
-    // Inicializa canvas virtual isolado no Paper.js
     const paperCanvas = document.createElement("canvas");
     paperCanvas.width = canvasWidth;
     paperCanvas.height = canvasHeight;
     paper.setup(paperCanvas);
 
-    // Converte qualquer objeto Fabric (Rect, Circle, Triangle, Polygon, Path) para PathItem absoluto do Paper.js
     const fabricObjectToPaperPath = (obj: any): any => {
       const matrix = obj.calcTransformMatrix();
       let pathData = "";
@@ -420,7 +417,7 @@ function EditorInner() {
         }
       } else if (obj.type === "circle") {
         const r = obj.radius;
-        const k = 0.5522847498; // Constante kappa para círculo em Bézier
+        const k = 0.5522847498;
         pathData = `M ${0} ${-r} ` +
                    `C ${r * k} ${-r} ${r} ${-r * k} ${r} 0 ` +
                    `C ${r} ${r * k} ${r * k} ${r} 0 ${r} ` +
@@ -495,7 +492,6 @@ function EditorInner() {
       });
       newPath.__uid = Math.random().toString(36).slice(2);
 
-      // Remove objetos originais e insere a forma resultante
       objects.forEach(o => canvas.remove(o));
       canvas.add(newPath);
       canvas.setActiveObject(newPath);
@@ -1759,10 +1755,7 @@ function EditorInner() {
     if (!fc.current) return;
     penLines.current.forEach(l => fc.current.remove(l));
     penDots.current.forEach(d => fc.current.remove(d));
-    if (activeHandleLine.current) {
-      canvas.remove(activeHandleLine.current);
-      activeHandleLine.current = null;
-    }
+    if (activeHandleLine.current) fc.current.remove(activeHandleLine.current);
     penPoints.current = [];
     penLines.current = [];
     penDots.current = [];
