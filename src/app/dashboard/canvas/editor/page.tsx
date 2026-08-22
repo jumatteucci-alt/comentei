@@ -33,223 +33,64 @@ function loadGoogleFonts() {
   document.head.appendChild(l);
 }
 
-// ─── Color Picker com quadrado 'sem cor' inline ──────────
-function ColorPicker({ value, onChange, label, allowTransparent = true }: { value: string; onChange: (c: string) => void; label?: string; allowTransparent?: boolean }) {
-  const isNone = value === "transparent" || value === "" || value === "none";
+function ColorPicker({ value, onChange, label }: { value: string; onChange: (c: string) => void; label: string }) {
   return (
     <div>
       {label && <p className="text-xs text-gray-400 mb-1">{label}</p>}
-      <div className="flex flex-wrap gap-1 mb-1.5 items-center">
-        {allowTransparent && (
-          <button
-            type="button"
-            onClick={() => onChange("transparent")}
-            title="Sem cor / Transparente"
-            style={{ outline: isNone ? "2px solid #4f46e5" : "1px solid #e4e4e0", outlineOffset: "1px" }}
-            className="w-5 h-5 rounded transition flex-shrink-0 relative overflow-hidden bg-white"
-          >
-            <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom right, transparent calc(50% - 1px), #ef4444 calc(50% - 1px), #ef4444 calc(50% + 1px), transparent calc(50% + 1px))" }} />
-          </button>
-        )}
+      <div className="flex flex-wrap gap-1 mb-1.5">
         {SWATCHES.map(c => (
-          <button
-            key={c}
-            type="button"
-            onClick={() => onChange(c)}
-            style={{ background: c, outline: !isNone && value === c ? "2px solid #4f46e5" : "1px solid #e4e4e0", outlineOffset: "1px" }}
-            className="w-5 h-5 rounded transition flex-shrink-0"
-          />
+          <button key={c} onClick={() => onChange(c)}
+            style={{ background: c, outline: value === c ? "2px solid #4f46e5" : "1px solid #e4e4e0", outlineOffset: "1px" }}
+            className="w-5 h-5 rounded transition flex-shrink-0" />
         ))}
       </div>
       <div className="flex gap-1.5">
-        <input
-          type="color"
-          value={isNone || !value.startsWith("#") ? "#000000" : value}
-          onChange={e => onChange(e.target.value)}
-          className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0 flex-shrink-0"
-        />
-        <input
-          type="text"
-          value={isNone ? "none" : value}
-          onChange={e => onChange(e.target.value)}
-          className="flex-1 px-2 py-1 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 min-w-0"
-        />
+        <input type="color" value={value.startsWith("#") || value.startsWith("rgb") ? value : "#000000"}
+          onChange={e => onChange(e.target.value)} className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0 flex-shrink-0" />
+        <input type="text" value={value} onChange={e => onChange(e.target.value)}
+          className="flex-1 px-2 py-1 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 min-w-0" />
       </div>
     </div>
   );
 }
 
-// ─── Gradient Editor Multiparadas com Opacidade ─────────
-export type GradStop = { offset: number; color: string; opacity: number };
-export type GradConfig = { angle: number; stops: GradStop[] };
-
-function GradientEditor({ value, onChange }: { value: GradConfig | null; onChange: (g: GradConfig | null) => void }) {
+function GradientEditor({ value, onChange }: { value: { c1: string; c2: string; angle: number } | null; onChange: (g: { c1: string; c2: string; angle: number } | null) => void }) {
   const [on, setOn] = useState(!!value);
-  const grad: GradConfig = value || {
-    angle: 90,
-    stops: [
-      { offset: 0, color: "#4f46e5", opacity: 1 },
-      { offset: 1, color: "#ec4899", opacity: 1 }
-    ]
-  };
-
-  const handleToggle = () => {
-    const next = !on;
-    setOn(next);
-    onChange(next ? grad : null);
-  };
-
-  const updateAngle = (angle: number) => {
-    const next = { ...grad, angle };
-    onChange(next);
-  };
-
-  const updateStop = (idx: number, prop: Partial<GradStop>) => {
-    const stops = [...grad.stops];
-    stops[idx] = { ...stops[idx], ...prop };
-    onChange({ ...grad, stops });
-  };
-
-  const addStop = () => {
-    const stops = [...grad.stops];
-    const lastOffset = stops[stops.length - 1]?.offset ?? 1;
-    stops.push({ offset: Math.min(1, Math.round((lastOffset + 0.1) * 10) / 10), color: "#3b82f6", opacity: 1 });
-    onChange({ ...grad, stops });
-  };
-
-  const removeStop = (idx: number) => {
-    if (grad.stops.length <= 2) return;
-    const stops = grad.stops.filter((_, i) => i !== idx);
-    onChange({ ...grad, stops });
-  };
-
-  const getCssGradient = () => {
-    const sorted = [...grad.stops].sort((a, b) => a.offset - b.offset);
-    const stopsStr = sorted.map(s => {
-      const c = s.color || "#000000";
-      const o = s.opacity ?? 1;
-      return `${hexToRgba(c, o)} ${s.offset * 100}%`;
-    }).join(", ");
-    return `linear-gradient(${grad.angle}deg, ${stopsStr})`;
-  };
-
+  const g = value || { c1: "#4f46e5", c2: "#ec4899", angle: 90 };
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <span className="text-xs text-gray-400">Usar gradiente</span>
-        <button
-          type="button"
-          onClick={handleToggle}
-          className={`w-9 h-5 rounded-full transition ${on ? "bg-indigo-500" : "bg-gray-200"}`}
-        >
+        <button onClick={() => { const next = !on; setOn(next); onChange(next ? g : null); }}
+          className={`w-9 h-5 rounded-full transition ${on ? "bg-indigo-500" : "bg-gray-200"}`}>
           <span className={`block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${on ? "translate-x-4" : ""}`} />
         </button>
       </div>
-
       {on && (
-        <div className="flex flex-col gap-2.5 pt-1">
+        <div className="flex flex-col gap-2">
           <div>
-            <div className="flex justify-between mb-1">
-              <span className="text-xs text-gray-400">Ângulo: {grad.angle}°</span>
+            <p className="text-xs text-gray-400 mb-1">Cor 1</p>
+            <div className="flex gap-1">
+              <input type="color" value={g.c1} onChange={e => onChange({ ...g, c1: e.target.value })} className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0 flex-shrink-0" />
+              <input type="text" value={g.c1} onChange={e => onChange({ ...g, c1: e.target.value })} className="flex-1 px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:border-indigo-400 min-w-0" />
             </div>
-            <input
-              type="range"
-              min={0}
-              max={360}
-              value={grad.angle}
-              onChange={e => updateAngle(+e.target.value)}
-              className="w-full accent-indigo-600"
-            />
           </div>
-
-          {/* Preview da barra de gradiente */}
-          <div style={{ background: getCssGradient(), height: 20, borderRadius: 6, border: "1px solid #e2e8f0" }} />
-
-          {/* Lista de cores / paradas */}
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-400">Cores do gradiente</span>
-              <button
-                type="button"
-                onClick={addStop}
-                className="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold"
-              >
-                + Adicionar cor
-              </button>
+          <div>
+            <p className="text-xs text-gray-400 mb-1">Cor 2</p>
+            <div className="flex gap-1">
+              <input type="color" value={g.c2} onChange={e => onChange({ ...g, c2: e.target.value })} className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0 flex-shrink-0" />
+              <input type="text" value={g.c2} onChange={e => onChange({ ...g, c2: e.target.value })} className="flex-1 px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:border-indigo-400 min-w-0" />
             </div>
-
-            {grad.stops.map((stop, idx) => (
-              <div key={idx} className="p-2 border border-gray-100 bg-gray-50 rounded-lg flex flex-col gap-1.5">
-                <div className="flex items-center gap-1.5">
-                  <input
-                    type="color"
-                    value={stop.color.startsWith("#") ? stop.color : "#000000"}
-                    onChange={e => updateStop(idx, { color: e.target.value })}
-                    className="w-6 h-6 rounded border border-gray-200 cursor-pointer p-0 flex-shrink-0"
-                  />
-                  <input
-                    type="text"
-                    value={stop.color}
-                    onChange={e => updateStop(idx, { color: e.target.value })}
-                    className="flex-1 px-1.5 py-0.5 border border-gray-200 rounded text-xs bg-white focus:outline-none"
-                  />
-                  {grad.stops.length > 2 && (
-                    <button
-                      type="button"
-                      onClick={() => removeStop(idx)}
-                      className="text-red-500 hover:text-red-700 px-1 text-xs"
-                      title="Remover cor"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-gray-400 w-12 flex-shrink-0">Posição</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={stop.offset}
-                    onChange={e => updateStop(idx, { offset: +e.target.value })}
-                    className="flex-1 accent-indigo-600"
-                  />
-                  <span className="text-[10px] text-gray-500 w-8 text-right">{Math.round(stop.offset * 100)}%</span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-gray-400 w-12 flex-shrink-0">Opacidade</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={stop.opacity ?? 1}
-                    onChange={e => updateStop(idx, { opacity: +e.target.value })}
-                    className="flex-1 accent-indigo-600"
-                  />
-                  <span className="text-[10px] text-gray-500 w-8 text-right">{Math.round((stop.opacity ?? 1) * 100)}%</span>
-                </div>
-              </div>
-            ))}
           </div>
+          <div>
+            <p className="text-xs text-gray-400 mb-1">Ângulo: {g.angle}°</p>
+            <input type="range" min={0} max={360} value={g.angle} onChange={e => onChange({ ...g, angle: +e.target.value })} className="w-full accent-indigo-600" />
+          </div>
+          <div style={{ background: `linear-gradient(${g.angle}deg, ${g.c1}, ${g.c2})`, height: 20, borderRadius: 6 }} />
         </div>
       )}
     </div>
   );
-}
-
-function hexToRgba(hex: string, alpha = 1) {
-  if (hex.startsWith("rgb")) return hex;
-  let c = hex.replace("#", "");
-  if (c.length === 3) c = c.split("").map(x => x + x).join("");
-  const num = parseInt(c, 16);
-  const r = (num >> 16) & 255;
-  const g = (num >> 8) & 255;
-  const b = num & 255;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 function SliderRow({ label, value, min, max, step = 1, unit = "", onChange }: { label: string; value: number; min: number; max: number; step?: number; unit?: string; onChange: (v: number) => void }) {
@@ -275,7 +116,7 @@ function Sec({ title }: { title: string }) {
   return <p className="text-xs font-semibold text-gray-600 pt-2 border-t border-gray-100">{title}</p>;
 }
 
-function applyGradient(fc: any, obj: any, g: GradConfig) {
+function applyGradient(fc: any, obj: any, g: { c1: string; c2: string; angle: number }) {
   const fabric = (window as any).fabric;
   const rad = (g.angle * Math.PI) / 180;
   const w = obj.width! * (obj.scaleX || 1);
@@ -284,18 +125,10 @@ function applyGradient(fc: any, obj: any, g: GradConfig) {
   const y1 = (Math.sin(rad + Math.PI) + 1) / 2 * h;
   const x2 = (Math.cos(rad) + 1) / 2 * w;
   const y2 = (Math.sin(rad) + 1) / 2 * h;
-
-  const colorStops = [...g.stops]
-    .sort((a, b) => a.offset - b.offset)
-    .map(s => ({
-      offset: s.offset,
-      color: hexToRgba(s.color, s.opacity ?? 1)
-    }));
-
   const gradient = new fabric.Gradient({
     type: "linear",
     coords: { x1, y1, x2, y2 },
-    colorStops
+    colorStops: [{ offset: 0, color: g.c1 }, { offset: 1, color: g.c2 }],
   });
   obj.set("fill", gradient);
   fc.requestRenderAll();
@@ -303,7 +136,7 @@ function applyGradient(fc: any, obj: any, g: GradConfig) {
 
 function rgbToHex(rgb: string): string {
   if (rgb.startsWith("#")) return rgb;
-  const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  const m = rgb.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
   if (!m) return "#000000";
   return "#" + [m[1], m[2], m[3]].map(n => parseInt(n).toString(16).padStart(2, "0")).join("");
 }
@@ -311,7 +144,7 @@ function rgbToHex(rgb: string): string {
 function getObjColor(obj: any): string {
   if (!obj) return "#000000";
   const fill = obj.fill;
-  if (!fill || fill === "transparent" || fill === "none") return "transparent";
+  if (!fill) return "#000000";
   if (typeof fill === "string") return rgbToHex(fill);
   if (fill.colorStops?.length) return rgbToHex(fill.colorStops[0].color);
   return "#000000";
@@ -384,7 +217,7 @@ function EditorInner() {
   const [sel, setSel] = useState<any>(null);
   const [selFill, setSelFill] = useState("#000000");
   const [selOpacity, setSelOpacity] = useState(100);
-  const [selStroke, setSelStroke] = useState("transparent");
+  const [selStroke, setSelStroke] = useState("#000000");
   const [selStrokeW, setSelStrokeW] = useState(0);
   const [selRadius, setSelRadius] = useState(0);
   const [selRotation, setSelRotation] = useState(0);
@@ -397,7 +230,6 @@ function EditorInner() {
   const [selSaturation, setSelSaturation] = useState(0);
   const [selFontSize, setSelFontSize] = useState(48);
   const [selFontFamily, setSelFontFamily] = useState("Montserrat");
-  const [selTextAlign, setSelTextAlign] = useState<"left"|"center"|"right"|"justify">("left");
   const [selBold, setSelBold] = useState(false);
   const [selItalic, setSelItalic] = useState(false);
   const [selUnderline, setSelUnderline] = useState(false);
@@ -405,12 +237,11 @@ function EditorInner() {
   const [selLineHeight, setSelLineHeight] = useState(1.2);
   const [selTextWidth, setSelTextWidth] = useState(300);
   const [selTextHeight, setSelTextHeight] = useState(0);
-  const [selFillGradient, setSelFillGradient] = useState<GradConfig | null>(null);
+  const [selFillGradient, setSelFillGradient] = useState<{c1:string;c2:string;angle:number}|null>(null);
 
   const [bgSolid, setBgSolid] = useState("#ffffff");
   const [bgGradient, setBgGradient] = useState<{c1:string;c2:string;angle:number}|null>(null);
 
-  // Auto-fit responsivo inicial
   const fitCanvasToScreen = useCallback(() => {
     if (!canvasContainerRef.current) return;
     const container = canvasContainerRef.current;
@@ -492,13 +323,12 @@ function EditorInner() {
 
     setSelFill(getObjColor(obj));
     setSelOpacity(Math.round((obj.opacity ?? 1) * 100));
-    setSelStroke(obj.stroke || "transparent");
+    setSelStroke(obj.stroke || "#000000");
     setSelStrokeW(obj.strokeWidth || 0);
     setSelRadius(obj.rx || 0);
     setSelRotation(Math.round(obj.angle || 0));
     setSelFontSize(Math.round(obj.fontSize || 48));
     setSelFontFamily(obj.fontFamily || "Montserrat");
-    setSelTextAlign(obj.textAlign || "left");
     setSelBold(obj.fontWeight === "bold");
     setSelItalic(obj.fontStyle === "italic");
     setSelUnderline(!!obj.underline);
@@ -515,20 +345,12 @@ function EditorInner() {
     setSelBlur(uid && blurValueMap.current.has(uid) ? blurValueMap.current.get(uid)! : 0);
     const satFilter = (obj.filters||[]).find((f: any) => f.type === "Saturation");
     setSelSaturation(satFilter ? (satFilter.saturation ?? 0) : 0);
-    
     const fill = obj.fill;
     if (fill && fill.colorStops) {
-      setSelFillGradient({
-        angle: 90,
-        stops: fill.colorStops.map((s: any) => ({
-          offset: s.offset,
-          color: rgbToHex(s.color),
-          opacity: 1
-        }))
-      });
-    } else {
-      setSelFillGradient(null);
-    }
+      const c1 = fill.colorStops[0]?.color || "#000";
+      const c2 = fill.colorStops[1]?.color || "#fff";
+      setSelFillGradient({ c1, c2, angle: 90 });
+    } else { setSelFillGradient(null); }
   };
 
   const deleteSelected = () => {
@@ -552,74 +374,6 @@ function EditorInner() {
     refreshLayers(canvas);
   };
 
-  // ── Converte qualquer Shape Fabric (Rect, Circle, Triangle, Polygon) em Path nativo ──
-  const convertShapeToFabricPath = (obj: any): any => {
-    if (obj.type === "path") return obj;
-    const fabric = (window as any).fabric;
-    const matrix = obj.calcTransformMatrix();
-    let d = "";
-
-    if (obj.type === "rect") {
-      const w = obj.width;
-      const h = obj.height;
-      const rx = Math.min(obj.rx || 0, w / 2);
-      const ry = Math.min(obj.ry || 0, h / 2);
-
-      if (rx > 0 || ry > 0) {
-        d = `M ${-w/2 + rx} ${-h/2} ` +
-            `L ${w/2 - rx} ${-h/2} Q ${w/2} ${-h/2} ${w/2} ${-h/2 + ry} ` +
-            `L ${w/2} ${h/2 - ry} Q ${w/2} ${h/2} ${w/2 - rx} ${h/2} ` +
-            `L ${-w/2 + rx} ${h/2} Q ${-w/2} ${h/2} ${-w/2} ${h/2 - ry} ` +
-            `L ${-w/2} ${-h/2 + ry} Q ${-w/2} ${-h/2} ${-w/2 + rx} ${-h/2} Z`;
-      } else {
-        d = `M ${-w/2} ${-h/2} L ${w/2} ${-h/2} L ${w/2} ${h/2} L ${-w/2} ${h/2} Z`;
-      }
-    } else if (obj.type === "circle") {
-      const r = obj.radius;
-      const k = 0.5522847498;
-      d = `M ${0} ${-r} ` +
-          `C ${r * k} ${-r} ${r} ${-r * k} ${r} 0 ` +
-          `C ${r} ${r * k} ${r * k} ${r} 0 ${r} ` +
-          `C ${-r * k} ${r} ${-r} ${r * k} ${-r} 0 ` +
-          `C ${-r} ${-r * k} ${-r * k} ${-r} 0 ${-r} Z`;
-    } else if (obj.type === "triangle") {
-      const w = obj.width;
-      const h = obj.height;
-      d = `M 0 ${-h/2} L ${w/2} ${h/2} L ${-w/2} ${h/2} Z`;
-    } else if (obj.type === "polygon" && obj.points) {
-      const pts = obj.points;
-      const poX = obj.pathOffset ? obj.pathOffset.x : 0;
-      const poY = obj.pathOffset ? obj.pathOffset.y : 0;
-      d = `M ${pts[0].x - poX} ${pts[0].y - poY} ` +
-          pts.slice(1).map((p: any) => `L ${p.x - poX} ${p.y - poY}`).join(" ") + " Z";
-    }
-
-    if (!d) return obj;
-
-    const path = new fabric.Path(d, {
-      fill: obj.fill,
-      stroke: obj.stroke,
-      strokeWidth: obj.strokeWidth,
-      strokeUniform: true,
-      opacity: obj.opacity ?? 1,
-    });
-
-    path.transform(matrix);
-    path.__uid = obj.__uid || Math.random().toString(36).slice(2);
-
-    const canvas = fc.current;
-    if (canvas) {
-      const idx = canvas.getObjects().indexOf(obj);
-      canvas.remove(obj);
-      if (idx >= 0) canvas.insertAt(path, idx, false);
-      else canvas.add(path);
-      canvas.setActiveObject(path);
-      syncSel(path);
-    }
-    return path;
-  };
-
-  // ── Boolean Operations Engine (Paper.js) ───────────
   const applyBooleanOperation = (operation: "unite" | "subtract" | "intersect" | "exclude") => {
     if (!fc.current || !sel || sel.type !== "activeSelection") return;
     const paper = (window as any).paper;
@@ -726,7 +480,7 @@ function EditorInner() {
 
       const finalPathData = result.pathData;
       const baseFill = objects[0].fill || "#3b82f6";
-      const baseStroke = objects[0].stroke || "transparent";
+      const baseStroke = objects[0].stroke || "#000000";
       const baseStrokeWidth = objects[0].strokeWidth || 0;
 
       const newPath = new fabric.Path(finalPathData, {
@@ -961,11 +715,8 @@ function EditorInner() {
     updatePreview();
   };
 
-  const enterEditNodes = (inputObj: any) => {
-    if (!fc.current || !inputObj) return;
-    const pathObj = convertShapeToFabricPath(inputObj);
-    if (!pathObj || pathObj.type !== "path") return;
-
+  const enterEditNodes = (pathObj: any) => {
+    if (!fc.current || !pathObj || pathObj.type !== "path") return;
     const canvas = fc.current;
     const fabric = (window as any).fabric;
     setIsEditingNodes(true);
@@ -1124,18 +875,22 @@ function EditorInner() {
   };
   undoLastPenPointRef.current = undoLastPenPoint;
 
-  // Inicialização estável do Fabric Canvas (resolução real 1:1 mantida, visual zoom via CSS)
+  // Renderizador principal e controle de redimensionamento e Zoom
   useEffect(() => {
     if (!fabricLoaded || !canvasRef.current) return;
+    const z = zoom / 100;
+    const currentW = Math.round(canvasWidth * z);
+    const currentH = Math.round(canvasHeight * z);
 
     if (!fc.current) {
       const canvas = new (window as any).fabric.Canvas(canvasRef.current, {
-        width: canvasWidth,
-        height: canvasHeight,
+        width: currentW,
+        height: currentH,
         backgroundColor: "#ffffff",
         selection: true,
         centeredRotation: true,
       });
+      canvas.setZoom(z);
       fc.current = canvas;
       const canvasEl = canvas.upperCanvasEl;
       canvasElRef.current = canvasEl;
@@ -1168,7 +923,7 @@ function EditorInner() {
 
       canvas.on("mouse:dblclick", (e: any) => {
         if (isEditingNodesRef.current) return;
-        if (e.target && !e.target.isControlHelper && (e.target.type === "path" || isShapeType(e.target))) {
+        if (e.target && e.target.type === "path" && !e.target.isControlHelper) {
           enterEditNodes(e.target);
         }
       });
@@ -1326,7 +1081,7 @@ function EditorInner() {
       canvas.on("mouse:move", (e: any) => {
         if (activeToolRef.current === "select" && !isEditingNodesRef.current) {
           const target = canvas.findTarget(e.e, false);
-          canvas.defaultCursor = (target && !target.isControlHelper && (target.type === "path" || isShapeType(target))) ? "crosshair" : "default";
+          canvas.defaultCursor = (target && target.type === "path" && !target.isControlHelper) ? "crosshair" : "default";
         }
 
         if (activeToolRef.current !== "pen" || !isPenDragging.current) return;
@@ -1457,12 +1212,16 @@ function EditorInner() {
       window.addEventListener("keydown", onKey);
       return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
     } else {
-      fc.current.setWidth(canvasWidth);
-      fc.current.setHeight(canvasHeight);
-      fc.current.calcOffset();
-      fc.current.requestRenderAll();
+      const canvas = fc.current;
+      canvas.setDimensions({
+        width: currentW,
+        height: currentH
+      }, { backstoreOnly: false });
+      canvas.setZoom(z);
+      canvas.calcOffset();
+      canvas.requestRenderAll();
     }
-  }, [fabricLoaded, canvasWidth, canvasHeight]);
+  }, [fabricLoaded, canvasWidth, canvasHeight, zoom]);
 
   useEffect(() => {
     if (!fc.current) return;
@@ -1493,7 +1252,7 @@ function EditorInner() {
     setSelFill(color); setSelFillGradient(null);
     upd({ fill: color });
   };
-  const updateFillGradient = (g: GradConfig | null) => {
+  const updateFillGradient = (g: {c1:string;c2:string;angle:number}|null) => {
     setSelFillGradient(g);
     if (!g) { upd({ fill: selFill }); return; }
     if (fc.current && sel) applyGradient(fc.current, sel, g);
@@ -1516,10 +1275,6 @@ function EditorInner() {
     document.fonts.load(`${selFontSize}px "${v}"`).finally(() => {
       upd({ fontFamily: v });
     });
-  };
-  const updateTextAlign = (v: "left"|"center"|"right"|"justify") => {
-    setSelTextAlign(v);
-    upd({ textAlign: v });
   };
   const toggleBold = () => {
     const n = !selBold; setSelBold(n);
@@ -1735,7 +1490,6 @@ function EditorInner() {
         width: 300,
         fontSize: selFontSize,
         fontFamily: selFontFamily,
-        textAlign: selTextAlign,
         fill: "#000000",
         strokeUniform: true,
         splitByGrapheme: false,
@@ -2008,10 +1762,7 @@ function EditorInner() {
     if (!fc.current) return;
     penLines.current.forEach(l => fc.current.remove(l));
     penDots.current.forEach(d => fc.current.remove(d));
-    if (activeHandleLine.current) {
-      canvas.remove(activeHandleLine.current);
-      activeHandleLine.current = null;
-    }
+    if (activeHandleLine.current) fc.current.remove(activeHandleLine.current);
     penPoints.current = [];
     penLines.current = [];
     penDots.current = [];
@@ -2126,7 +1877,15 @@ function EditorInner() {
 
   const exportDataUrl = () => {
     const canvas = fc.current;
+    const currentZoom = canvas.getZoom();
+    canvas.setZoom(1);
+    canvas.setWidth(canvasWidth);
+    canvas.setHeight(canvasHeight);
     const dataUrl = canvas.toDataURL({ format:"png", multiplier:1 });
+    canvas.setZoom(currentZoom);
+    canvas.setWidth(Math.round(canvasWidth * currentZoom));
+    canvas.setHeight(Math.round(canvasHeight * currentZoom));
+    canvas.requestRenderAll();
     return dataUrl;
   };
 
@@ -2153,7 +1912,6 @@ function EditorInner() {
   const isPath = sel?.type === "path";
   const isRect = sel?.type === "rect";
   const hasClipPath = !!sel?.clipPath;
-  const isShapeType = (o: any) => o && ["rect", "circle", "triangle", "polygon"].includes(o.type);
 
   const isMultiShapeSelected = sel?.type === "activeSelection" && (() => {
     const objs = (sel as any).getObjects();
@@ -2344,18 +2102,11 @@ function EditorInner() {
           )}
         </div>
 
-        {/* ── CANVAS VIEWPORT (Zoom via CSS Transform) ────── */}
+        {/* ── CANVAS VIEWPORT ───────────────────────────── */}
         <div ref={canvasContainerRef} className="flex-1 overflow-auto flex items-center justify-center p-8 bg-gray-100">
-          <div
-            style={{
-              transform: `scale(${zoom / 100})`,
-              transformOrigin: "center center",
-              transition: "transform 0.05s ease-out",
-            }}
-            className="shadow-2xl flex-shrink-0"
-          >
+          <div className="shadow-2xl">
             {!fabricLoaded ? (
-              <div style={{ width: canvasWidth, height: canvasHeight }} className="bg-white flex items-center justify-center">
+              <div style={{ width: Math.round(canvasWidth * (zoom / 100)), height: Math.round(canvasHeight * (zoom / 100)) }} className="bg-white flex items-center justify-center">
                 <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
               </div>
             ) : <canvas ref={canvasRef} />}
@@ -2368,7 +2119,7 @@ function EditorInner() {
             <div className="p-3 bg-indigo-50 border-b border-indigo-100 flex flex-col gap-2">
               <p className="font-semibold text-indigo-900">Modo Edição de Nós</p>
               <p className="text-[11px] text-indigo-700">
-                • <b>Clique sobre o traçado</b> para inserir novas vértices.<br/>
+                • <b>Clique sobre o traçado</b> para inserir novas vértices no Mesh.<br/>
                 • Arraste vértices azuis para mover pontos com suas curvas acompanhando.<br/>
                 • Arraste pontos vermelhos para ajustar a curvatura.<br/>
                 • <b>Ctrl+D</b>: Alternar curva/canto reto.<br/>
@@ -2393,8 +2144,7 @@ function EditorInner() {
             <div className="p-3 flex flex-col gap-3 border-b border-gray-200">
               <p className="font-semibold text-gray-600 uppercase tracking-wide" style={{fontSize:10}}>Propriedades</p>
 
-              {/* Botão de Edição de Nós (Disponível para Paths e Formas Primitivas) */}
-              {(isPath || isShapeType(sel)) && !isEditingNodes && (
+              {isPath && !isEditingNodes && (
                 <button
                   onClick={() => enterEditNodes(sel)}
                   className="w-full py-2 bg-indigo-50 text-indigo-700 font-medium rounded-lg border border-indigo-200 hover:bg-indigo-100 transition"
@@ -2459,17 +2209,20 @@ function EditorInner() {
                 </button>
               )}
 
-              {/* Preenchimento & Gradiente (com switch limpo) */}
               {sel.type !== "image" && sel.type !== "activeSelection" && (
                 <>
                   <Sec title="Preenchimento" />
-                  {!selFillGradient && (
-                    <ColorPicker
-                      value={selFill}
-                      onChange={isText ? updateFillForText : updateFill}
-                      allowTransparent={true}
-                    />
-                  )}
+                  <div className="flex items-center gap-2 mb-1">
+                    <button
+                      onClick={() => { (isText ? updateFillForText : updateFill)("transparent"); setSelFillGradient(null); }}
+                      title="Sem preenchimento"
+                      className={`relative w-7 h-7 rounded-lg border-2 flex-shrink-0 overflow-hidden transition ${selFill === "transparent" ? "border-indigo-500" : "border-gray-200 hover:border-gray-400"}`}
+                      style={{ background: "#fff" }}>
+                      <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom right, transparent calc(50% - 1px), #ef4444 calc(50% - 1px), #ef4444 calc(50% + 1px), transparent calc(50% + 1px))" }} />
+                    </button>
+                    <span className="text-gray-400" style={{fontSize:10}}>Sem preenchimento</span>
+                  </div>
+                  <ColorPicker value={selFill === "transparent" ? "#4f46e5" : selFill} onChange={isText ? updateFillForText : updateFill} label="" />
                   <GradientEditor value={selFillGradient} onChange={updateFillGradient} />
                 </>
               )}
@@ -2481,34 +2234,11 @@ function EditorInner() {
                 </>
               )}
 
-              {/* Borda com opção sem cor e espessura em slider */}
               {sel.type !== "image" && sel.type !== "activeSelection" && (
                 <>
                   <Sec title="Borda" />
-                  <ColorPicker
-                    value={selStroke}
-                    onChange={c => {
-                      setSelStroke(c);
-                      updateStroke(c);
-                      if (c !== "transparent" && selStrokeW === 0) {
-                        setSelStrokeW(2);
-                        updateStrokeW(2);
-                      }
-                    }}
-                    label="Cor da borda"
-                    allowTransparent={true}
-                  />
-                  <SliderRow
-                    label="Espessura da borda"
-                    value={selStrokeW}
-                    min={0}
-                    max={50}
-                    unit="px"
-                    onChange={v => {
-                      setSelStrokeW(v);
-                      updateStrokeW(v);
-                    }}
-                  />
+                  <ColorPicker value={selStroke} onChange={c => { setSelStroke(c); updateStroke(c); }} label="Cor" />
+                  <NumRow label="Espessura" value={selStrokeW} min={0} max={50} onChange={v => { setSelStrokeW(v); updateStrokeW(v); }} />
                 </>
               )}
 
@@ -2526,7 +2256,6 @@ function EditorInner() {
                 </>
               )}
 
-              {/* Controles de Texto (incluindo alinhamento de parágrafo) */}
               {isText && (
                 <>
                   <Sec title="Texto" />
@@ -2537,11 +2266,9 @@ function EditorInner() {
                     </select>
                   </div>
                   <NumRow label="Tamanho" value={selFontSize} min={6} max={400} onChange={updateFontSize} />
-
-                  {/* Formatação e Alinhamento */}
                   <div>
-                    <p className="text-gray-400 mb-1.5">Estilo e Alinhamento</p>
-                    <div className="flex gap-1.5 mb-1.5">
+                    <p className="text-gray-400 mb-1.5">Formatação</p>
+                    <div className="flex gap-1.5">
                       <button onClick={toggleBold}
                         className={`flex-1 py-1.5 rounded-lg border text-sm font-bold transition ${selBold ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
                         B
@@ -2555,43 +2282,7 @@ function EditorInner() {
                         U
                       </button>
                     </div>
-
-                    <div className="grid grid-cols-4 gap-1">
-                      <button
-                        type="button"
-                        onClick={() => updateTextAlign("left")}
-                        title="Alinhar à Esquerda"
-                        className={`py-1.5 rounded-lg border flex items-center justify-center transition ${selTextAlign === "left" ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M3 12h12M3 18h18"/></svg>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => updateTextAlign("center")}
-                        title="Centralizar"
-                        className={`py-1.5 rounded-lg border flex items-center justify-center transition ${selTextAlign === "center" ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M6 12h12M3 18h18"/></svg>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => updateTextAlign("right")}
-                        title="Alinhar à Direita"
-                        className={`py-1.5 rounded-lg border flex items-center justify-center transition ${selTextAlign === "right" ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M9 12h12M3 18h18"/></svg>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => updateTextAlign("justify")}
-                        title="Justificar"
-                        className={`py-1.5 rounded-lg border flex items-center justify-center transition ${selTextAlign === "justify" ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
-                      </button>
-                    </div>
                   </div>
-
                   <div>
                     <div className="flex justify-between mb-1">
                       <p className="text-gray-400">Espaço entre letras</p>
@@ -2645,17 +2336,17 @@ function EditorInner() {
                   <div className="flex items-center justify-between">
                     <span className="text-gray-400">Ativar sombra</span>
                     <button onClick={() => updateShadow(!selShadow)} className={`w-9 h-5 rounded-full transition ${selShadow?"bg-indigo-500":"bg-gray-200"}`}>
-                      <span className={`block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${selShadow?"translate-x-4":""}`} />
-                    </button>
-                  </div>
-                  {selShadow && (
-                    <div className="flex flex-col gap-2">
-                      <ColorPicker value={selShadowColor} onChange={c => { setSelShadowColor(c); applyShadow(c, selShadowBlur, selShadowX, selShadowY); }} label="Cor" allowTransparent={false} />
-                      <SliderRow label="Blur" value={selShadowBlur} min={0} max={60} onChange={v => { setSelShadowBlur(v); applyShadow(selShadowColor, v, selShadowX, selShadowY); }} />
-                      <SliderRow label="X" value={selShadowX} min={-50} max={50} onChange={v => { setSelShadowX(v); applyShadow(selShadowColor, selShadowBlur, v, selShadowY); }} />
-                      <SliderRow label="Y" value={selShadowY} min={-50} max={50} onChange={v => { setSelShadowY(v); applyShadow(selShadowColor, selShadowBlur, selShadowX, v); }} />
-                    </div>
-                  )}
+                  <span className={`block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${selShadow?"translate-x-4":""}`} />
+                </button>
+              </div>
+              {selShadow && (
+                <div className="flex flex-col gap-2">
+                  <ColorPicker value={selShadowColor} onChange={c => { setSelShadowColor(c); applyShadow(c, selShadowBlur, selShadowX, selShadowY); }} label="Cor" />
+                  <SliderRow label="Blur" value={selShadowBlur} min={0} max={60} onChange={v => { setSelShadowBlur(v); applyShadow(selShadowColor, v, selShadowX, selShadowY); }} />
+                  <SliderRow label="X" value={selShadowX} min={-50} max={50} onChange={v => { setSelShadowX(v); applyShadow(selShadowColor, selShadowBlur, v, selShadowY); }} />
+                  <SliderRow label="Y" value={selShadowY} min={-50} max={50} onChange={v => { setSelShadowY(v); applyShadow(selShadowColor, selShadowBlur, selShadowX, v); }} />
+                </div>
+              )}
                 </>
               )}
 
@@ -2697,14 +2388,8 @@ function EditorInner() {
           ) : (
             <div className="p-3 flex flex-col gap-3 border-b border-gray-200">
               <p className="font-semibold text-gray-600 uppercase tracking-wide" style={{fontSize:10}}>Fundo do canvas</p>
-              <ColorPicker value={bgGradient ? bgGradient.c1 : bgSolid} onChange={bg => { setBgSolid(bg); setBgGradient(null); }} allowTransparent={false} />
-              <GradientEditor value={bgGradient ? { angle: bgGradient.angle, stops: [{ offset: 0, color: bgGradient.c1, opacity: 1 }, { offset: 1, color: bgGradient.c2, opacity: 1 }] } : null} onChange={g => {
-                if (g && g.stops.length >= 2) {
-                  setBgGradient({ c1: g.stops[0].color, c2: g.stops[g.stops.length - 1].color, angle: g.angle });
-                } else {
-                  setBgGradient(null);
-                }
-              }} />
+              <ColorPicker value={bgGradient ? bgGradient.c1 : bgSolid} onChange={bg => { setBgSolid(bg); setBgGradient(null); }} label="" />
+              <GradientEditor value={bgGradient} onChange={g => { if (g) setBgGradient(g); else setBgGradient(null); }} />
             </div>
           )}
 
