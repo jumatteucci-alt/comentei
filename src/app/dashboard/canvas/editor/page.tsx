@@ -45,6 +45,7 @@ function hexToRgba(hex: string, alpha = 1) {
 }
 
 function rgbToHex(rgb: string): string {
+  if (!rgb) return "#000000";
   if (rgb.startsWith("#")) return rgb;
   const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
   if (!m) return "#000000";
@@ -363,9 +364,6 @@ function EditorInner() {
   const isPenDragging = useRef(false);
   const activeHandleLine = useRef<any>(null);
   const lastFinalizedPath = useRef<any>(null);
-  const finalizePenRef = useRef<(close:boolean)=>void>(() => {});
-  const cancelPenRef = useRef<()=>void>(() => {});
-  const undoLastPenPointRef = useRef<()=>void>(() => {});
 
   const [isEditingNodes, setIsEditingNodes] = useState(false);
   const editingData = useRef<{
@@ -1397,8 +1395,266 @@ function EditorInner() {
       canvas.requestRenderAll();
     }
   };
+  const undoLastPenPointRef = useRef<()=>void>(() => {});
   undoLastPenPointRef.current = undoLastPenPoint;
 
+  const add = (fn: (fabric: any) => any) => {
+    if (!fc.current) return;
+    const obj = fn((window as any).fabric);
+    fc.current.add(obj); fc.current.setActiveObject(obj); syncSel(obj);
+  };
+  const addText = () => {
+    if (!fc.current) return;
+    const fab = (window as any).fabric;
+    const fontToLoad = `${selFontSize}px "${selFontFamily}"`;
+    document.fonts.load(fontToLoad).finally(() => {
+      const t = new fab.Textbox("Texto aqui", {
+        left: canvasWidth / 2,
+        top: canvasHeight / 2,
+        originX: "center",
+        originY: "center",
+        width: 300,
+        fontSize: selFontSize,
+        fontFamily: selFontFamily,
+        textAlign: selTextAlign,
+        fill: "#000000",
+        strokeUniform: true,
+        splitByGrapheme: false,
+      });
+      fc.current.add(t);
+      fc.current.setActiveObject(t);
+      syncSel(t);
+      fc.current.requestRenderAll();
+      t.enterEditing();
+    });
+  };
+
+  const addRect  = (r=0) => add(fab => new fab.Rect({ left:canvasWidth/2-75, top:canvasHeight/2-50, width:150, height:100, fill:"#3b82f6", rx:r, ry:r, strokeUniform:true }));
+  const addCirc  = () => add(fab => new fab.Circle({ left:canvasWidth/2-60, top:canvasHeight/2-60, radius:60, fill:"#3b82f6", strokeUniform:true }));
+  const addTri   = () => add(fab => new fab.Triangle({ left:canvasWidth/2-60, top:canvasHeight/2-60, width:120, height:120, fill:"#3b82f6", strokeUniform:true }));
+  const addLine  = () => add(fab => new fab.Line([canvasWidth/2-80, canvasHeight/2, canvasWidth/2+80, canvasHeight/2], { stroke:"#000000", strokeWidth:3, strokeUniform:true }));
+  const addStar  = () => {
+    const points: { x: number; y: number }[] = [];
+    for (let i=0;i<10;i++) { const r = i%2===0?60:24; const a = (Math.PI/5)*i - Math.PI/2; points.push({ x: r*Math.cos(a), y: r*Math.sin(a) }); }
+    add(fab => new fab.Polygon(points, { left:canvasWidth/2, top:canvasHeight/2, originX:"center", originY:"center", fill:"#eab308", strokeUniform:true }));
+  };
+  const addArrow = () => {
+    const points: { x: number; y: number }[] = [{ x:0,y:20 },{ x:80,y:20 },{ x:80,y:0 },{ x:120,y:35 },{ x:80,y:70 },{ x:80,y:50 },{ x:0,y:50 }];
+    add(fab => new fab.Polygon(points, { left:canvasWidth/2-60, top:canvasHeight/2-35, fill:"#3b82f6", strokeUniform:true }));
+  };
+
+  const handleImg = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !fc.current) return;
+    const r = new FileReader();
+    r.onload = ev => (window as any).fabric.Image.fromURL(ev.target?.result as string, (img: any) => {
+      if (img.width > canvasWidth * 0.8) img.scaleToWidth(canvasWidth * 0.8);
+      const scaledW = img.getScaledWidth();
+      const scaledH = img.getScaledHeight();
+      img.set({
+        left: (canvasWidth - scaledW) / 2,
+        top: (canvasHeight - scaledH) / 2,
+        originX: "left",
+        originY: "top",
+      });
+      fc.current.add(img); fc.current.setActiveObject(img); syncSel(img);
+    });
+    r.readAsDataURL(file); e.target.value = "";
+  };
+
+  const finalizePen = (close: boolean) => {
+    if (!fc.current) return;
+    const canvas = fc.current;
+    const fabric = (window as any).fabric;
+    const pts = penPoints.current;
+    const handles = penCurveHandles.current;
+    if (pts.length < 2) { cancelPen(); return; }
+
+    let d = `M ${pts[0].x} ${pts[0].y}`;
+    for (let i = 1; i < pts.length; i++) {
+      const prev = pts[i - 1];
+      const curr = pts[i];
+      const h1 = handles[i - 1]?.[1] || prev;
+      const h2 = handles[i]?.[0]    || curr;
+      d += ` C ${h1.x} ${h1.y} ${h2.x} ${h2.y} ${curr.x} ${curr.y}`;
+    }
+    if (close && pts.length > 2) {
+      const h1 = handles[pts.length - 1]?.[1] || pts[pts.length - 1];
+      const h2 = handles[0]?.[0] || pts[0];
+      d += ` C ${h1.x} ${h1.y} ${h2.x} ${h2.y} ${pts[0].x} ${pts[0].y} Z`;
+    }
+
+    const path = new fabric.Path(d, {
+      fill: close ? (selFill !== "transparent" ? selFill : "#4f46e5") : "transparent",
+      stroke: "#000000",
+      strokeWidth: 2,
+      strokeUniform: true,
+    });
+
+    penLines.current.forEach(l => canvas.remove(l));
+    penDots.current.forEach(d => canvas.remove(d));
+    if (activeHandleLine.current) {
+      canvas.remove(activeHandleLine.current);
+      activeHandleLine.current = null;
+    }
+    penLines.current = [];
+    penDots.current = [];
+
+    canvas.add(path);
+    canvas.setActiveObject(path);
+    syncSel(path);
+    lastFinalizedPath.current = path;
+
+    activeToolRef.current = "select";
+    setActiveTool("select");
+    canvas.defaultCursor = "default";
+    canvas.hoverCursor = "move";
+    canvas.selection = true;
+    canvas.requestRenderAll();
+  };
+
+  const cancelPen = () => {
+    if (!fc.current) return;
+    penLines.current.forEach(l => fc.current.remove(l));
+    penDots.current.forEach(d => fc.current.remove(d));
+    if (activeHandleLine.current) {
+      fc.current.remove(activeHandleLine.current);
+      activeHandleLine.current = null;
+    }
+    penPoints.current = [];
+    penLines.current = [];
+    penDots.current = [];
+    penCurveHandles.current = [];
+    activeHandleLine.current = null;
+    lastFinalizedPath.current = null;
+    fc.current.requestRenderAll();
+  };
+
+  const startPen = () => {
+    if (isEditingNodes) exitEditNodes();
+    lastFinalizedPath.current = null;
+    setActiveTool("pen"); activeToolRef.current = "pen";
+    if (fc.current) {
+      fc.current.defaultCursor = "crosshair";
+      fc.current.hoverCursor = "crosshair";
+      fc.current.selection = false;
+      fc.current.discardActiveObject();
+      fc.current.requestRenderAll();
+    }
+  };
+
+  const stopPen = () => {
+    setActiveTool("select"); activeToolRef.current = "select";
+    cancelPen();
+    if (fc.current) {
+      fc.current.defaultCursor = "default";
+      fc.current.hoverCursor = "move";
+      fc.current.selection = true;
+      fc.current.isDrawingMode = false;
+    }
+  };
+
+  const createMask = () => {
+    if (!fc.current) return;
+    const canvas = fc.current;
+    const active = canvas.getActiveObject();
+    if (!active || active.type !== "activeSelection") return;
+    const objects = (active as any).getObjects();
+    const image = objects.find((o: any) => o.type === "image");
+    const shape = objects.find((o: any) => o.type !== "image");
+    if (!image || !shape) { alert("Selecione uma imagem e uma forma juntas."); return; }
+
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+
+    const imgCenter = image.getCenterPoint();
+    const shapeCenter = shape.getCenterPoint();
+
+    shape.clone((clippedShape: any) => {
+      const imgScaleX = image.scaleX || 1;
+      const imgScaleY = image.scaleY || 1;
+
+      clippedShape.set({
+        left: (shapeCenter.x - imgCenter.x) / imgScaleX,
+        top: (shapeCenter.y - imgCenter.y) / imgScaleY,
+        originX: "center",
+        originY: "center",
+        scaleX: (shape.scaleX || 1) / imgScaleX,
+        scaleY: (shape.scaleY || 1) / imgScaleY,
+        angle: (shape.angle || 0) - (image.angle || 0),
+        absolutePositioned: false,
+      });
+
+      image.__originalShape = shape;
+      image.clipPath = clippedShape;
+      image.setCoords();
+
+      canvas.remove(shape);
+      canvas.setActiveObject(image);
+      syncSel(image);
+      refreshLayers(canvas);
+      canvas.requestRenderAll();
+    });
+  };
+
+  const removeMask = () => {
+    if (!fc.current || !sel || !sel.clipPath) return;
+    const canvas = fc.current;
+    const image = sel;
+    const clip = image.clipPath;
+
+    if (image.__originalShape) {
+      const orig = image.__originalShape;
+      const imgCenter = image.getCenterPoint();
+      const imgScaleX = image.scaleX || 1;
+      const imgScaleY = image.scaleY || 1;
+
+      orig.set({
+        left: imgCenter.x + (clip.left || 0) * imgScaleX,
+        top: imgCenter.y + (clip.top || 0) * imgScaleY,
+        originX: "center",
+        originY: "center",
+        scaleX: (clip.scaleX || 1) * imgScaleX,
+        scaleY: (clip.scaleY || 1) * imgScaleY,
+        angle: (clip.angle || 0) + (image.angle || 0),
+      });
+      orig.setCoords();
+      canvas.add(orig);
+      delete image.__originalShape;
+    }
+
+    image.clipPath = null;
+    image.setCoords();
+    syncSel(image);
+    refreshLayers(canvas);
+    canvas.requestRenderAll();
+  };
+
+  const exportDataUrl = () => {
+    const canvas = fc.current;
+    const dataUrl = canvas.toDataURL({ format:"png", multiplier:1 });
+    return dataUrl;
+  };
+
+  const handleDownload = () => {
+    if (!fc.current) return;
+    const a = document.createElement("a"); a.href = exportDataUrl(); a.download = artName+".png"; a.click();
+  };
+
+  const handleSave = async () => {
+    if (!fc.current || !site) return; setSaving(true);
+    try {
+      const dataUrl = exportDataUrl();
+      const path = `canvas/${site.widgetId}/${Date.now()}.png`;
+      const sRef = ref(storage, path);
+      await uploadString(sRef, dataUrl, "data_url");
+      const url = await getDownloadURL(sRef);
+      await addDoc(collection(db, "canvas_arts"), { widgetId:site.widgetId, name:artName, format:fmt.label, url, storagePath:path, createdAt:Date.now() });
+      setSaved(true); setTimeout(() => setSaved(false), 2500);
+    } finally { setSaving(false); }
+  };
+
+  // ── Inicialização de eventos e Canvas Fabric ──────────
   useEffect(() => {
     if (!fabricLoaded || !canvasRef.current) return;
 
@@ -1566,7 +1822,7 @@ function EditorInner() {
         if (pts.length > 1) {
           const first = pts[0];
           const dist = Math.hypot(p.x - first.x, p.y - first.y);
-          if (dist < 14) { finalizePenRef.current(true); return; }
+          if (dist < 14) { finalizePen(true); return; }
         }
 
         isPenDragging.current = true;
@@ -1690,7 +1946,7 @@ function EditorInner() {
               obj.clone((c: any) => { c.set({ left: obj.left+20, top: obj.top+20 }); canvas.add(c); canvas.setActiveObject(c); canvas.requestRenderAll(); }); break;
             case "z": e.preventDefault();
               if (lastFinalizedPath.current || (activeToolRef.current === "pen" && penPoints.current.length > 0)) {
-                undoLastPenPointRef.current();
+                undoLastPenPoint();
                 return;
               }
               if (e.shiftKey) { const n = historyRef.current.redo.pop(); if (!n) return; historyRef.current.undo.push(JSON.stringify(canvas.toJSON())); restoreState(n); }
@@ -1714,7 +1970,7 @@ function EditorInner() {
           if (isEditingNodesRef.current) {
             exitEditNodes();
           } else if (activeToolRef.current === "pen") {
-            cancelPenRef.current(); activeToolRef.current = "select"; setActiveTool("select");
+            cancelPen(); activeToolRef.current = "select"; setActiveTool("select");
             if (fc.current) { fc.current.defaultCursor="default"; fc.current.hoverCursor="move"; fc.current.selection=true; }
           } else {
             canvas.discardActiveObject(); canvas.requestRenderAll();
@@ -1724,7 +1980,7 @@ function EditorInner() {
           if (isEditingNodesRef.current) {
             exitEditNodes();
           } else if (activeToolRef.current === "pen") {
-            finalizePenRef.current(true);
+            finalizePen(true);
           }
         }
       };
@@ -1739,6 +1995,19 @@ function EditorInner() {
       }
     }
   }, [fabricLoaded, canvasWidth, canvasHeight]);
+
+  useEffect(() => {
+    if (!fc.current) return;
+    if (bgGradient) {
+      const fab = (window as any).fabric;
+      if (!fab) return;
+      const rad = (bgGradient.angle * Math.PI) / 180;
+      const grad = new fab.Gradient({ type: "linear", coords: { x1: (Math.cos(rad+Math.PI)+1)/2*canvasWidth, y1: (Math.sin(rad+Math.PI)+1)/2*canvasHeight, x2: (Math.cos(rad)+1)/2*canvasWidth, y2: (Math.sin(rad)+1)/2*canvasHeight }, colorStops: [{ offset:0, color: bgGradient.c1 },{ offset:1, color: bgGradient.c2 }] });
+      fc.current.setBackgroundColor(grad, () => fc.current?.renderAll());
+    } else {
+      fc.current.setBackgroundColor(bgSolid, () => fc.current?.renderAll());
+    }
+  }, [bgSolid, bgGradient, canvasWidth, canvasHeight]);
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col overflow-hidden" style={{ fontFamily: "system-ui, sans-serif" }}>
@@ -1868,13 +2137,13 @@ function EditorInner() {
           </button>
 
           {/* Circle */}
-          <button onClick={() => addCirc} title="Círculo"
+          <button onClick={addCirc} title="Círculo"
             className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:bg-gray-100 transition">
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="7" stroke="currentColor" strokeWidth="1.5"/></svg>
           </button>
 
           {/* Triangle */}
-          <button onClick={() => addTri} title="Triângulo"
+          <button onClick={addTri} title="Triângulo"
             className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:bg-gray-100 transition">
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 2l8 14H1L9 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>
           </button>
@@ -1924,7 +2193,7 @@ function EditorInner() {
           )}
         </div>
 
-        {/* ── CANVAS VIEWPORT (Zoom via CSS Transform) ────── */}
+        {/* ── CANVAS VIEWPORT ───────────────────────────── */}
         <div ref={canvasContainerRef} className="flex-1 overflow-auto flex items-center justify-center p-8 bg-gray-100">
           <div
             style={{
