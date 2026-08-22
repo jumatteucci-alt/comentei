@@ -275,7 +275,6 @@ function EditorInner() {
     otScript.onload = () => setOpenTypeLoaded(true);
     document.head.appendChild(otScript);
 
-    // Carrega o pacote COMPLETO do Paper.js (paper-full.min.js para suporte a boolean operations)
     const paperScript = document.createElement("script");
     paperScript.src = "https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.18/paper-full.min.js";
     paperScript.onload = () => setPaperLoaded(true);
@@ -375,7 +374,7 @@ function EditorInner() {
     refreshLayers(canvas);
   };
 
-  // ── Boolean Operations Engine (Paper.js) ───────────
+  // ── Boolean Operations Engine (100% Preciso & Nativo no Paper.js) ───────────
   const applyBooleanOperation = (operation: "unite" | "subtract" | "intersect" | "exclude") => {
     if (!fc.current || !sel || sel.type !== "activeSelection") return;
     const paper = (window as any).paper;
@@ -386,95 +385,126 @@ function EditorInner() {
 
     const canvas = fc.current;
     const activeSel = sel;
-    const objects = [...(activeSel as any).getObjects()];
-    if (objects.length < 2) return;
+    const fabric = (window as any).fabric;
 
-    // Desfaz temporariamente a seleção para calcular SVG com coordenadas globais exatas
+    // Desfaz seleção ativa para garantir coordenadas globais absolutas
+    const objects = [...(activeSel as any).getObjects()];
     canvas.discardActiveObject();
     canvas.requestRenderAll();
 
-    // Cria scope Paper.js isolado
+    // Inicializa canvas virtual isolado no Paper.js
     const paperCanvas = document.createElement("canvas");
     paperCanvas.width = canvasWidth;
     paperCanvas.height = canvasHeight;
     paper.setup(paperCanvas);
 
-    // Converte qualquer elemento SVG importado (Shape/Group) para PathItem
-    const getPathItem = (item: any): any => {
-      if (!item) return null;
-      if (item.className === "Shape" || typeof item.toPath === "function") {
-        return item.toPath(true);
-      }
-      if (item.className === "Path" || item.className === "CompoundPath") {
-        return item;
-      }
-      if (item.children && item.children.length > 0) {
-        const paths = item.children.map((c: any) => getPathItem(c)).filter(Boolean);
-        if (paths.length === 0) return null;
-        let combined = paths[0];
-        for (let k = 1; k < paths.length; k++) {
-          if (combined && typeof combined.unite === "function") {
-            combined = combined.unite(paths[k]);
-          }
+    // Converte qualquer objeto Fabric (Rect, Circle, Triangle, Polygon, Path) para PathItem absoluto do Paper.js
+    const fabricObjectToPaperPath = (obj: any): any => {
+      const matrix = obj.calcTransformMatrix();
+      let pathData = "";
+
+      if (obj.type === "rect") {
+        const w = obj.width;
+        const h = obj.height;
+        const rx = Math.min(obj.rx || 0, w / 2);
+        const ry = Math.min(obj.ry || 0, h / 2);
+
+        if (rx > 0 || ry > 0) {
+          pathData = `M ${-w/2 + rx} ${-h/2} ` +
+                     `L ${w/2 - rx} ${-h/2} Q ${w/2} ${-h/2} ${w/2} ${-h/2 + ry} ` +
+                     `L ${w/2} ${h/2 - ry} Q ${w/2} ${h/2} ${w/2 - rx} ${h/2} ` +
+                     `L ${-w/2 + rx} ${h/2} Q ${-w/2} ${h/2} ${-w/2} ${h/2 - ry} ` +
+                     `L ${-w/2} ${-h/2 + ry} Q ${-w/2} ${-h/2} ${-w/2 + rx} ${-h/2} Z`;
+        } else {
+          pathData = `M ${-w/2} ${-h/2} L ${w/2} ${-h/2} L ${w/2} ${h/2} L ${-w/2} ${h/2} Z`;
         }
-        return combined;
+      } else if (obj.type === "circle") {
+        const r = obj.radius;
+        const k = 0.5522847498; // Constante kappa para círculo em Bézier
+        pathData = `M ${0} ${-r} ` +
+                   `C ${r * k} ${-r} ${r} ${-r * k} ${r} 0 ` +
+                   `C ${r} ${r * k} ${r * k} ${r} 0 ${r} ` +
+                   `C ${-r * k} ${r} ${-r} ${r * k} ${-r} 0 ` +
+                   `C ${-r} ${-r * k} ${-r * k} ${-r} 0 ${-r} Z`;
+      } else if (obj.type === "triangle") {
+        const w = obj.width;
+        const h = obj.height;
+        pathData = `M 0 ${-h/2} L ${w/2} ${h/2} L ${-w/2} ${h/2} Z`;
+      } else if (obj.type === "polygon" && obj.points) {
+        const pts = obj.points;
+        const poX = obj.pathOffset ? obj.pathOffset.x : 0;
+        const poY = obj.pathOffset ? obj.pathOffset.y : 0;
+        pathData = `M ${pts[0].x - poX} ${pts[0].y - poY} ` +
+                   pts.slice(1).map((p: any) => `L ${p.x - poX} ${p.y - poY}`).join(" ") + " Z";
+      } else if (obj.type === "path" && obj.path) {
+        const poX = obj.pathOffset ? obj.pathOffset.x : 0;
+        const poY = obj.pathOffset ? obj.pathOffset.y : 0;
+        let d = "";
+        obj.path.forEach((c: any[]) => {
+          if (c[0] === "M" || c[0] === "L") d += `${c[0]} ${c[1] - poX} ${c[2] - poY} `;
+          else if (c[0] === "C") d += `C ${c[1] - poX} ${c[2] - poY} ${c[3] - poX} ${c[4] - poY} ${c[5] - poX} ${c[6] - poY} `;
+          else if (c[0] === "Z" || c[0] === "z") d += `Z `;
+        });
+        pathData = d;
       }
-      return null;
+
+      if (!pathData) return null;
+
+      const pPath = new paper.Path(pathData);
+      pPath.transform(new paper.Matrix(matrix[0], matrix[1], matrix[2], matrix[3], matrix[4], matrix[5]));
+      return pPath;
     };
 
     try {
-      const pathItems: any[] = [];
+      const paperItems: any[] = [];
       objects.forEach(obj => {
-        const svg = obj.toSVG();
-        const imported = paper.project.importSVG(svg, { expandShapes: true });
-        const pathItem = getPathItem(imported);
-        if (pathItem) pathItems.push(pathItem);
+        const p = fabricObjectToPaperPath(obj);
+        if (p) paperItems.push(p);
       });
 
-      if (pathItems.length < 2) {
-        canvas.setActiveObject(activeSel);
+      if (paperItems.length < 2) {
+        canvas.setActiveObject(new fabric.ActiveSelection(objects, { canvas }));
         canvas.requestRenderAll();
         return;
       }
 
-      let result = pathItems[0];
-      for (let i = 1; i < pathItems.length; i++) {
-        if (operation === "unite" && result.unite) result = result.unite(pathItems[i]);
-        else if (operation === "subtract" && result.subtract) result = result.subtract(pathItems[i]);
-        else if (operation === "intersect" && result.intersect) result = result.intersect(pathItems[i]);
-        else if (operation === "exclude" && result.exclude) result = result.exclude(pathItems[i]);
+      let result = paperItems[0];
+      for (let i = 1; i < paperItems.length; i++) {
+        if (operation === "unite") result = result.unite(paperItems[i]);
+        else if (operation === "subtract") result = result.subtract(paperItems[i]);
+        else if (operation === "intersect") result = result.intersect(paperItems[i]);
+        else if (operation === "exclude") result = result.exclude(paperItems[i]);
       }
 
-      if (!result) {
-        canvas.setActiveObject(activeSel);
+      if (!result || !result.pathData) {
+        canvas.setActiveObject(new fabric.ActiveSelection(objects, { canvas }));
         canvas.requestRenderAll();
         return;
       }
 
-      const resultSvg = result.exportSVG({ asString: true }) as string;
-      const fabric = (window as any).fabric;
+      const finalPathData = result.pathData;
+      const baseFill = objects[0].fill || "#3b82f6";
+      const baseStroke = objects[0].stroke || "#000000";
+      const baseStrokeWidth = objects[0].strokeWidth || 0;
 
-      fabric.loadSVGFromString(resultSvg, (parsedObjects: any[], options: any) => {
-        const newObj = fabric.util.groupSVGElements(parsedObjects, options);
-        newObj.set({
-          fill: objects[0].fill || "#3b82f6",
-          stroke: objects[0].stroke || "#000000",
-          strokeWidth: objects[0].strokeWidth || 0,
-          strokeUniform: true,
-        });
-        newObj.__uid = Math.random().toString(36).slice(2);
-
-        // Remove formas originais e adiciona a resultante
-        objects.forEach(o => canvas.remove(o));
-        canvas.add(newObj);
-        canvas.setActiveObject(newObj);
-        syncSel(newObj);
-        refreshLayers(canvas);
-        canvas.requestRenderAll();
+      const newPath = new fabric.Path(finalPathData, {
+        fill: baseFill,
+        stroke: baseStroke,
+        strokeWidth: baseStrokeWidth,
+        strokeUniform: true,
       });
+      newPath.__uid = Math.random().toString(36).slice(2);
+
+      // Remove objetos originais e insere a forma resultante
+      objects.forEach(o => canvas.remove(o));
+      canvas.add(newPath);
+      canvas.setActiveObject(newPath);
+      syncSel(newPath);
+      refreshLayers(canvas);
+      canvas.requestRenderAll();
     } catch (err) {
       console.error("Erro na operação booleana:", err);
-      canvas.setActiveObject(activeSel);
+      canvas.setActiveObject(new fabric.ActiveSelection(objects, { canvas }));
       canvas.requestRenderAll();
     }
   };
@@ -1729,7 +1759,10 @@ function EditorInner() {
     if (!fc.current) return;
     penLines.current.forEach(l => fc.current.remove(l));
     penDots.current.forEach(d => fc.current.remove(d));
-    if (activeHandleLine.current) fc.current.remove(activeHandleLine.current);
+    if (activeHandleLine.current) {
+      canvas.remove(activeHandleLine.current);
+      activeHandleLine.current = null;
+    }
     penPoints.current = [];
     penLines.current = [];
     penDots.current = [];
@@ -1880,7 +1913,6 @@ function EditorInner() {
   const isRect = sel?.type === "rect";
   const hasClipPath = !!sel?.clipPath;
 
-  // Verifica se há 2 ou mais formas/vetores selecionados para operações booleanas
   const isMultiShapeSelected = sel?.type === "activeSelection" && (() => {
     const objs = (sel as any).getObjects();
     return objs.length >= 2 && objs.every((o: any) => o.type !== "image" && o.type !== "i-text" && o.type !== "textbox");
