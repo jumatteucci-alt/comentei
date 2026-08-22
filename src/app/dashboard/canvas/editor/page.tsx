@@ -788,6 +788,7 @@ function EditorInner() {
   };
 
   const enterEditNodes = (pathObj: any) => {
+    console.log("enterEditNodes — type:", pathObj?.type, "toSVG:", pathObj?.toSVG?.()?.slice(0, 100));
     if (!fc.current || !pathObj) return;
     const canvas = fc.current;
     const fabric = (window as any).fabric;
