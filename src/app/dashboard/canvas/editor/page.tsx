@@ -1513,11 +1513,10 @@ function EditorInner() {
 
   const cancelPen = () => {
     if (!fc.current) return;
-    const canvas = fc.current;
-    penLines.current.forEach(l => canvas.remove(l));
-    penDots.current.forEach(d => canvas.remove(d));
+    penLines.current.forEach(l => fc.current.remove(l));
+    penDots.current.forEach(d => fc.current.remove(d));
     if (activeHandleLine.current) {
-      canvas.remove(activeHandleLine.current);
+      fc.current.remove(activeHandleLine.current);
       activeHandleLine.current = null;
     }
     penPoints.current = [];
@@ -1526,7 +1525,7 @@ function EditorInner() {
     penCurveHandles.current = [];
     activeHandleLine.current = null;
     lastFinalizedPath.current = null;
-    canvas.requestRenderAll();
+    fc.current.requestRenderAll();
   };
 
   const startPen = () => {
@@ -1651,6 +1650,148 @@ function EditorInner() {
       await addDoc(collection(db, "canvas_arts"), { widgetId:site.widgetId, name:artName, format:fmt.label, url, storagePath:path, createdAt:Date.now() });
       setSaved(true); setTimeout(() => setSaved(false), 2500);
     } finally { setSaving(false); }
+  };
+
+  const convertTextToPath = async () => {
+    if (!fc.current || !sel || !isText) return;
+    const opentype = (window as any).opentype;
+    if (!opentype) { alert("opentype.js ainda carregando, tente novamente."); return; }
+    setConverting(true);
+    try {
+      const fabric = (window as any).fabric;
+      const fontFamily = sel.fontFamily || "Arial";
+      const fontSize   = sel.fontSize   || 48;
+      const fillColor  = typeof sel.fill === "string" ? sel.fill : "#000000";
+      const text       = sel.text || "";
+      const objLeft    = sel.left;
+      const objTop     = sel.top;
+      const uid        = sel.__uid;
+
+      const FONT_URLS: Record<string, string> = {
+        "Montserrat":       "https://fonts.gstatic.com/s/montserrat/v29/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCtr6Hw5aXo.woff",
+        "Playfair Display": "https://fonts.gstatic.com/s/playfairdisplay/v36/nuFiD-vYSZviVYUb_rj3ij__anPXDTnCjmHKM4nYO7KN_qiTbtA.woff",
+        "Roboto":           "https://fonts.gstatic.com/s/roboto/v32/KFOmCnqEu92Fr1Mu4mxKKTU1Kg.woff",
+        "Oswald":           "https://fonts.gstatic.com/s/oswald/v53/TK3_WkUHHAIjg75cFRf3bXL8LICs13NvgUFoZAaRliE.woff",
+        "Lato":             "https://fonts.gstatic.com/s/lato/v24/S6uyw4BMUTPHjx4wXiWtFCc.woff",
+        "Raleway":          "https://fonts.gstatic.com/s/raleway/v34/1Ptxg8zYS_SKggPN4iEgvnHyvveLxVsEpYCP.woff",
+        "Pacifico":         "https://fonts.gstatic.com/s/pacifico/v22/FwZY7-Qmy14u9lezJ96A4sijpFu_.woff",
+        "Dancing Script":   "https://fonts.gstatic.com/s/dancingscript/v25/If2cXTr6YS-zF4S-kcSWSVi_sxjsohD9F50Ruu7BMSo3ROp6.woff",
+        "Bebas Neue":       "https://fonts.gstatic.com/s/bebasneue/v14/JTUSjIg69CK48gW7PXoo9WlhyyTh89Y.woff",
+      };
+
+      const loadFont = async (family: string): Promise<any> => {
+        const url = FONT_URLS[family];
+        if (url) {
+          try { return await opentype.load(url); } catch {}
+        }
+        return null;
+      };
+
+      const font = await loadFont(fontFamily);
+
+      if (!font) {
+        const svgData = sel.toSVG();
+        const path = new fabric.Path(svgData, {
+          left: objLeft, top: objTop,
+          fill: fillColor, strokeUniform: true,
+        });
+        path.__uid = uid;
+        fc.current.remove(sel);
+        fc.current.add(path);
+        fc.current.setActiveObject(path);
+        syncSel(path);
+        fc.current.requestRenderAll();
+        return;
+      }
+
+      const svgPath = font.getPath(text, 0, 0, fontSize);
+      const pathData = svgPath.toPathData(2);
+
+      const path = new fabric.Path(pathData, {
+        left: objLeft,
+        top:  objTop,
+        fill: fillColor,
+        strokeUniform: true,
+        scaleX: sel.scaleX || 1,
+        scaleY: sel.scaleY || 1,
+      });
+      path.__uid = uid;
+      fc.current.remove(sel);
+      fc.current.add(path);
+      fc.current.setActiveObject(path);
+      syncSel(path);
+      fc.current.requestRenderAll();
+    } finally {
+      setConverting(false);
+    }
+  };
+
+  const removeBackgroundLocal = () => {
+    if (!fc.current || !sel || sel.type !== "image") return;
+    if (!rmbgWorker.current) {
+      alert("Worker não disponível. Tente recarregar a página.");
+      return;
+    }
+    setRemovingBg(true);
+    setRmbgProgress("Preparando imagem...");
+    const fabric = (window as any).fabric;
+
+    const origW = Math.round(sel.width  * (sel.scaleX || 1));
+    const origH = Math.round(sel.height * (sel.scaleY || 1));
+    const MAX = 1024;
+    const ratio = Math.min(MAX / origW, MAX / origH, 1);
+    const pw = Math.round(origW * ratio);
+    const ph = Math.round(origH * ratio);
+
+    const tmpCanvas = document.createElement("canvas");
+    tmpCanvas.width = pw; tmpCanvas.height = ph;
+    const ctx = tmpCanvas.getContext("2d")!;
+    const imgEl = (sel as any)._element as HTMLImageElement;
+    ctx.drawImage(imgEl, 0, 0, pw, ph);
+    const pixelData = ctx.getImageData(0, 0, pw, ph);
+
+    const left = sel.left;
+    const top  = sel.top;
+    const angle = sel.angle || 0;
+    const uid  = sel.__uid;
+    const scaleX = sel.scaleX || 1;
+
+    const worker = rmbgWorker.current;
+
+    const handler = (e: MessageEvent) => {
+      const { type, message, imageData, width, height } = e.data;
+      if (type === "progress") { setRmbgProgress(message); return; }
+      if (type === "error") {
+        setRemovingBg(false); setRmbgProgress("");
+        alert("Erro: " + message);
+        worker.removeEventListener("message", handler);
+        return;
+      }
+      if (type === "result") {
+        worker.removeEventListener("message", handler);
+        const outCanvas = document.createElement("canvas");
+        outCanvas.width = width; outCanvas.height = height;
+        const outCtx = outCanvas.getContext("2d")!;
+        const outImgData = new ImageData(new Uint8ClampedArray(imageData), width, height);
+        outCtx.putImageData(outImgData, 0, 0);
+        const dataURL = outCanvas.toDataURL("image/png");
+        fc.current.remove(sel);
+        fabric.Image.fromURL(dataURL, (img: any) => {
+          const scaleToW = (origW / img.width) * (scaleX);
+          img.set({ left, top, angle, scaleX: scaleToW, scaleY: scaleToW, strokeUniform: true });
+          img.__uid = uid;
+          fc.current.add(img);
+          fc.current.setActiveObject(img);
+          syncSel(img);
+          fc.current.requestRenderAll();
+          setRemovingBg(false);
+          setRmbgProgress("");
+        });
+      }
+    };
+
+    worker.addEventListener("message", handler);
+    worker.postMessage({ type: "removebg", imageData: pixelData.data.buffer, width: pw, height: ph }, [pixelData.data.buffer]);
   };
 
   return (
@@ -2145,7 +2286,7 @@ function EditorInner() {
                       <ColorPicker value={selShadowColor} onChange={c => { setSelShadowColor(c); applyShadow(c, selShadowBlur, selShadowX, selShadowY); }} label="Cor" allowTransparent={false} />
                       <SliderRow label="Blur" value={selShadowBlur} min={0} max={60} onChange={v => { setSelShadowBlur(v); applyShadow(selShadowColor, v, selShadowX, selShadowY); }} />
                       <SliderRow label="X" value={selShadowX} min={-50} max={50} onChange={v => { setSelShadowX(v); applyShadow(selShadowColor, selShadowBlur, v, selShadowY); }} />
-                      <SliderRow label="Y" value={selShadowY} min={-50} max={50} onChange={v => { setSelShadowY(v); applyShadow(selShadowColor, selShadowBlur, v, selShadowY); }} />
+                      <SliderRow label="Y" value={selShadowY} min={-50} max={50} onChange={v => { setSelShadowY(v); applyShadow(selShadowColor, selShadowBlur, selShadowX, v); }} />
                     </div>
                   )}
                 </>
