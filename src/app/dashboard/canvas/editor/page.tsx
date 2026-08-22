@@ -1058,9 +1058,18 @@ function EditorInner() {
       canvas.on("object:removed",  () => { if (!savingHistory.current) refreshLayers(canvas); });
 
       canvas.on("mouse:dblclick", (e: any) => {
-        if (isEditingNodesRef.current) return;
-        if (e.target && e.target.type === "path" && !e.target.isControlHelper) {
-          enterEditNodes(e.target);
+        if (isEditingNodesRef.current) {
+          // Duplo clique fora dos helpers sai do modo de edição
+          if (!e.target || !e.target.isControlHelper) {
+            exitEditNodes();
+          }
+          return;
+        }
+        if (e.target && !e.target.isControlHelper) {
+          const editableTypes = ["path","rect","circle","triangle","polygon"];
+          if (editableTypes.includes(e.target.type)) {
+            enterEditNodes(e.target);
+          }
         }
       });
 
