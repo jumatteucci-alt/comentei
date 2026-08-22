@@ -1285,18 +1285,13 @@ function EditorInner() {
       return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
     } else {
       const canvas = fc.current;
-      // Salva estado dos objetos antes de mudar zoom
-      const json = canvas.toJSON();
+      console.log("zoom change — objects before:", canvas.getObjects().length, "zoom:", z);
       canvas.setWidth(currentW);
       canvas.setHeight(currentH);
       canvas.setZoom(z);
       canvas.calcOffset();
-      // Recarrega objetos para garantir que não somem
-      savingHistory.current = true;
-      canvas.loadFromJSON(json, () => {
-        savingHistory.current = false;
-        canvas.renderAll();
-      });
+      canvas.requestRenderAll();
+      setTimeout(() => console.log("objects after 100ms:", canvas.getObjects().length), 100);
     }
   }, [fabricLoaded, canvasWidth, canvasHeight, zoom]);
 
