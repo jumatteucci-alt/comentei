@@ -788,28 +788,55 @@ function EditorInner() {
   };
 
   const enterEditNodes = (pathObj: any) => {
-    if (!fc.current || !pathObj || pathObj.type !== "path") return;
+    if (!fc.current || !pathObj) return;
     const canvas = fc.current;
     const fabric = (window as any).fabric;
+
+    // Se não é path, converte para path primeiro
+    if (pathObj.type !== "path") {
+      const svgString = pathObj.toSVG();
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(svgString, "image/svg+xml");
+      const pathEl = doc.querySelector("path");
+      if (!pathEl) return;
+      const d = pathEl.getAttribute("d");
+      if (!d) return;
+      const newPath = new fabric.Path(d, {
+        left: pathObj.left,
+        top: pathObj.top,
+        scaleX: pathObj.scaleX || 1,
+        scaleY: pathObj.scaleY || 1,
+        angle: pathObj.angle || 0,
+        fill: pathObj.fill,
+        stroke: pathObj.stroke,
+        strokeWidth: pathObj.strokeWidth,
+        strokeUniform: true,
+        originX: pathObj.originX || "left",
+        originY: pathObj.originY || "top",
+      });
+      newPath.__uid = pathObj.__uid;
+      canvas.remove(pathObj);
+      canvas.add(newPath);
+      canvas.requestRenderAll();
+      // Chama de novo com o path convertido
+      enterEditNodes(newPath);
+      return;
+    }
+
     setIsEditingNodes(true);
     isEditingNodesRef.current = true;
-
     canvas.discardActiveObject();
     pathObj.opacity = 0.3;
     pathObj.selectable = false;
     pathObj.evented = false;
-
     canvas.defaultCursor = "default";
     canvas.hoverCursor = "move";
     canvas.selection = false;
-
     const matrix = pathObj.calcTransformMatrix();
     const parsedPath = pathObj.path;
     const commands: any[] = [];
-
     const poX = pathObj.pathOffset ? pathObj.pathOffset.x : 0;
     const poY = pathObj.pathOffset ? pathObj.pathOffset.y : 0;
-
     parsedPath.forEach((cmd: any[]) => {
       const type = cmd[0];
       if (type === "M" || type === "L") {
@@ -824,7 +851,6 @@ function EditorInner() {
         commands.push({ type: "Z" });
       }
     });
-
     editingData.current = {
       originalPathObj: pathObj,
       commands,
@@ -832,7 +858,6 @@ function EditorInner() {
       handleLines: [],
       previewObj: null,
     };
-
     renderEditControls();
   };
 
