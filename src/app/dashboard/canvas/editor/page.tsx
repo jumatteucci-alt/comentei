@@ -256,6 +256,8 @@ function EditorInner() {
   const [gradMaskC2, setGradMaskC2] = useState("#000000");
   const [gradMaskA2, setGradMaskA2] = useState(0);
   const [gradMaskAngle, setGradMaskAngle] = useState(180);
+  const [gradMaskP1, setGradMaskP1] = useState(0);
+  const [gradMaskP2, setGradMaskP2] = useState(100);
 
   const [site, setSite] = useState<Site | null>(null);
   const [fabricLoaded, setFabricLoaded] = useState(false);
@@ -432,6 +434,8 @@ function EditorInner() {
       setGradMaskC1(m.c1); setGradMaskA1(m.a1);
       setGradMaskC2(m.c2); setGradMaskA2(m.a2);
       setGradMaskAngle(m.angle);
+      setGradMaskP1(m.p1 ?? 0);
+      setGradMaskP2(m.p2 ?? 100);
       setShowGradientMask(true);
     } else {
       setShowGradientMask(false);
@@ -480,7 +484,7 @@ function EditorInner() {
     }
 
     // Guarda parâmetros da máscara no objeto
-    sel.__gradMask = { c1: gradMaskC1, a1: gradMaskA1, c2: gradMaskC2, a2: gradMaskA2, angle: gradMaskAngle };
+    sel.__gradMask = { c1: gradMaskC1, a1: gradMaskA1, c2: gradMaskC2, a2: gradMaskA2, angle: gradMaskAngle, p1: gradMaskP1, p2: gradMaskP2 };
 
     // Renderiza a partir do original sempre
     const origImg = new Image();
@@ -504,8 +508,8 @@ function EditorInner() {
       const gCtx = gradCanvas.getContext("2d")!;
       const grad = gCtx.createLinearGradient(x1, y1, x2, y2);
       const toHex = (n: number) => Math.round(n * 255).toString(16).padStart(2, "0");
-      grad.addColorStop(0, `${gradMaskC1}${toHex(gradMaskA1)}`);
-      grad.addColorStop(1, `${gradMaskC2}${toHex(gradMaskA2)}`);
+      grad.addColorStop(gradMaskP1 / 100, `${gradMaskC1}${toHex(gradMaskA1)}`);
+      grad.addColorStop(gradMaskP2 / 100, `${gradMaskC2}${toHex(gradMaskA2)}`);
       gCtx.fillStyle = grad;
       gCtx.fillRect(0, 0, w, h);
 
@@ -2716,6 +2720,20 @@ function EditorInner() {
                           <span className="text-gray-400" style={{fontSize:9}}>{Math.round(gradMaskA2*100)}%</span>
                         </div>
                       </div>
+                      <div className="flex gap-1">
+                        <div className="flex-1">
+                          <p className="text-gray-400 mb-1" style={{fontSize:10}}>Pos. inicial</p>
+                          <input type="range" min={0} max={100} value={gradMaskP1}
+                            onChange={e => setGradMaskP1(+e.target.value)} className="w-full accent-indigo-600" />
+                          <span className="text-gray-400" style={{fontSize:9}}>{gradMaskP1}%</span>
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-gray-400 mb-1" style={{fontSize:10}}>Pos. final</p>
+                          <input type="range" min={0} max={100} value={gradMaskP2}
+                            onChange={e => setGradMaskP2(+e.target.value)} className="w-full accent-indigo-600" />
+                          <span className="text-gray-400" style={{fontSize:9}}>{gradMaskP2}%</span>
+                        </div>
+                      </div>
                       <div>
                         <p className="text-gray-400 mb-1" style={{fontSize:10}}>Ângulo: {gradMaskAngle}°</p>
                         <input type="range" min={0} max={360} value={gradMaskAngle}
@@ -2723,7 +2741,7 @@ function EditorInner() {
                       </div>
                       <div style={{
                         height: 20, borderRadius: 6,
-                        background: `linear-gradient(${gradMaskAngle - 90}deg, ${gradMaskC2}${Math.round(gradMaskA2*255).toString(16).padStart(2,"0")}, ${gradMaskC1}${Math.round(gradMaskA1*255).toString(16).padStart(2,"0")})`
+                        background: `linear-gradient(${gradMaskAngle - 90}deg, ${gradMaskC2}${Math.round(gradMaskA2*255).toString(16).padStart(2,"0")} ${100-gradMaskP2}%, ${gradMaskC1}${Math.round(gradMaskA1*255).toString(16).padStart(2,"0")} ${100-gradMaskP1}%)`
                       }} />
                       <button onClick={applyGradientMask}
                         className="w-full py-1.5 bg-purple-600 text-white rounded-lg text-xs font-medium hover:bg-purple-700 transition">
