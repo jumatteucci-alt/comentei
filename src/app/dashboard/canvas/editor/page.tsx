@@ -33,6 +33,33 @@ function loadGoogleFonts() {
   document.head.appendChild(l);
 }
 
+function hexToRgba(hex: string, alpha = 1) {
+  if (hex.startsWith("rgb")) return hex;
+  let c = hex.replace("#", "");
+  if (c.length === 3) c = c.split("").map(x => x + x).join("");
+  const num = parseInt(c, 16);
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function rgbToHex(rgb: string): string {
+  if (rgb.startsWith("#")) return rgb;
+  const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (!m) return "#000000";
+  return "#" + [m[1], m[2], m[3]].map(n => parseInt(n).toString(16).padStart(2, "0")).join("");
+}
+
+function getObjColor(obj: any): string {
+  if (!obj) return "#000000";
+  const fill = obj.fill;
+  if (!fill || fill === "transparent" || fill === "none") return "transparent";
+  if (typeof fill === "string") return rgbToHex(fill);
+  if (fill.colorStops?.length) return rgbToHex(fill.colorStops[0].color);
+  return "#000000";
+}
+
 function ColorPicker({ value, onChange, label, allowTransparent = true }: { value: string; onChange: (c: string) => void; label?: string; allowTransparent?: boolean }) {
   const isNone = value === "transparent" || value === "" || value === "none";
   return (
@@ -236,17 +263,6 @@ function GradientEditor({ value, onChange }: { value: GradConfig | null; onChang
   );
 }
 
-function hexToRgba(hex: string, alpha = 1) {
-  if (hex.startsWith("rgb")) return hex;
-  let c = hex.replace("#", "");
-  if (c.length === 3) c = c.split("").map(x => x + x).join("");
-  const num = parseInt(c, 16);
-  const r = (num >> 16) & 255;
-  const g = (num >> 8) & 255;
-  const b = num & 255;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
 function SliderRow({ label, value, min, max, step = 1, unit = "", onChange }: { label: string; value: number; min: number; max: number; step?: number; unit?: string; onChange: (v: number) => void }) {
   return (
     <div>
@@ -294,22 +310,6 @@ function applyGradient(fc: any, obj: any, g: GradConfig) {
   });
   obj.set("fill", gradient);
   fc.requestRenderAll();
-}
-
-function rgbToHex(rgb: string): string {
-  if (rgb.startsWith("#")) return rgb;
-  const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-  if (!m) return "#000000";
-  return "#" + [m[1], m[2], m[3]].map(n => parseInt(n).toString(16).padStart(2, "0")).join("");
-}
-
-function getObjColor(obj: any): string {
-  if (!obj) return "#000000";
-  const fill = obj.fill;
-  if (!fill || fill === "transparent" || fill === "none") return "transparent";
-  if (typeof fill === "string") return rgbToHex(fill);
-  if (fill.colorStops?.length) return rgbToHex(fill.colorStops[0].color);
-  return "#000000";
 }
 
 function EditorInner() {
@@ -404,6 +404,18 @@ function EditorInner() {
 
   const [bgSolid, setBgSolid] = useState("#ffffff");
   const [bgGradient, setBgGradient] = useState<{c1:string;c2:string;angle:number}|null>(null);
+
+  const isText = sel?.type === "i-text" || sel?.type === "textbox";
+  const isTextbox = sel?.type === "textbox";
+  const isPath = sel?.type === "path";
+  const isRect = sel?.type === "rect";
+  const hasClipPath = !!sel?.clipPath;
+  const isShapeType = (o: any) => o && ["rect", "circle", "triangle", "polygon"].includes(o.type);
+
+  const isMultiShapeSelected = sel?.type === "activeSelection" && (() => {
+    const objs = (sel as any).getObjects();
+    return objs.length >= 2 && objs.every((o: any) => o.type !== "image" && o.type !== "i-text" && o.type !== "textbox");
+  })();
 
   const fitCanvasToScreen = useCallback(() => {
     if (!canvasContainerRef.current) return;
@@ -544,6 +556,277 @@ function EditorInner() {
     canvas.requestRenderAll();
     syncSel(null);
     refreshLayers(canvas);
+  };
+
+  const upd = (props: Record<string, any>) => {
+    if (!fc.current || !sel) return;
+    sel.set(props);
+    if (isText && sel.fontFamily) {
+      document.fonts.load(`${sel.fontSize || 48}px "${sel.fontFamily}"`).finally(() => {
+        fc.current?.requestRenderAll();
+      });
+    } else {
+      fc.current.requestRenderAll();
+    }
+  };
+
+  const updateFill = (color: string) => {
+    setSelFill(color); setSelFillGradient(null);
+    upd({ fill: color });
+  };
+  const updateFillGradient = (g: GradConfig | null) => {
+    setSelFillGradient(g);
+    if (!g) { upd({ fill: selFill }); return; }
+    if (fc.current && sel) applyGradient(fc.current, sel, g);
+  };
+  const updateOpacity  = (v: number) => { setSelOpacity(v);  upd({ opacity: v/100 }); };
+  const updateStroke   = (c: string) => { setSelStroke(c);   upd({ stroke: c }); };
+  const updateStrokeW  = (v: number) => { setSelStrokeW(v);  upd({ strokeWidth: v, strokeUniform: true }); };
+  const updateRadius   = (v: number) => { setSelRadius(v);   upd({ rx: v, ry: v }); };
+  const updateRotation = (v: number) => { setSelRotation(v); upd({ angle: v }); };
+  const updateFontSize = (v: number) => {
+    setSelFontSize(v);
+    if (!fc.current || !sel) return;
+    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      sel.setSelectionStyles({ fontSize: v });
+      fc.current.requestRenderAll();
+    } else { upd({ fontSize: v }); }
+  };
+  const updateFontFamily = (v: string) => {
+    setSelFontFamily(v);
+    document.fonts.load(`${selFontSize}px "${v}"`).finally(() => {
+      upd({ fontFamily: v });
+    });
+  };
+  const updateTextAlign = (v: "left"|"center"|"right"|"justify") => {
+    setSelTextAlign(v);
+    upd({ textAlign: v });
+  };
+  const toggleBold = () => {
+    const n = !selBold; setSelBold(n);
+    if (!fc.current || !sel) return;
+    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      sel.setSelectionStyles({ fontWeight: n ? "bold" : "normal" });
+      fc.current.requestRenderAll();
+    } else {
+      sel.set({ fontWeight: n ? "bold" : "normal" });
+      if (sel.initDimensions) sel.initDimensions();
+      document.fonts.load(`bold ${sel.fontSize}px "${sel.fontFamily}"`).finally(() => {
+        fc.current?.requestRenderAll();
+      });
+    }
+  };
+  const toggleItalic = () => {
+    const n = !selItalic; setSelItalic(n);
+    if (!fc.current || !sel) return;
+    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      sel.setSelectionStyles({ fontStyle: n ? "italic" : "normal" });
+      fc.current.requestRenderAll();
+    } else { upd({ fontStyle: n ? "italic" : "normal" }); }
+  };
+  const toggleUnderline = () => {
+    const n = !selUnderline; setSelUnderline(n);
+    if (!fc.current || !sel) return;
+    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      sel.setSelectionStyles({ underline: n });
+      fc.current.requestRenderAll();
+    } else { upd({ underline: n }); }
+  };
+  const updateFillForText = (color: string) => {
+    if (sel?.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      setSelFill(color);
+      sel.setSelectionStyles({ fill: color });
+      fc.current?.requestRenderAll();
+    } else {
+      updateFill(color);
+    }
+  };
+  const updateCharSpacing = (v: number) => { setSelCharSpacing(v); upd({ charSpacing: v }); };
+  const updateLineHeight  = (v: number) => { setSelLineHeight(v);  upd({ lineHeight: v }); };
+
+  const updateShadow = (on: boolean) => {
+    setSelShadow(on);
+    if (!fc.current || !sel) return;
+    sel.set("shadow", on ? new (window as any).fabric.Shadow({ color: selShadowColor, blur: selShadowBlur, offsetX: selShadowX, offsetY: selShadowY }) : null);
+    fc.current.requestRenderAll();
+  };
+  const applyShadow = (color: string, blur: number, ox: number, oy: number) => {
+    if (!fc.current || !sel || !selShadow) return;
+    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur, offsetX: ox, offsetY: oy }));
+    fc.current.requestRenderAll();
+  };
+
+  const updateSaturation = (v: number) => {
+    setSelSaturation(v);
+    if (!fc.current || !sel) return;
+    const fabric = (window as any).fabric;
+    const filters = (sel.filters || []).filter((f: any) => f.type !== "Saturation");
+    filters.push(new fabric.Image.filters.Saturation({ saturation: v }));
+    sel.filters = filters;
+    sel.applyFilters();
+    fc.current.requestRenderAll();
+  };
+
+  const updateTextWidth = (v: number) => {
+    setSelTextWidth(v);
+    upd({ width: v });
+  };
+
+  const updateTextHeight = (v: number) => {
+    setSelTextHeight(v);
+    if (!fc.current || !sel) return;
+    if (v === 0) {
+      sel.set({ minHeight: undefined, __fixedHeight: false });
+      sel.__fixedHeight = false;
+      sel.initDimensions?.();
+      fc.current.requestRenderAll();
+    } else {
+      sel.__fixedHeight = true;
+      sel.set({ height: v, minHeight: v });
+      fc.current.requestRenderAll();
+    }
+  };
+
+  const updateBlur = (v: number) => {
+    setSelBlur(v);
+    if (!fc.current || !sel) return;
+    const uid = sel.__uid;
+    if (v > 0) blurValueMap.current.set(uid, v);
+    else blurValueMap.current.delete(uid);
+
+    if (sel.type === "image" && !blurOriginMap.current.has(uid)) {
+      const fabric = (window as any).fabric;
+      const filters = (sel.filters || []).filter((f: any) => f.type !== "Blur");
+      if (v > 0) filters.push(new fabric.Image.filters.Blur({ blur: v / 100 }));
+      sel.filters = filters;
+      sel.set({ padding: v > 0 ? Math.round(v * 0.8) : 0 });
+      sel.applyFilters();
+      fc.current.requestRenderAll();
+      return;
+    }
+
+    if (!blurPosMap.current.has(uid)) {
+      blurPosMap.current.set(uid, {
+        left: sel.left, top: sel.top,
+        scaleX: sel.scaleX || 1, scaleY: sel.scaleY || 1,
+        angle: sel.angle || 0,
+      });
+    }
+
+    if (!blurOriginMap.current.has(uid) && sel.type !== "image") {
+      blurOriginMap.current.set(uid, JSON.stringify(sel.toObject()));
+    }
+
+    if (blurTimer.current) clearTimeout(blurTimer.current);
+    blurTimer.current = setTimeout(() => {
+      const fabric = (window as any).fabric;
+      const currentV = blurValueMap.current.get(uid) ?? 0;
+      const pos = blurPosMap.current.get(uid)!;
+
+      if (currentV === 0 && blurOriginMap.current.has(uid)) {
+        const json = blurOriginMap.current.get(uid)!;
+        blurOriginMap.current.delete(uid);
+        blurPosMap.current.delete(uid);
+        const current = fc.current.getObjects().find((o: any) => o.__uid === uid);
+        if (current) fc.current.remove(current);
+        fabric.util.enlivenObjects([JSON.parse(json)], (objs: any[]) => {
+          const orig = objs[0];
+          orig.set({ left: pos.left, top: pos.top, angle: pos.angle, scaleX: pos.scaleX, scaleY: pos.scaleY });
+          orig.__uid = uid;
+          fc.current.add(orig);
+          fc.current.setActiveObject(orig);
+          setSel(orig);
+          setSelBlur(0);
+          fc.current.requestRenderAll();
+        });
+        return;
+      }
+
+      const sourceJson = blurOriginMap.current.get(uid)!;
+      const current = fc.current.getObjects().find((o: any) => o.__uid === uid);
+      if (current) fc.current.remove(current);
+
+      fabric.util.enlivenObjects([JSON.parse(sourceJson)], async (objs: any[]) => {
+        const sourceObj = objs[0];
+        const srcW = (sourceObj.width  || 100) * pos.scaleX;
+        const srcH = (sourceObj.height || 100) * pos.scaleY;
+        const blurPx = Math.max(1, Math.round(currentV * 0.3));
+        const pad = blurPx * 4;
+        const cw = Math.min(Math.ceil(srcW) + pad * 2, 1800);
+        const ch = Math.min(Math.ceil(srcH) + pad * 2, 1800);
+
+        const miniEl = document.createElement("canvas");
+        miniEl.width = cw; miniEl.height = ch;
+        const miniCanvas = new fabric.StaticCanvas(miniEl, { width: cw, height: ch, enableRetinaScaling: false });
+        sourceObj.set({ left: cw / 2, top: ch / 2, originX: "center", originY: "center", angle: 0, scaleX: pos.scaleX, scaleY: pos.scaleY });
+        miniCanvas.add(sourceObj);
+
+        await document.fonts.ready;
+        miniCanvas.renderAll();
+
+        const outEl = document.createElement("canvas");
+        outEl.width = cw; outEl.height = ch;
+        const ctx = outEl.getContext("2d")!;
+        ctx.filter = `blur(${blurPx}px)`;
+        ctx.drawImage(miniEl, 0, 0);
+        miniCanvas.dispose();
+
+        const dataURL = outEl.toDataURL("image/png");
+        fabric.Image.fromURL(dataURL, (img: any) => {
+          img.set({
+            left: pos.left + (srcW / 2) - (cw / 2),
+            top:  pos.top  + (srcH / 2) - (ch / 2),
+            angle: pos.angle,
+            scaleX: 1, scaleY: 1,
+            originX: "left", originY: "top",
+            strokeUniform: true,
+          });
+          img.__uid = uid;
+          fc.current.add(img);
+          fc.current.setActiveObject(img);
+          setSel(img);
+          setSelBlur(currentV);
+          fc.current.requestRenderAll();
+        });
+      });
+    }, 150);
+  };
+
+  const toggleLock = (uid: string) => {
+    if (!fc.current) return;
+    const obj = fc.current.getObjects().find((o: any) => o.__uid === uid);
+    if (!obj) return;
+    const locked = !obj.lockMovementX;
+    obj.set({
+      lockMovementX: locked, lockMovementY: locked,
+      lockRotation: locked, lockScalingX: locked, lockScalingY: locked,
+      selectable: !locked,
+      evented: !locked,
+      hoverCursor: locked ? "default" : "move",
+    });
+    if (locked && fc.current.getActiveObject() === obj) {
+      fc.current.discardActiveObject();
+      syncSel(null);
+    }
+    refreshLayers(fc.current);
+    fc.current.requestRenderAll();
+  };
+
+  const alignObj = (dir: string) => {
+    if (!fc.current || !sel) return;
+    const canvas = fc.current;
+    const cw = canvasWidth;
+    const ch = canvasHeight;
+    sel.setCoords();
+    const br = sel.getBoundingRect(true);
+    if (dir === "left")    sel.set({ left: sel.left - br.left });
+    if (dir === "hcenter") sel.set({ left: sel.left - br.left + (cw - br.width) / 2 });
+    if (dir === "right")   sel.set({ left: sel.left - br.left + cw - br.width });
+    if (dir === "top")     sel.set({ top: sel.top - br.top });
+    if (dir === "vcenter") sel.set({ top: sel.top - br.top + (ch - br.height) / 2 });
+    if (dir === "bottom")  sel.set({ top: sel.top - br.top + ch - br.height });
+    sel.setCoords();
+    canvas.requestRenderAll();
   };
 
   const convertShapeToFabricPath = (obj: any): any => {
@@ -740,6 +1023,51 @@ function EditorInner() {
       canvas.setActiveObject(new fabric.ActiveSelection(objects, { canvas }));
       canvas.requestRenderAll();
     }
+  };
+
+  const exitEditNodes = () => {
+    if (!fc.current || !editingData.current) return;
+    const canvas = fc.current;
+    const fabric = (window as any).fabric;
+    const { originalPathObj, commands, helpers, handleLines, previewObj } = editingData.current;
+
+    helpers.forEach(h => canvas.remove(h));
+    handleLines.forEach(l => canvas.remove(l));
+    if (previewObj) canvas.remove(previewObj);
+
+    canvas.defaultCursor = "default";
+    canvas.hoverCursor = "move";
+    canvas.selection = true;
+
+    let d = "";
+    commands.forEach(c => {
+      if (c.type === "M") d += `M ${c.x} ${c.y} `;
+      else if (c.type === "L") d += `L ${c.x} ${c.y} `;
+      else if (c.type === "C") d += `C ${c.cp1x} ${c.cp1y} ${c.cp2x} ${c.cp2y} ${c.x} ${c.y} `;
+      else if (c.type === "Z") d += `Z `;
+    });
+
+    const newPath = new fabric.Path(d.trim(), {
+      fill: originalPathObj.fill,
+      stroke: originalPathObj.stroke,
+      strokeWidth: originalPathObj.strokeWidth,
+      strokeUniform: originalPathObj.strokeUniform ?? true,
+      opacity: 1,
+    });
+    newPath.__uid = originalPathObj.__uid;
+
+    const idx = canvas.getObjects().indexOf(originalPathObj);
+    canvas.remove(originalPathObj);
+    if (idx >= 0) canvas.insertAt(newPath, idx, false);
+    else canvas.add(newPath);
+
+    canvas.setActiveObject(newPath);
+    syncSel(newPath);
+    editingData.current = null;
+    setIsEditingNodes(false);
+    isEditingNodesRef.current = false;
+    canvas.requestRenderAll();
+    refreshLayers(canvas);
   };
 
   const renderEditControls = () => {
@@ -1071,7 +1399,6 @@ function EditorInner() {
   };
   undoLastPenPointRef.current = undoLastPenPoint;
 
-  // Inicialização e sincronização da resolução
   useEffect(() => {
     if (!fabricLoaded || !canvasRef.current) return;
 
@@ -1541,13 +1868,13 @@ function EditorInner() {
           </button>
 
           {/* Circle */}
-          <button onClick={addCirc} title="Círculo"
+          <button onClick={() => addCirc} title="Círculo"
             className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:bg-gray-100 transition">
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="7" stroke="currentColor" strokeWidth="1.5"/></svg>
           </button>
 
           {/* Triangle */}
-          <button onClick={addTri} title="Triângulo"
+          <button onClick={() => addTri} title="Triângulo"
             className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-500 hover:bg-gray-100 transition">
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 2l8 14H1L9 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>
           </button>
@@ -1646,7 +1973,7 @@ function EditorInner() {
             <div className="p-3 flex flex-col gap-3 border-b border-gray-200">
               <p className="font-semibold text-gray-600 uppercase tracking-wide" style={{fontSize:10}}>Propriedades</p>
 
-              {/* Botão de Edição de Nós (Disponível para Paths e Formas Primitivas) */}
+              {/* Botão de Edição de Nós */}
               {(isPath || isShapeType(sel)) && !isEditingNodes && (
                 <button
                   onClick={() => enterEditNodes(sel)}
@@ -1656,7 +1983,7 @@ function EditorInner() {
                 </button>
               )}
 
-              {/* Operações Booleanas (Paper.js) */}
+              {/* Operações Booleanas */}
               {isMultiShapeSelected && (
                 <div className="flex flex-col gap-1.5 p-2 bg-slate-50 border border-slate-200 rounded-xl">
                   <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider">Operações Booleanas</p>
@@ -1791,7 +2118,6 @@ function EditorInner() {
                   </div>
                   <NumRow label="Tamanho" value={selFontSize} min={6} max={400} onChange={updateFontSize} />
 
-                  {/* Formatação e Alinhamento */}
                   <div>
                     <p className="text-gray-400 mb-1.5">Estilo e Alinhamento</p>
                     <div className="flex gap-1.5 mb-1.5">
