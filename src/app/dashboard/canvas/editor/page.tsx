@@ -1285,10 +1285,18 @@ function EditorInner() {
       return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
     } else {
       const canvas = fc.current;
-      canvas.setDimensions({ width: currentW, height: currentH });
+      // Salva estado dos objetos antes de mudar zoom
+      const json = canvas.toJSON();
+      canvas.setWidth(currentW);
+      canvas.setHeight(currentH);
       canvas.setZoom(z);
       canvas.calcOffset();
-      canvas.renderAll();
+      // Recarrega objetos para garantir que não somem
+      savingHistory.current = true;
+      canvas.loadFromJSON(json, () => {
+        savingHistory.current = false;
+        canvas.renderAll();
+      });
     }
   }, [fabricLoaded, canvasWidth, canvasHeight, zoom]);
 
