@@ -650,7 +650,7 @@ function EditorInner() {
   };
   const applyShadow = (color: string, blur: number, ox: number, oy: number) => {
     if (!fc.current || !sel || !selShadow) return;
-    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur, offsetX: ox, offsetY: oy }));
+    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur, offsetX: ox, oy }));
     fc.current.requestRenderAll();
   };
 
@@ -1319,146 +1319,338 @@ function EditorInner() {
     renderEditControls();
   };
 
-  const convertTextToPath = async () => {
-    if (!fc.current || !sel || !isText) return;
-    const opentype = (window as any).opentype;
-    if (!opentype) { alert("opentype.js ainda carregando, tente novamente."); return; }
-    setConverting(true);
-    try {
-      const fabric = (window as any).fabric;
-      const fontFamily = sel.fontFamily || "Arial";
-      const fontSize   = sel.fontSize   || 48;
-      const fillColor  = typeof sel.fill === "string" ? sel.fill : "#000000";
-      const text       = sel.text || "";
-      const objLeft    = sel.left;
-      const objTop     = sel.top;
-      const uid        = sel.__uid;
+  const redrawPenCanvas = () => {
+    if (!fc.current) return;
+    const canvas = fc.current;
+    const fabric = (window as any).fabric;
+    const pts = penPoints.current;
+    const handles = penCurveHandles.current;
 
-      const FONT_URLS: Record<string, string> = {
-        "Montserrat":       "https://fonts.gstatic.com/s/montserrat/v29/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCtr6Hw5aXo.woff",
-        "Playfair Display": "https://fonts.gstatic.com/s/playfairdisplay/v36/nuFiD-vYSZviVYUb_rj3ij__anPXDTnCjmHKM4nYO7KN_qiTbtA.woff",
-        "Roboto":           "https://fonts.gstatic.com/s/roboto/v32/KFOmCnqEu92Fr1Mu4mxKKTU1Kg.woff",
-        "Oswald":           "https://fonts.gstatic.com/s/oswald/v53/TK3_WkUHHAIjg75cFRf3bXL8LICs13NvgUFoZAaRliE.woff",
-        "Lato":             "https://fonts.gstatic.com/s/lato/v24/S6uyw4BMUTPHjx4wXiWtFCc.woff",
-        "Raleway":          "https://fonts.gstatic.com/s/raleway/v34/1Ptxg8zYS_SKggPN4iEgvnHyvveLxVsEpYCP.woff",
-        "Pacifico":         "https://fonts.gstatic.com/s/pacifico/v22/FwZY7-Qmy14u9lezJ96A4sijpFu_.woff",
-        "Dancing Script":   "https://fonts.gstatic.com/s/dancingscript/v25/If2cXTr6YS-zF4S-kcSWSVi_sxjsohD9F50Ruu7BMSo3ROp6.woff",
-        "Bebas Neue":       "https://fonts.gstatic.com/s/bebasneue/v14/JTUSjIg69CK48gW7PXoo9WlhyyTh89Y.woff",
-      };
+    penDots.current.forEach(d => canvas.remove(d));
+    penLines.current.forEach(l => canvas.remove(l));
+    penDots.current = [];
+    penLines.current = [];
 
-      const loadFont = async (family: string): Promise<any> => {
-        const url = FONT_URLS[family];
-        if (url) {
-          try { return await opentype.load(url); } catch {}
-        }
-        return null;
-      };
-
-      const font = await loadFont(fontFamily);
-
-      if (!font) {
-        const svgData = sel.toSVG();
-        const path = new fabric.Path(svgData, {
-          left: objLeft, top: objTop,
-          fill: fillColor, strokeUniform: true,
-        });
-        path.__uid = uid;
-        fc.current.remove(sel);
-        fc.current.add(path);
-        fc.current.setActiveObject(path);
-        syncSel(path);
-        fc.current.requestRenderAll();
-        return;
-      }
-
-      const svgPath = font.getPath(text, 0, 0, fontSize);
-      const pathData = svgPath.toPathData(2);
-
-      const path = new fabric.Path(pathData, {
-        left: objLeft,
-        top:  objTop,
-        fill: fillColor,
-        strokeUniform: true,
-        scaleX: sel.scaleX || 1,
-        scaleY: sel.scaleY || 1,
+    pts.forEach((pt, i) => {
+      const dot = new fabric.Circle({
+        left: pt.x, top: pt.y, radius: 4, originX: "center", originY: "center",
+        fill: i === 0 ? "#22c55e" : "#4f46e5",
+        stroke: "white", strokeWidth: 1.5,
+        selectable: false, evented: false,
       });
-      path.__uid = uid;
-      fc.current.remove(sel);
-      fc.current.add(path);
-      fc.current.setActiveObject(path);
-      syncSel(path);
-      fc.current.requestRenderAll();
-    } finally {
-      setConverting(false);
+      canvas.add(dot);
+      penDots.current.push(dot);
+
+      if (i > 0) {
+        const prev = pts[i - 1];
+        const prevH = handles[i - 1]?.[1] || prev;
+        const currH = handles[i]?.[0] || pt;
+        const curvePath = new fabric.Path(`M ${prev.x} ${prev.y} C ${prevH.x} ${prevH.y} ${currH.x} ${currH.y} ${pt.x} ${pt.y}`, {
+          stroke: "#4f46e5", strokeWidth: 1.5, strokeDashArray: [4, 3], fill: "transparent",
+          selectable: false, evented: false,
+        });
+        canvas.add(curvePath);
+        penLines.current.push(curvePath);
+      }
+    });
+
+    canvas.requestRenderAll();
+  };
+
+  const undoLastPenPoint = () => {
+    if (!fc.current) return;
+    const canvas = fc.current;
+
+    if (lastFinalizedPath.current) {
+      canvas.remove(lastFinalizedPath.current);
+      lastFinalizedPath.current = null;
+      activeToolRef.current = "pen";
+      setActiveTool("pen");
+      canvas.defaultCursor = "crosshair";
+      canvas.hoverCursor = "crosshair";
+      canvas.selection = false;
+      redrawPenCanvas();
+      return;
+    }
+
+    if (penPoints.current.length === 0) return;
+
+    penPoints.current.pop();
+    penCurveHandles.current.pop();
+
+    const lastDot = penDots.current.pop();
+    if (lastDot) canvas.remove(lastDot);
+
+    const lastLine = penLines.current.pop();
+    if (lastLine) canvas.remove(lastLine);
+
+    if (activeHandleLine.current) {
+      canvas.remove(activeHandleLine.current);
+      activeHandleLine.current = null;
+    }
+
+    if (penPoints.current.length === 0) {
+      cancelPen();
+    } else {
+      canvas.requestRenderAll();
     }
   };
 
-  const removeBackgroundLocal = () => {
-    if (!fc.current || !sel || sel.type !== "image") return;
-    if (!rmbgWorker.current) {
-      alert("Worker não disponível. Tente recarregar a página.");
-      return;
-    }
-    setRemovingBg(true);
-    setRmbgProgress("Preparando imagem...");
+  const add = (fn: (fabric: any) => any) => {
+    if (!fc.current) return;
+    const obj = fn((window as any).fabric);
+    fc.current.add(obj); fc.current.setActiveObject(obj); syncSel(obj);
+  };
+  const addText = () => {
+    if (!fc.current) return;
+    const fab = (window as any).fabric;
+    const fontToLoad = `${selFontSize}px "${selFontFamily}"`;
+    document.fonts.load(fontToLoad).finally(() => {
+      const t = new fab.Textbox("Texto aqui", {
+        left: canvasWidth / 2,
+        top: canvasHeight / 2,
+        originX: "center",
+        originY: "center",
+        width: 300,
+        fontSize: selFontSize,
+        fontFamily: selFontFamily,
+        textAlign: selTextAlign,
+        fill: "#000000",
+        strokeUniform: true,
+        splitByGrapheme: false,
+      });
+      fc.current.add(t);
+      fc.current.setActiveObject(t);
+      syncSel(t);
+      fc.current.requestRenderAll();
+      t.enterEditing();
+    });
+  };
+
+  const addRect  = (r=0) => add(fab => new fab.Rect({ left:canvasWidth/2-75, top:canvasHeight/2-50, width:150, height:100, fill:"#3b82f6", rx:r, ry:r, strokeUniform:true }));
+  const addCirc  = () => add(fab => new fab.Circle({ left:canvasWidth/2-60, top:canvasHeight/2-60, radius:60, fill:"#3b82f6", strokeUniform:true }));
+  const addTri   = () => add(fab => new fab.Triangle({ left:canvasWidth/2-60, top:canvasHeight/2-60, width:120, height:120, fill:"#3b82f6", strokeUniform:true }));
+  const addLine  = () => add(fab => new fab.Line([canvasWidth/2-80, canvasHeight/2, canvasWidth/2+80, canvasHeight/2], { stroke:"#000000", strokeWidth:3, strokeUniform:true }));
+  const addStar  = () => {
+    const points: { x: number; y: number }[] = [];
+    for (let i=0;i<10;i++) { const r = i%2===0?60:24; const a = (Math.PI/5)*i - Math.PI/2; points.push({ x: r*Math.cos(a), y: r*Math.sin(a) }); }
+    add(fab => new fab.Polygon(points, { left:canvasWidth/2, top:canvasHeight/2, originX:"center", originY:"center", fill:"#eab308", strokeUniform:true }));
+  };
+  const addArrow = () => {
+    const points: { x: number; y: number }[] = [{ x:0,y:20 },{ x:80,y:20 },{ x:80,y:0 },{ x:120,y:35 },{ x:80,y:70 },{ x:80,y:50 },{ x:0,y:50 }];
+    add(fab => new fab.Polygon(points, { left:canvasWidth/2-60, top:canvasHeight/2-35, fill:"#3b82f6", strokeUniform:true }));
+  };
+
+  const handleImg = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !fc.current) return;
+    const r = new FileReader();
+    r.onload = ev => (window as any).fabric.Image.fromURL(ev.target?.result as string, (img: any) => {
+      if (img.width > canvasWidth * 0.8) img.scaleToWidth(canvasWidth * 0.8);
+      const scaledW = img.getScaledWidth();
+      const scaledH = img.getScaledHeight();
+      img.set({
+        left: (canvasWidth - scaledW) / 2,
+        top: (canvasHeight - scaledH) / 2,
+        originX: "left",
+        originY: "top",
+      });
+      fc.current.add(img); fc.current.setActiveObject(img); syncSel(img);
+    });
+    r.readAsDataURL(file); e.target.value = "";
+  };
+
+  const finalizePen = (close: boolean) => {
+    if (!fc.current) return;
+    const canvas = fc.current;
     const fabric = (window as any).fabric;
+    const pts = penPoints.current;
+    const handles = penCurveHandles.current;
+    if (pts.length < 2) { cancelPen(); return; }
 
-    const origW = Math.round(sel.width  * (sel.scaleX || 1));
-    const origH = Math.round(sel.height * (sel.scaleY || 1));
-    const MAX = 1024;
-    const ratio = Math.min(MAX / origW, MAX / origH, 1);
-    const pw = Math.round(origW * ratio);
-    const ph = Math.round(origH * ratio);
+    let d = `M ${pts[0].x} ${pts[0].y}`;
+    for (let i = 1; i < pts.length; i++) {
+      const prev = pts[i - 1];
+      const curr = pts[i];
+      const h1 = handles[i - 1]?.[1] || prev;
+      const h2 = handles[i]?.[0]    || curr;
+      d += ` C ${h1.x} ${h1.y} ${h2.x} ${h2.y} ${curr.x} ${curr.y}`;
+    }
+    if (close && pts.length > 2) {
+      const h1 = handles[pts.length - 1]?.[1] || pts[pts.length - 1];
+      const h2 = handles[0]?.[0] || pts[0];
+      d += ` C ${h1.x} ${h1.y} ${h2.x} ${h2.y} ${pts[0].x} ${pts[0].y} Z`;
+    }
 
-    const tmpCanvas = document.createElement("canvas");
-    tmpCanvas.width = pw; tmpCanvas.height = ph;
-    const ctx = tmpCanvas.getContext("2d")!;
-    const imgEl = (sel as any)._element as HTMLImageElement;
-    ctx.drawImage(imgEl, 0, 0, pw, ph);
-    const pixelData = ctx.getImageData(0, 0, pw, ph);
+    const path = new fabric.Path(d, {
+      fill: close ? (selFill !== "transparent" ? selFill : "#4f46e5") : "transparent",
+      stroke: "#000000",
+      strokeWidth: 2,
+      strokeUniform: true,
+    });
 
-    const left = sel.left;
-    const top  = sel.top;
-    const angle = sel.angle || 0;
-    const uid  = sel.__uid;
-    const scaleX = sel.scaleX || 1;
+    penLines.current.forEach(l => canvas.remove(l));
+    penDots.current.forEach(d => canvas.remove(d));
+    if (activeHandleLine.current) {
+      canvas.remove(activeHandleLine.current);
+      activeHandleLine.current = null;
+    }
+    penLines.current = [];
+    penDots.current = [];
 
-    const worker = rmbgWorker.current;
+    canvas.add(path);
+    canvas.setActiveObject(path);
+    syncSel(path);
+    lastFinalizedPath.current = path;
 
-    const handler = (e: MessageEvent) => {
-      const { type, message, imageData, width, height } = e.data;
-      if (type === "progress") { setRmbgProgress(message); return; }
-      if (type === "error") {
-        setRemovingBg(false); setRmbgProgress("");
-        alert("Erro: " + message);
-        worker.removeEventListener("message", handler);
-        return;
-      }
-      if (type === "result") {
-        worker.removeEventListener("message", handler);
-        const outCanvas = document.createElement("canvas");
-        outCanvas.width = width; outCanvas.height = height;
-        const outCtx = outCanvas.getContext("2d")!;
-        const outImgData = new ImageData(new Uint8ClampedArray(imageData), width, height);
-        outCtx.putImageData(outImgData, 0, 0);
-        const dataURL = outCanvas.toDataURL("image/png");
-        fc.current.remove(sel);
-        fabric.Image.fromURL(dataURL, (img: any) => {
-          const scaleToW = (origW / img.width) * (scaleX);
-          img.set({ left, top, angle, scaleX: scaleToW, scaleY: scaleToW, strokeUniform: true });
-          img.__uid = uid;
-          fc.current.add(img);
-          fc.current.setActiveObject(img);
-          syncSel(img);
-          fc.current.requestRenderAll();
-          setRemovingBg(false);
-          setRmbgProgress("");
-        });
-      }
-    };
+    activeToolRef.current = "select";
+    setActiveTool("select");
+    canvas.defaultCursor = "default";
+    canvas.hoverCursor = "move";
+    canvas.selection = true;
+    canvas.requestRenderAll();
+  };
 
-    worker.addEventListener("message", handler);
-    worker.postMessage({ type: "removebg", imageData: pixelData.data.buffer, width: pw, height: ph }, [pixelData.data.buffer]);
+  const cancelPen = () => {
+    if (!fc.current) return;
+    const canvas = fc.current;
+    penLines.current.forEach(l => canvas.remove(l));
+    penDots.current.forEach(d => canvas.remove(d));
+    if (activeHandleLine.current) {
+      canvas.remove(activeHandleLine.current);
+      activeHandleLine.current = null;
+    }
+    penPoints.current = [];
+    penLines.current = [];
+    penDots.current = [];
+    penCurveHandles.current = [];
+    activeHandleLine.current = null;
+    lastFinalizedPath.current = null;
+    canvas.requestRenderAll();
+  };
+
+  const startPen = () => {
+    if (isEditingNodes) exitEditNodes();
+    lastFinalizedPath.current = null;
+    setActiveTool("pen"); activeToolRef.current = "pen";
+    if (fc.current) {
+      fc.current.defaultCursor = "crosshair";
+      fc.current.hoverCursor = "crosshair";
+      fc.current.selection = false;
+      fc.current.discardActiveObject();
+      fc.current.requestRenderAll();
+    }
+  };
+
+  const stopPen = () => {
+    setActiveTool("select"); activeToolRef.current = "select";
+    cancelPen();
+    if (fc.current) {
+      fc.current.defaultCursor = "default";
+      fc.current.hoverCursor = "move";
+      fc.current.selection = true;
+      fc.current.isDrawingMode = false;
+    }
+  };
+
+  const createMask = () => {
+    if (!fc.current) return;
+    const canvas = fc.current;
+    const active = canvas.getActiveObject();
+    if (!active || active.type !== "activeSelection") return;
+    const objects = (active as any).getObjects();
+    const image = objects.find((o: any) => o.type === "image");
+    const shape = objects.find((o: any) => o.type !== "image");
+    if (!image || !shape) { alert("Selecione uma imagem e uma forma juntas."); return; }
+
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+
+    const imgCenter = image.getCenterPoint();
+    const shapeCenter = shape.getCenterPoint();
+
+    shape.clone((clippedShape: any) => {
+      const imgScaleX = image.scaleX || 1;
+      const imgScaleY = image.scaleY || 1;
+
+      clippedShape.set({
+        left: (shapeCenter.x - imgCenter.x) / imgScaleX,
+        top: (shapeCenter.y - imgCenter.y) / imgScaleY,
+        originX: "center",
+        originY: "center",
+        scaleX: (shape.scaleX || 1) / imgScaleX,
+        scaleY: (shape.scaleY || 1) / imgScaleY,
+        angle: (shape.angle || 0) - (image.angle || 0),
+        absolutePositioned: false,
+      });
+
+      image.__originalShape = shape;
+      image.clipPath = clippedShape;
+      image.setCoords();
+
+      canvas.remove(shape);
+      canvas.setActiveObject(image);
+      syncSel(image);
+      refreshLayers(canvas);
+      canvas.requestRenderAll();
+    });
+  };
+
+  const removeMask = () => {
+    if (!fc.current || !sel || !sel.clipPath) return;
+    const canvas = fc.current;
+    const image = sel;
+    const clip = image.clipPath;
+
+    if (image.__originalShape) {
+      const orig = image.__originalShape;
+      const imgCenter = image.getCenterPoint();
+      const imgScaleX = image.scaleX || 1;
+      const imgScaleY = image.scaleY || 1;
+
+      orig.set({
+        left: imgCenter.x + (clip.left || 0) * imgScaleX,
+        top: imgCenter.y + (clip.top || 0) * imgScaleY,
+        originX: "center",
+        originY: "center",
+        scaleX: (clip.scaleX || 1) * imgScaleX,
+        scaleY: (clip.scaleY || 1) * imgScaleY,
+        angle: (clip.angle || 0) + (image.angle || 0),
+      });
+      orig.setCoords();
+      canvas.add(orig);
+      delete image.__originalShape;
+    }
+
+    image.clipPath = null;
+    image.setCoords();
+    syncSel(image);
+    refreshLayers(canvas);
+    canvas.requestRenderAll();
+  };
+
+  const exportDataUrl = () => {
+    const canvas = fc.current;
+    const dataUrl = canvas.toDataURL({ format:"png", multiplier:1 });
+    return dataUrl;
+  };
+
+  const handleDownload = () => {
+    if (!fc.current) return;
+    const a = document.createElement("a"); a.href = exportDataUrl(); a.download = artName+".png"; a.click();
+  };
+
+  const handleSave = async () => {
+    if (!fc.current || !site) return; setSaving(true);
+    try {
+      const dataUrl = exportDataUrl();
+      const path = `canvas/${site.widgetId}/${Date.now()}.png`;
+      const sRef = ref(storage, path);
+      await uploadString(sRef, dataUrl, "data_url");
+      const url = await getDownloadURL(sRef);
+      await addDoc(collection(db, "canvas_arts"), { widgetId:site.widgetId, name:artName, format:fmt.label, url, storagePath:path, createdAt:Date.now() });
+      setSaved(true); setTimeout(() => setSaved(false), 2500);
+    } finally { setSaving(false); }
   };
 
   return (
@@ -1953,7 +2145,7 @@ function EditorInner() {
                       <ColorPicker value={selShadowColor} onChange={c => { setSelShadowColor(c); applyShadow(c, selShadowBlur, selShadowX, selShadowY); }} label="Cor" allowTransparent={false} />
                       <SliderRow label="Blur" value={selShadowBlur} min={0} max={60} onChange={v => { setSelShadowBlur(v); applyShadow(selShadowColor, v, selShadowX, selShadowY); }} />
                       <SliderRow label="X" value={selShadowX} min={-50} max={50} onChange={v => { setSelShadowX(v); applyShadow(selShadowColor, selShadowBlur, v, selShadowY); }} />
-                      <SliderRow label="Y" value={selShadowY} min={-50} max={50} onChange={v => { setSelShadowY(v); applyShadow(selShadowColor, selShadowBlur, selShadowX, v); }} />
+                      <SliderRow label="Y" value={selShadowY} min={-50} max={50} onChange={v => { setSelShadowY(v); applyShadow(selShadowColor, selShadowBlur, v, selShadowY); }} />
                     </div>
                   )}
                 </>
