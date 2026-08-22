@@ -797,8 +797,7 @@ function EditorInner() {
     if (pathObj.type !== "path") {
       // Converte forma para path via pathFromElement
       const svgString = pathObj.toSVG();
-      console.log("path commands:", JSON.stringify(pathObj.path?.slice(0, 5)));
-      console.log("path commands:", pathObj.path?.slice(0, 5));
+
       const parser = new DOMParser();
       const doc = parser.parseFromString(`<svg>${svgString}</svg>`, "image/svg+xml");
       
@@ -866,6 +865,7 @@ function EditorInner() {
 
     setIsEditingNodes(true);
     isEditingNodesRef.current = true;
+    console.log("path commands:", pathObj.path?.slice(0, 5));
     canvas.discardActiveObject();
     pathObj.opacity = 0.3;
     pathObj.selectable = false;
