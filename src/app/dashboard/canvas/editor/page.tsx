@@ -2602,6 +2602,9 @@ function EditorInner() {
                       el.height = imgEl.naturalHeight || pixelEditImgRef.current.height;
                       const ctx = el.getContext("2d")!;
                       ctx.drawImage(imgEl, 0, 0);
+                      pixelUndoStack.current = [];
+                      const initialSnap = ctx.getImageData(0, 0, el.width, el.height);
+                      pixelUndoStack.current.push(initialSnap);
                       const snap = ctx.getImageData(0, 0, el.width, el.height);
                       pixelUndoStack.current = [snap];
                       pixelSnapshotRef.current = snap;
@@ -2700,8 +2703,16 @@ function EditorInner() {
 
                     if (pixelTool === "eraser") {
                       const r = pixelBrushSize / 2;
-                      if (pixelDrawingRef.current) {
-                        // Apaga
+                      if (!pixelDrawingRef.current) {
+                        // Preview cursor apenas quando não está apagando
+                        const snap = pixelUndoStack.current[pixelUndoStack.current.length - 1];
+                        if (snap) ctx.putImageData(snap, 0, 0);
+                        ctx.save();
+                        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+                        ctx.strokeStyle = "#4f46e5"; ctx.lineWidth = 1.5; ctx.setLineDash([3, 2]);
+                        ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+                      } else {
+                        // Apaga normalmente sem restaurar snapshot
                         if (pixelSoftness === 0) {
                           ctx.globalCompositeOperation = "destination-out";
                           ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
@@ -2715,16 +2726,6 @@ function EditorInner() {
                           ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
                           ctx.globalCompositeOperation = "source-over";
                         }
-                      } else {
-                        // Preview cursor
-                        const snap = pixelUndoStack.current[pixelUndoStack.current.length - 1];
-                        if (snap) {
-                          ctx.putImageData(snap, 0, 0);
-                        }
-                        ctx.save();
-                        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
-                        ctx.strokeStyle = "#4f46e5"; ctx.lineWidth = 1.5; ctx.setLineDash([3, 2]);
-                        ctx.stroke(); ctx.setLineDash([]); ctx.restore();
                       }
                       return;
                     }
