@@ -334,6 +334,9 @@ function EditorInner() {
   const lassoPointsRef = useRef<{x:number;y:number}[]>([]);
   const lassoActiveRef = useRef(false);
   const pixelDrawingRef = useRef(false);
+  const [lassoSelected, setLassoSelected] = useState(false); // true = has active selection
+  const lassoSelectionRef = useRef<{x:number;y:number}[]>([]); // closed lasso selection
+  const pixelUndoStack = useRef<ImageData[]>([]); // undo history for pixel editor
 
   const [bgSolid, setBgSolid] = useState("#ffffff");
   const [bgGradient, setBgGradient] = useState<{stops:{color:string;opacity:number;pos:number}[];angle:number}|null>(null);
@@ -506,7 +509,10 @@ function EditorInner() {
     pixelEditImgRef.current = null;
     stampSourceRef.current = null;
     lassoPointsRef.current = [];
+    lassoSelectionRef.current = [];
     lassoActiveRef.current = false;
+    pixelUndoStack.current = [];
+    setLassoSelected(false);
   };
 
   const deleteSelected = () => {
@@ -2338,6 +2344,90 @@ function EditorInner() {
       <div className="flex flex-1 overflow-hidden">
         {/* ── LEFT TOOLBAR ─────────────────────────────── */}
         <div className="w-14 bg-white border-r border-gray-200 flex flex-col items-center py-3 gap-1 flex-shrink-0 overflow-y-auto">
+
+          {pixelEditMode ? (
+            /* ── Pixel edit tools ── */
+            <>
+              <p className="text-gray-400 mb-1" style={{fontSize:9}}>PIXELS</p>
+
+              {/* Eraser */}
+              <button onClick={() => setPixelTool("eraser")} title="Borracha"
+                className={`w-10 h-10 rounded-xl flex items-center justify-center transition ${pixelTool==="eraser" ? "bg-blue-100 text-blue-700" : "text-gray-500 hover:bg-gray-100"}`}>
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                  <path d="M3 14h12M10 14l4-9-3-2-8 8 3 3z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+                  <path d="M6 11l5-7" stroke="currentColor" strokeWidth="1.5"/>
+                </svg>
+              </button>
+
+              {/* Stamp */}
+              <button onClick={() => setPixelTool("stamp")} title="Carimbo clone (Alt+clique = fonte)"
+                className={`w-10 h-10 rounded-xl flex items-center justify-center transition ${pixelTool==="stamp" ? "bg-blue-100 text-blue-700" : "text-gray-500 hover:bg-gray-100"}`}>
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                  <circle cx="9" cy="6" r="4" stroke="currentColor" strokeWidth="1.5"/>
+                  <rect x="7" y="10" width="4" height="5" rx="1" stroke="currentColor" strokeWidth="1.5"/>
+                  <line x1="5" y1="15" x2="13" y2="15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                </svg>
+              </button>
+
+              {/* Lasso */}
+              <button onClick={() => { setPixelTool("lasso"); setLassoSelected(false); lassoSelectionRef.current = []; }} title="Laço"
+                className={`w-10 h-10 rounded-xl flex items-center justify-center transition ${pixelTool==="lasso" ? "bg-blue-100 text-blue-700" : "text-gray-500 hover:bg-gray-100"}`}>
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                  <path d="M9 3C5.5 3 3 5 3 7.5C3 10 5 11.5 7 12L9 15L11 12C13 11.5 15 10 15 7.5C15 5 12.5 3 9 3Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeDasharray="2 1"/>
+                </svg>
+              </button>
+
+              {/* Brush size — shown for eraser and stamp */}
+              {pixelTool !== "lasso" && (
+                <div className="w-10 flex flex-col items-center gap-1 mt-1">
+                  <div className="w-8 border-t border-gray-100" />
+                  <div className="w-8 flex items-center justify-center" style={{height:20}}>
+                    <div style={{width: Math.min(pixelBrushSize/4+4, 28), height: Math.min(pixelBrushSize/4+4, 28), borderRadius:"50%", background:"currentColor"}} className="text-gray-400 bg-gray-400" />
+                  </div>
+                  {[4,12,30,60].map(s => (
+                    <button key={s} onClick={() => setPixelBrushSize(s)}
+                      className={`w-9 h-7 rounded-lg flex items-center justify-center transition ${pixelBrushSize===s ? "bg-blue-100" : "hover:bg-gray-100"}`}>
+                      <div style={{width: Math.min(s/3+3,26), height: Math.min(s/3+3,26), borderRadius:"50%", background: pixelBrushSize===s ? "#3b82f6" : "#9ca3af"}} />
+                    </button>
+                  ))}
+                  <input type="range" min={2} max={200} value={pixelBrushSize}
+                    onChange={e => setPixelBrushSize(+e.target.value)}
+                    className="w-8 accent-blue-600" style={{writingMode:"vertical-lr", direction:"rtl", height:60}} />
+                </div>
+              )}
+
+              {/* Lasso instructions */}
+              {pixelTool === "lasso" && lassoSelected && (
+                <div className="w-10 mt-2 flex flex-col items-center gap-1">
+                  <div className="w-8 border-t border-gray-100" />
+                  <span className="text-gray-400 text-center leading-tight" style={{fontSize:8}}>Del apaga seleção</span>
+                  <span className="text-gray-400 text-center leading-tight" style={{fontSize:8}}>⇧I inverte</span>
+                </div>
+              )}
+
+              {/* Stamp hint */}
+              {pixelTool === "stamp" && (
+                <div className="w-10 mt-2 flex flex-col items-center">
+                  <div className="w-8 border-t border-gray-100 mb-1" />
+                  <span className="text-gray-400 text-center leading-tight" style={{fontSize:8}}>
+                    {stampSourceRef.current ? "✓ Fonte" : "Alt+clique = fonte"}
+                  </span>
+                </div>
+              )}
+
+              {/* Separator + exit */}
+              <div className="w-8 border-t border-gray-200 mt-2" />
+              <button onClick={() => exitPixelEdit(true)} title="Sair (duplo clique ou Esc)"
+                className="w-10 h-10 rounded-xl flex items-center justify-center text-gray-400 hover:bg-gray-100 transition">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                </svg>
+              </button>
+            </>
+          ) : (
+            /* ── Normal tools ── */
+            <>
+
           {/* Select */}
           <button onClick={() => { stopPen(); if (isEditingNodes) exitEditNodes(); }} title="Selecionar (V)"
             className={`w-10 h-10 rounded-xl flex items-center justify-center transition ${activeTool==="select" && !isEditingNodes ? "bg-indigo-100 text-indigo-700" : "text-gray-500 hover:bg-gray-100"}`}>
@@ -2476,6 +2566,8 @@ function EditorInner() {
               </button>
             </div>
           )}
+            </>
+          )}
         </div>
 
         {/* ── CANVAS VIEWPORT ───────────────────────────── */}
@@ -2503,12 +2595,14 @@ function EditorInner() {
                       const imgEl = pixelEditImgRef.current._element as HTMLImageElement;
                       el.width  = imgEl.naturalWidth  || pixelEditImgRef.current.width;
                       el.height = imgEl.naturalHeight || pixelEditImgRef.current.height;
-                      el.getContext("2d")!.drawImage(imgEl, 0, 0);
+                      const ctx = el.getContext("2d")!;
+                      ctx.drawImage(imgEl, 0, 0);
+                      pixelUndoStack.current = [ctx.getImageData(0, 0, el.width, el.height)];
                     }
                   }}
                   style={{
                     position: "absolute", left: il, top: it, width: iw, height: ih,
-                    cursor: pixelTool === "eraser" ? "cell" : pixelTool === "stamp" ? "crosshair" : "default",
+                    cursor: pixelTool === "eraser" ? "cell" : pixelTool === "stamp" ? "crosshair" : "crosshair",
                     border: "2px solid #4f46e5", boxSizing: "border-box", imageRendering: "pixelated",
                   }}
                   onMouseDown={ev => {
@@ -2518,9 +2612,22 @@ function EditorInner() {
                     const x = (ev.clientX - rect.left) * sx;
                     const y = (ev.clientY - rect.top) * sy;
                     const ctx = el.getContext("2d")!;
+
                     if (pixelTool === "stamp" && ev.altKey) { stampSourceRef.current = { x, y }; return; }
-                    if (pixelTool === "lasso") { lassoActiveRef.current = true; lassoPointsRef.current = [{ x, y }]; return; }
+
+                    if (pixelTool === "lasso") {
+                      lassoActiveRef.current = true;
+                      lassoPointsRef.current = [{ x, y }];
+                      lassoSelectionRef.current = [];
+                      setLassoSelected(false);
+                      return;
+                    }
+
+                    // Save undo state
+                    pixelUndoStack.current.push(ctx.getImageData(0, 0, el.width, el.height));
+                    if (pixelUndoStack.current.length > 30) pixelUndoStack.current.shift();
                     pixelDrawingRef.current = true;
+
                     if (pixelTool === "eraser") {
                       ctx.globalCompositeOperation = "destination-out";
                       ctx.beginPath(); ctx.arc(x, y, pixelBrushSize / 2, 0, Math.PI * 2); ctx.fill();
@@ -2539,12 +2646,17 @@ function EditorInner() {
                     const x = (ev.clientX - rect.left) * sx;
                     const y = (ev.clientY - rect.top) * sy;
                     const ctx = el.getContext("2d")!;
+
                     if (pixelTool === "lasso" && lassoActiveRef.current) {
                       lassoPointsRef.current.push({ x, y });
+                      // Redraw image + lasso outline
                       const pts = lassoPointsRef.current;
-                      ctx.strokeStyle = "#4f46e5"; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
-                      ctx.beginPath(); ctx.moveTo(pts[pts.length-2]?.x ?? x, pts[pts.length-2]?.y ?? y);
-                      ctx.lineTo(x, y); ctx.stroke(); ctx.setLineDash([]);
+                      ctx.setLineDash([6, 3]);
+                      ctx.strokeStyle = "#4f46e5"; ctx.lineWidth = 1.5;
+                      ctx.beginPath();
+                      ctx.moveTo(pts[pts.length-2]?.x ?? x, pts[pts.length-2]?.y ?? y);
+                      ctx.lineTo(x, y); ctx.stroke();
+                      ctx.setLineDash([]);
                       return;
                     }
                     if (!pixelDrawingRef.current) return;
@@ -2563,19 +2675,64 @@ function EditorInner() {
                     pixelDrawingRef.current = false;
                     if (pixelTool === "lasso" && lassoActiveRef.current) {
                       lassoActiveRef.current = false;
-                      const el = pixelCanvasRef.current!;
-                      const ctx = el.getContext("2d")!;
                       const pts = lassoPointsRef.current;
                       if (pts.length < 3) return;
+                      lassoSelectionRef.current = [...pts];
+                      setLassoSelected(true);
+                      // Draw marching ants selection outline
+                      const el = pixelCanvasRef.current!;
+                      const ctx = el.getContext("2d")!;
                       ctx.save();
+                      ctx.setLineDash([6, 3]);
+                      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
                       ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
                       pts.forEach(p => ctx.lineTo(p.x, p.y));
-                      ctx.closePath();
-                      ctx.globalCompositeOperation = "destination-out"; ctx.fill();
+                      ctx.closePath(); ctx.stroke();
+                      ctx.strokeStyle = "#000"; ctx.lineWidth = 1;
+                      ctx.setLineDash([6, 3]);
+                      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+                      pts.forEach(p => ctx.lineTo(p.x, p.y));
+                      ctx.closePath(); ctx.stroke();
+                      ctx.setLineDash([]);
                       ctx.restore();
-                      lassoPointsRef.current = [];
                     }
                   }}
+                  onDoubleClick={() => exitPixelEdit(true)}
+                  onKeyDown={ev => {
+                    ev.preventDefault();
+                    const el = pixelCanvasRef.current!;
+                    const ctx = el.getContext("2d")!;
+                    // Ctrl+Z undo
+                    if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && ev.key.toLowerCase() === "z") {
+                      const prev = pixelUndoStack.current.pop();
+                      if (prev) { ctx.putImageData(prev, 0, 0); setLassoSelected(false); lassoSelectionRef.current = []; }
+                      return;
+                    }
+                    const pts = lassoSelectionRef.current;
+                    if (!pts.length) return;
+                    // Delete: erase inside selection
+                    if (ev.key === "Delete" || ev.key === "Backspace") {
+                      pixelUndoStack.current.push(ctx.getImageData(0, 0, el.width, el.height));
+                      ctx.save();
+                      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+                      pts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath();
+                      ctx.globalCompositeOperation = "destination-out"; ctx.fill();
+                      ctx.restore();
+                      setLassoSelected(false); lassoSelectionRef.current = [];
+                    }
+                    // Ctrl+Shift+I: invert selection (erase outside)
+                    if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && ev.key.toLowerCase() === "i") {
+                      pixelUndoStack.current.push(ctx.getImageData(0, 0, el.width, el.height));
+                      ctx.save();
+                      ctx.beginPath(); ctx.rect(0, 0, el.width, el.height);
+                      ctx.moveTo(pts[0].x, pts[0].y);
+                      pts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath();
+                      ctx.globalCompositeOperation = "destination-out"; ctx.fill();
+                      ctx.restore();
+                      setLassoSelected(false); lassoSelectionRef.current = [];
+                    }
+                  }}
+                  tabIndex={0}
                 />
               );
             })()}
@@ -2584,51 +2741,6 @@ function EditorInner() {
 
         {/* ── RIGHT: PROPERTIES + LAYERS ───────────────── */}
         <div className="w-56 bg-white border-l border-gray-200 flex flex-col flex-shrink-0 overflow-y-auto text-xs">
-          {pixelEditMode && (
-            <div className="p-3 bg-blue-50 border-b border-blue-100 flex flex-col gap-2">
-              <p className="font-semibold text-blue-900 text-xs">Edição de Pixels</p>
-              <div className="flex gap-1">
-                {([["eraser","🧹","Borracha"],["stamp","🖃","Carimbo"],["lasso","🔲","Laço"]] as const).map(([t,icon,label]) => (
-                  <button key={t} onClick={() => setPixelTool(t)}
-                    className={`flex-1 py-1.5 rounded-lg border text-xs transition flex flex-col items-center gap-0.5 ${pixelTool===t ? "bg-blue-600 text-white border-blue-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
-                    <span>{icon}</span><span style={{fontSize:9}}>{label}</span>
-                  </button>
-                ))}
-              </div>
-              {pixelTool !== "lasso" && (
-                <div>
-                  <div className="flex justify-between mb-1">
-                    <p className="text-xs text-blue-700">Tamanho</p>
-                    <span className="text-xs text-blue-500">{pixelBrushSize}px</span>
-                  </div>
-                  <input type="range" min={2} max={200} value={pixelBrushSize}
-                    onChange={e => setPixelBrushSize(+e.target.value)} className="w-full accent-blue-600" />
-                </div>
-              )}
-              {pixelTool === "stamp" && (
-                <p className="text-xs text-blue-600 bg-blue-100 rounded p-1.5">
-                  Alt+clique para definir a fonte, depois arraste para aplicar.
-                  {stampSourceRef.current ? " ✓ Fonte definida" : " Fonte não definida"}
-                </p>
-              )}
-              {pixelTool === "lasso" && (
-                <p className="text-xs text-blue-600 bg-blue-100 rounded p-1.5">
-                  Clique e arraste para selecionar. Ao soltar, a área é apagada.
-                </p>
-              )}
-              <div className="flex gap-1">
-                <button onClick={() => exitPixelEdit(true)}
-                  className="flex-1 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 transition">
-                  ✓ Aplicar
-                </button>
-                <button onClick={() => exitPixelEdit(false)}
-                  className="flex-1 py-1.5 border border-gray-200 text-gray-600 rounded-lg text-xs hover:bg-gray-50 transition">
-                  Cancelar
-                </button>
-              </div>
-            </div>
-          )}
-
           {isEditingNodes && (
             <div className="p-3 bg-indigo-50 border-b border-indigo-100 flex flex-col gap-2">
               <p className="font-semibold text-indigo-900">Modo Edição de Nós</p>
