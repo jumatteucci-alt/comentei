@@ -1283,17 +1283,20 @@ function EditorInner() {
       };
       window.addEventListener("keydown", onKey);
       return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
-    } else {
-      const canvas = fc.current;
-      console.log("zoom change — objects before:", canvas.getObjects().length, "zoom:", z);
-      canvas.setWidth(currentW);
-      canvas.setHeight(currentH);
-      canvas.setZoom(z);
-      canvas.calcOffset();
-      canvas.requestRenderAll();
-      setTimeout(() => console.log("objects after 100ms:", canvas.getObjects().length), 100);
-    }
-  }, [fabricLoaded, canvasWidth, canvasHeight, zoom]);
+    } 
+  }, [fabricLoaded, canvasWidth, canvasHeight]);
+
+  useEffect(() => {
+    if (!fc.current) return;
+    const z = zoom / 100;
+    const currentW = Math.round(canvasWidth * z);
+    const currentH = Math.round(canvasHeight * z);
+    fc.current.setWidth(currentW);
+    fc.current.setHeight(currentH);
+    fc.current.setZoom(z);
+    fc.current.calcOffset();
+    fc.current.requestRenderAll();
+  }, [zoom, canvasWidth, canvasHeight]);
 
   useEffect(() => {
     if (!fc.current) return;
