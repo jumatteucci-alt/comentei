@@ -427,6 +427,15 @@ function EditorInner() {
     setSelBlur(uid && blurValueMap.current.has(uid) ? blurValueMap.current.get(uid)! : 0);
     const satFilter = (obj.filters||[]).find((f: any) => f.type === "Saturation");
     setSelSaturation(satFilter ? (satFilter.saturation ?? 0) : 0);
+    if (obj.__gradMask) {
+      const m = obj.__gradMask;
+      setGradMaskC1(m.c1); setGradMaskA1(m.a1);
+      setGradMaskC2(m.c2); setGradMaskA2(m.a2);
+      setGradMaskAngle(m.angle);
+      setShowGradientMask(true);
+    } else {
+      setShowGradientMask(false);
+    }
     const fill = obj.fill;
     if (fill && fill.colorStops) {
       const stops = fill.colorStops.map((s: any) => ({ color: s.color || "#000", opacity: 1, pos: Math.round((s.offset||0)*100) }));
@@ -458,60 +467,90 @@ function EditorInner() {
   const applyGradientMask = () => {
     if (!fc.current || !sel || sel.type !== "image") return;
     const fabric = (window as any).fabric;
+
+    // Guarda imagem original na primeira vez
     const imgEl = (sel as any)._element as HTMLImageElement;
-    const w = imgEl.naturalWidth || sel.width;
-    const h = imgEl.naturalHeight || sel.height;
-
-    // Cria canvas temporário com a imagem + máscara de gradiente
-    const tmpCanvas = document.createElement("canvas");
-    tmpCanvas.width = w; tmpCanvas.height = h;
-    const ctx = tmpCanvas.getContext("2d")!;
-
-    // Desenha imagem original
-    ctx.drawImage(imgEl, 0, 0, w, h);
-
-    // Cria gradiente de máscara
-    const rad = (gradMaskAngle * Math.PI) / 180;
-    const x1 = (Math.cos(rad + Math.PI) + 1) / 2 * w;
-    const y1 = (Math.sin(rad + Math.PI) + 1) / 2 * h;
-    const x2 = (Math.cos(rad) + 1) / 2 * w;
-    const y2 = (Math.sin(rad) + 1) / 2 * h;
-
-    const grad = ctx.createLinearGradient(x1, y1, x2, y2);
-
-    const toHex = (n: number) => Math.round(n * 255).toString(16).padStart(2, "0");
-    grad.addColorStop(0, `${gradMaskC1}${toHex(gradMaskA1)}`);
-    grad.addColorStop(1, `${gradMaskC2}${toHex(gradMaskA2)}`);
-
-    // Aplica máscara pixel a pixel preservando cor original
-    const imageData = ctx.getImageData(0, 0, w, h);
-    const data = imageData.data;
-
-    // Cria canvas só com o gradiente para ler os valores de alpha
-    const gradCanvas = document.createElement("canvas");
-    gradCanvas.width = w; gradCanvas.height = h;
-    const gCtx = gradCanvas.getContext("2d")!;
-    gCtx.fillStyle = grad;
-    gCtx.fillRect(0, 0, w, h);
-    const gradData = gCtx.getImageData(0, 0, w, h).data;
-
-    // Multiplica alpha original pelo alpha do gradiente
-    for (let i = 3; i < data.length; i += 4) {
-      const maskAlpha = (gradData[i - 3] * 0.299 + gradData[i - 2] * 0.587 + gradData[i - 1] * 0.114) / 255;
-      // Usa a cor do gradiente como máscara de opacidade
-      const gradAlpha = gradData[i] / 255;
-      data[i] = Math.round(data[i] * gradAlpha);
+    if (!sel.__originalSrc) {
+      const origCanvas = document.createElement("canvas");
+      origCanvas.width = imgEl.naturalWidth || sel.width;
+      origCanvas.height = imgEl.naturalHeight || sel.height;
+      const origCtx = origCanvas.getContext("2d")!;
+      origCtx.drawImage(imgEl, 0, 0);
+      sel.__originalSrc = origCanvas.toDataURL("image/png");
     }
-    ctx.putImageData(imageData, 0, 0);
 
-    const dataURL = tmpCanvas.toDataURL("image/png");
+    // Guarda parâmetros da máscara no objeto
+    sel.__gradMask = { c1: gradMaskC1, a1: gradMaskA1, c2: gradMaskC2, a2: gradMaskA2, angle: gradMaskAngle };
+
+    // Renderiza a partir do original sempre
+    const origImg = new Image();
+    origImg.onload = () => {
+      const w = origImg.naturalWidth;
+      const h = origImg.naturalHeight;
+
+      const tmpCanvas = document.createElement("canvas");
+      tmpCanvas.width = w; tmpCanvas.height = h;
+      const ctx = tmpCanvas.getContext("2d")!;
+      ctx.drawImage(origImg, 0, 0, w, h);
+
+      const rad = (gradMaskAngle * Math.PI) / 180;
+      const x1 = (Math.cos(rad + Math.PI) + 1) / 2 * w;
+      const y1 = (Math.sin(rad + Math.PI) + 1) / 2 * h;
+      const x2 = (Math.cos(rad) + 1) / 2 * w;
+      const y2 = (Math.sin(rad) + 1) / 2 * h;
+
+      const gradCanvas = document.createElement("canvas");
+      gradCanvas.width = w; gradCanvas.height = h;
+      const gCtx = gradCanvas.getContext("2d")!;
+      const grad = gCtx.createLinearGradient(x1, y1, x2, y2);
+      const toHex = (n: number) => Math.round(n * 255).toString(16).padStart(2, "0");
+      grad.addColorStop(0, `${gradMaskC1}${toHex(gradMaskA1)}`);
+      grad.addColorStop(1, `${gradMaskC2}${toHex(gradMaskA2)}`);
+      gCtx.fillStyle = grad;
+      gCtx.fillRect(0, 0, w, h);
+
+      const imageData = ctx.getImageData(0, 0, w, h);
+      const data = imageData.data;
+      const gradData = gCtx.getImageData(0, 0, w, h).data;
+
+      for (let i = 3; i < data.length; i += 4) {
+        data[i] = Math.round(data[i] * (gradData[i] / 255));
+      }
+      ctx.putImageData(imageData, 0, 0);
+
+      const dataURL = tmpCanvas.toDataURL("image/png");
+      const left = sel.left; const top = sel.top;
+      const scaleX = sel.scaleX || 1; const scaleY = sel.scaleY || 1;
+      const angle = sel.angle || 0;
+      const uid = sel.__uid;
+      const originalSrc = sel.__originalSrc;
+      const gradMask = sel.__gradMask;
+
+      fc.current.remove(sel);
+      fabric.Image.fromURL(dataURL, (img: any) => {
+        img.set({ left, top, scaleX, scaleY, angle, strokeUniform: true });
+        img.__uid = uid;
+        img.__originalSrc = originalSrc;
+        img.__gradMask = gradMask;
+        fc.current.add(img);
+        fc.current.setActiveObject(img);
+        syncSel(img);
+        fc.current.requestRenderAll();
+      });
+    };
+    origImg.src = sel.__originalSrc;
+  };
+
+  const removeGradientMask = () => {
+    if (!fc.current || !sel || !sel.__originalSrc) return;
+    const fabric = (window as any).fabric;
     const left = sel.left; const top = sel.top;
     const scaleX = sel.scaleX || 1; const scaleY = sel.scaleY || 1;
     const angle = sel.angle || 0;
     const uid = sel.__uid;
-
+    const src = sel.__originalSrc;
     fc.current.remove(sel);
-    fabric.Image.fromURL(dataURL, (img: any) => {
+    fabric.Image.fromURL(src, (img: any) => {
       img.set({ left, top, scaleX, scaleY, angle, strokeUniform: true });
       img.__uid = uid;
       fc.current.add(img);
@@ -519,7 +558,6 @@ function EditorInner() {
       syncSel(img);
       fc.current.requestRenderAll();
     });
-    setShowGradientMask(false);
   };
 
   const applyBooleanOperation = (operation: "unite" | "subtract" | "intersect" | "exclude") => {
@@ -2691,6 +2729,12 @@ function EditorInner() {
                         className="w-full py-1.5 bg-purple-600 text-white rounded-lg text-xs font-medium hover:bg-purple-700 transition">
                         Aplicar máscara
                       </button>
+                      {sel.__originalSrc && (
+                        <button onClick={removeGradientMask}
+                          className="w-full py-1.5 border border-red-200 text-red-500 rounded-lg text-xs hover:bg-red-50 transition">
+                          Remover máscara
+                        </button>
+                      )}
                     </div>
                   )}
                   <Sec title="Saturação" />
