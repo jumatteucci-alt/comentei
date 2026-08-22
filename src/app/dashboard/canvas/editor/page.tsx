@@ -1,6 +1,5 @@
 "use client";
 export const dynamic = "force-dynamic";
-
 import { useEffect, useRef, useState, Suspense, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
@@ -26,242 +25,138 @@ const FONTS = [
 ];
 
 function loadGoogleFonts() {
-  if (typeof document === "undefined" || document.getElementById("cmc-gfonts")) return;
+  if (document.getElementById("cmc-gfonts")) return;
   const names = FONTS.filter(f => f.google).map(f => f.name.replace(/ /g, "+") + ":wght@400;700").join("&family=");
   const l = document.createElement("link");
-  l.id = "cmc-gfonts";
-  l.rel = "stylesheet";
+  l.id = "cmc-gfonts"; l.rel = "stylesheet";
   l.href = `https://fonts.googleapis.com/css2?family=${names}&display=swap`;
   document.head.appendChild(l);
 }
 
-function hexToRgba(hex: string, alpha = 1) {
-  if (!hex) return `rgba(0, 0, 0, ${alpha})`;
-  if (hex.startsWith("rgb")) return hex;
-  let c = hex.replace("#", "");
-  if (c.length === 3) c = c.split("").map(x => x + x).join("");
-  const num = parseInt(c, 16);
-  if (isNaN(num)) return `rgba(0, 0, 0, ${alpha})`;
-  const r = (num >> 16) & 255;
-  const g = (num >> 8) & 255;
-  const b = num & 255;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-function rgbToHex(rgb: string): string {
-  if (!rgb) return "#000000";
-  if (rgb.startsWith("#")) return rgb;
-  const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-  if (!m) return "#000000";
-  return "#" + [m[1], m[2], m[3]].map(n => parseInt(n).toString(16).padStart(2, "0")).join("");
-}
-
-function getObjColor(obj: any): string {
-  if (!obj) return "#000000";
-  const fill = obj.fill;
-  if (!fill || fill === "transparent" || fill === "none") return "transparent";
-  if (typeof fill === "string") return rgbToHex(fill);
-  if (fill.colorStops?.length) return rgbToHex(fill.colorStops[0].color);
-  return "#000000";
-}
-
-function ColorPicker({ value, onChange, label, allowTransparent = true }: { value: string; onChange: (c: string) => void; label?: string; allowTransparent?: boolean }) {
-  const isNone = value === "transparent" || value === "" || value === "none";
+function ColorPicker({ value, onChange, label }: { value: string; onChange: (c: string) => void; label: string }) {
   return (
     <div>
       {label && <p className="text-xs text-gray-400 mb-1">{label}</p>}
-      <div className="flex flex-wrap gap-1 mb-1.5 items-center">
-        {allowTransparent && (
-          <button
-            type="button"
-            onClick={() => onChange("transparent")}
-            title="Sem cor / Transparente"
-            style={{ outline: isNone ? "2px solid #4f46e5" : "1px solid #e4e4e0", outlineOffset: "1px" }}
-            className="w-5 h-5 rounded transition flex-shrink-0 relative overflow-hidden bg-white"
-          >
-            <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom right, transparent calc(50% - 1px), #ef4444 calc(50% - 1px), #ef4444 calc(50% + 1px), transparent calc(50% + 1px))" }} />
-          </button>
-        )}
+      <div className="flex flex-wrap gap-1 mb-1.5">
         {SWATCHES.map(c => (
-          <button
-            key={c}
-            type="button"
-            onClick={() => onChange(c)}
-            style={{ background: c, outline: !isNone && value === c ? "2px solid #4f46e5" : "1px solid #e4e4e0", outlineOffset: "1px" }}
-            className="w-5 h-5 rounded transition flex-shrink-0"
-          />
+          <button key={c} onClick={() => onChange(c)}
+            style={{ background: c, outline: value === c ? "2px solid #4f46e5" : "1px solid #e4e4e0", outlineOffset: "1px" }}
+            className="w-5 h-5 rounded transition flex-shrink-0" />
         ))}
       </div>
       <div className="flex gap-1.5">
-        <input
-          type="color"
-          value={isNone || !value.startsWith("#") ? "#000000" : value}
-          onChange={e => onChange(e.target.value)}
-          className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0 flex-shrink-0"
-        />
-        <input
-          type="text"
-          value={isNone ? "none" : value}
-          onChange={e => onChange(e.target.value)}
-          className="flex-1 px-2 py-1 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 min-w-0"
-        />
+        <input type="color" value={value.startsWith("#") || value.startsWith("rgb") ? value : "#000000"}
+          onChange={e => onChange(e.target.value)} className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0 flex-shrink-0" />
+        <input type="text" value={value} onChange={e => onChange(e.target.value)}
+          className="flex-1 px-2 py-1 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 min-w-0" />
       </div>
     </div>
   );
 }
 
-export type GradStop = { offset: number; color: string; opacity: number };
-export type GradConfig = { angle: number; stops: GradStop[] };
 
-function GradientEditor({ value, onChange }: { value: GradConfig | null; onChange: (g: GradConfig | null) => void }) {
+function ColorPickerWithNone({ value, onChange }: { value: string; onChange: (c: string) => void }) {
+  const isNone = value === "transparent" || value === "";
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1 mb-1.5">
+        {/* No-fill button — same size as swatches */}
+        <button onClick={() => onChange("transparent")} title="Sem cor"
+          style={{ outline: isNone ? "2px solid #4f46e5" : "1px solid #e4e4e0", outlineOffset: "1px", background: "#fff" }}
+          className="relative w-5 h-5 rounded overflow-hidden flex-shrink-0 transition">
+          <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom right, transparent calc(50% - 1px), #ef4444 calc(50% - 1px), #ef4444 calc(50% + 1px), transparent calc(50% + 1px))" }} />
+        </button>
+        {SWATCHES.map(col => (
+          <button key={col} onClick={() => onChange(col)}
+            style={{ background: col, outline: value === col ? "2px solid #4f46e5" : "1px solid #e4e4e0", outlineOffset: "1px" }}
+            className="w-5 h-5 rounded transition flex-shrink-0" />
+        ))}
+      </div>
+      {!isNone && (
+        <div className="flex gap-1.5">
+          <input type="color" value={value.startsWith("#") ? value : "#000000"}
+            onChange={e => onChange(e.target.value)} className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0 flex-shrink-0" />
+          <input type="text" value={value} onChange={e => onChange(e.target.value)}
+            className="flex-1 px-2 py-1 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 min-w-0" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+type GradStop = { color: string; opacity: number; pos: number };
+type GradValue = { stops: GradStop[]; angle: number };
+
+function GradientEditor({ value, onChange }: { value: GradValue | null; onChange: (g: GradValue | null) => void }) {
   const [on, setOn] = useState(!!value);
-  const grad: GradConfig = value || {
-    angle: 90,
-    stops: [
-      { offset: 0, color: "#4f46e5", opacity: 1 },
-      { offset: 1, color: "#ec4899", opacity: 1 }
-    ]
-  };
+  const defaultG: GradValue = { stops: [{ color:"#4f46e5", opacity:1, pos:0 },{ color:"#ec4899", opacity:1, pos:100 }], angle: 90 };
+  const g: GradValue = value || defaultG;
 
-  const handleToggle = () => {
-    const next = !on;
-    setOn(next);
-    onChange(next ? grad : null);
+  const updateStop = (i: number, patch: Partial<GradStop>) => {
+    const stops = g.stops.map((s, idx) => idx===i ? {...s,...patch} : s);
+    onChange({ ...g, stops });
   };
-
-  const updateAngle = (angle: number) => {
-    onChange({ ...grad, angle });
-  };
-
-  const updateStop = (idx: number, prop: Partial<GradStop>) => {
-    const stops = [...grad.stops];
-    stops[idx] = { ...stops[idx], ...prop };
-    onChange({ ...grad, stops });
-  };
-
   const addStop = () => {
-    const stops = [...grad.stops];
-    const lastOffset = stops[stops.length - 1]?.offset ?? 1;
-    stops.push({ offset: Math.min(1, Math.round((lastOffset + 0.1) * 10) / 10), color: "#3b82f6", opacity: 1 });
-    onChange({ ...grad, stops });
+    const stops = [...g.stops, { color:"#ffffff", opacity:1, pos:50 }].sort((a,b)=>a.pos-b.pos);
+    onChange({ ...g, stops });
+  };
+  const removeStop = (i: number) => {
+    if (g.stops.length <= 2) return;
+    const stops = g.stops.filter((_,idx) => idx!==i);
+    onChange({ ...g, stops });
   };
 
-  const removeStop = (idx: number) => {
-    if (grad.stops.length <= 2) return;
-    const stops = grad.stops.filter((_, i) => i !== idx);
-    onChange({ ...grad, stops });
-  };
-
-  const getCssGradient = () => {
-    const sorted = [...grad.stops].sort((a, b) => a.offset - b.offset);
-    const stopsStr = sorted.map(s => {
-      const c = s.color || "#000000";
-      const o = s.opacity ?? 1;
-      return `${hexToRgba(c, o)} ${s.offset * 100}%`;
-    }).join(", ");
-    return `linear-gradient(${grad.angle}deg, ${stopsStr})`;
-  };
+  const previewGrad = g.stops.map(s => {
+    const hex = s.color.startsWith("#") ? s.color : "#000";
+    const r = parseInt(hex.slice(1,3),16), gr = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+    return `rgba(${r},${gr},${b},${s.opacity}) ${s.pos}%`;
+  }).join(", ");
 
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <span className="text-xs text-gray-400">Usar gradiente</span>
-        <button
-          type="button"
-          onClick={handleToggle}
-          className={`w-9 h-5 rounded-full transition ${on ? "bg-indigo-500" : "bg-gray-200"}`}
-        >
+        <button onClick={() => { const next = !on; setOn(next); onChange(next ? g : null); }}
+          className={`w-9 h-5 rounded-full transition ${on ? "bg-indigo-500" : "bg-gray-200"}`}>
           <span className={`block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${on ? "translate-x-4" : ""}`} />
         </button>
       </div>
-
       {on && (
-        <div className="flex flex-col gap-2.5 pt-1">
+        <div className="flex flex-col gap-2">
+          <div style={{ background: `linear-gradient(${g.angle}deg, ${previewGrad})`, height: 20, borderRadius: 6 }} />
           <div>
-            <div className="flex justify-between mb-1">
-              <span className="text-xs text-gray-400">Ângulo: {grad.angle}°</span>
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={360}
-              value={grad.angle}
-              onChange={e => updateAngle(+e.target.value)}
-              className="w-full accent-indigo-600"
-            />
+            <p className="text-xs text-gray-400 mb-1">Ângulo: {g.angle}°</p>
+            <input type="range" min={0} max={360} value={g.angle} onChange={e => onChange({ ...g, angle: +e.target.value })} className="w-full accent-indigo-600" />
           </div>
-
-          <div style={{ background: getCssGradient(), height: 20, borderRadius: 6, border: "1px solid #e2e8f0" }} />
-
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-400">Cores do gradiente</span>
-              <button
-                type="button"
-                onClick={addStop}
-                className="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold"
-              >
-                + Adicionar cor
-              </button>
-            </div>
-
-            {grad.stops.map((stop, idx) => (
-              <div key={idx} className="p-2 border border-gray-100 bg-gray-50 rounded-lg flex flex-col gap-1.5">
-                <div className="flex items-center gap-1.5">
-                  <input
-                    type="color"
-                    value={stop.color.startsWith("#") ? stop.color : "#000000"}
-                    onChange={e => updateStop(idx, { color: e.target.value })}
-                    className="w-6 h-6 rounded border border-gray-200 cursor-pointer p-0 flex-shrink-0"
-                  />
-                  <input
-                    type="text"
-                    value={stop.color}
-                    onChange={e => updateStop(idx, { color: e.target.value })}
-                    className="flex-1 px-1.5 py-0.5 border border-gray-200 rounded text-xs bg-white focus:outline-none"
-                  />
-                  {grad.stops.length > 2 && (
-                    <button
-                      type="button"
-                      onClick={() => removeStop(idx)}
-                      className="text-red-500 hover:text-red-700 px-1 text-xs"
-                      title="Remover cor"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-gray-400 w-12 flex-shrink-0">Posição</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={stop.offset}
-                    onChange={e => updateStop(idx, { offset: +e.target.value })}
-                    className="flex-1 accent-indigo-600"
-                  />
-                  <span className="text-[10px] text-gray-500 w-8 text-right">{Math.round(stop.offset * 100)}%</span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-gray-400 w-12 flex-shrink-0">Opacidade</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={stop.opacity ?? 1}
-                    onChange={e => updateStop(idx, { opacity: +e.target.value })}
-                    className="flex-1 accent-indigo-600"
-                  />
-                  <span className="text-[10px] text-gray-500 w-8 text-right">{Math.round((stop.opacity ?? 1) * 100)}%</span>
-                </div>
+          {g.stops.map((s, i) => (
+            <div key={i} className="flex flex-col gap-1 p-2 border border-gray-100 rounded-lg">
+              <div className="flex items-center gap-1 justify-between">
+                <span className="text-xs text-gray-400">Cor {i+1}</span>
+                {g.stops.length > 2 && (
+                  <button onClick={() => removeStop(i)} className="text-red-400 hover:text-red-600 text-xs">✕</button>
+                )}
               </div>
-            ))}
-          </div>
+              <div className="flex gap-1">
+                <input type="color" value={s.color.startsWith("#") ? s.color : "#000000"}
+                  onChange={e => updateStop(i, { color: e.target.value })} className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0 flex-shrink-0" />
+                <input type="text" value={s.color} onChange={e => updateStop(i, { color: e.target.value })}
+                  className="flex-1 px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:border-indigo-400 min-w-0" />
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-gray-400 w-12 flex-shrink-0">Posição</span>
+                <input type="range" min={0} max={100} value={s.pos} onChange={e => updateStop(i, { pos: +e.target.value })} className="flex-1 accent-indigo-600" />
+                <span className="text-xs text-gray-400 w-7 text-right">{s.pos}%</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-gray-400 w-12 flex-shrink-0">Opac.</span>
+                <input type="range" min={0} max={1} step={0.01} value={s.opacity} onChange={e => updateStop(i, { opacity: +e.target.value })} className="flex-1 accent-indigo-600" />
+                <span className="text-xs text-gray-400 w-7 text-right">{Math.round(s.opacity*100)}%</span>
+              </div>
+            </div>
+          ))}
+          <button onClick={addStop} className="w-full py-1.5 border border-dashed border-gray-300 text-gray-400 rounded-lg text-xs hover:border-indigo-300 hover:text-indigo-500 transition">
+            + Adicionar cor
+          </button>
         </div>
       )}
     </div>
@@ -291,30 +186,39 @@ function Sec({ title }: { title: string }) {
   return <p className="text-xs font-semibold text-gray-600 pt-2 border-t border-gray-100">{title}</p>;
 }
 
-function applyGradient(fc: any, obj: any, g: GradConfig) {
+function applyGradient(fc: any, obj: any, g: { stops: {color:string;opacity:number;pos:number}[]; angle: number }) {
   const fabric = (window as any).fabric;
   const rad = (g.angle * Math.PI) / 180;
-  const w = obj.width! * (obj.scaleX || 1);
-  const h = obj.height! * (obj.scaleY || 1);
+  const w = (obj.width || 100) * (obj.scaleX || 1);
+  const h = (obj.height || 100) * (obj.scaleY || 1);
   const x1 = (Math.cos(rad + Math.PI) + 1) / 2 * w;
   const y1 = (Math.sin(rad + Math.PI) + 1) / 2 * h;
   const x2 = (Math.cos(rad) + 1) / 2 * w;
   const y2 = (Math.sin(rad) + 1) / 2 * h;
-
-  const colorStops = [...g.stops]
-    .sort((a, b) => a.offset - b.offset)
-    .map(s => ({
-      offset: s.offset,
-      color: hexToRgba(s.color, s.opacity ?? 1)
-    }));
-
-  const gradient = new fabric.Gradient({
-    type: "linear",
-    coords: { x1, y1, x2, y2 },
-    colorStops
+  const colorStops = g.stops.map(s => {
+    const hex = s.color.startsWith("#") ? s.color : "#000000";
+    const r = parseInt(hex.slice(1,3),16), gr = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+    return { offset: s.pos/100, color: `rgba(${r},${gr},${b},${s.opacity})` };
   });
+  const gradient = new fabric.Gradient({ type: "linear", coords: { x1, y1, x2, y2 }, colorStops });
   obj.set("fill", gradient);
   fc.requestRenderAll();
+}
+
+function rgbToHex(rgb: string): string {
+  if (rgb.startsWith("#")) return rgb;
+  const m = rgb.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+  if (!m) return "#000000";
+  return "#" + [m[1], m[2], m[3]].map(n => parseInt(n).toString(16).padStart(2, "0")).join("");
+}
+
+function getObjColor(obj: any): string {
+  if (!obj) return "#000000";
+  const fill = obj.fill;
+  if (!fill) return "#000000";
+  if (typeof fill === "string") return rgbToHex(fill);
+  if (fill.colorStops?.length) return rgbToHex(fill.colorStops[0].color);
+  return "#000000";
 }
 
 function EditorInner() {
@@ -368,6 +272,9 @@ function EditorInner() {
   const isPenDragging = useRef(false);
   const activeHandleLine = useRef<any>(null);
   const lastFinalizedPath = useRef<any>(null);
+  const finalizePenRef = useRef<(close:boolean)=>void>(() => {});
+  const cancelPenRef = useRef<()=>void>(() => {});
+  const undoLastPenPointRef = useRef<()=>void>(() => {});
 
   const [isEditingNodes, setIsEditingNodes] = useState(false);
   const editingData = useRef<{
@@ -381,7 +288,7 @@ function EditorInner() {
   const [sel, setSel] = useState<any>(null);
   const [selFill, setSelFill] = useState("#000000");
   const [selOpacity, setSelOpacity] = useState(100);
-  const [selStroke, setSelStroke] = useState("transparent");
+  const [selStroke, setSelStroke] = useState("#000000");
   const [selStrokeW, setSelStrokeW] = useState(0);
   const [selRadius, setSelRadius] = useState(0);
   const [selRotation, setSelRotation] = useState(0);
@@ -394,30 +301,18 @@ function EditorInner() {
   const [selSaturation, setSelSaturation] = useState(0);
   const [selFontSize, setSelFontSize] = useState(48);
   const [selFontFamily, setSelFontFamily] = useState("Montserrat");
-  const [selTextAlign, setSelTextAlign] = useState<"left"|"center"|"right"|"justify">("left");
   const [selBold, setSelBold] = useState(false);
   const [selItalic, setSelItalic] = useState(false);
   const [selUnderline, setSelUnderline] = useState(false);
+  const [selTextAlign, setSelTextAlign] = useState<string>("left");
   const [selCharSpacing, setSelCharSpacing] = useState(0);
   const [selLineHeight, setSelLineHeight] = useState(1.2);
   const [selTextWidth, setSelTextWidth] = useState(300);
   const [selTextHeight, setSelTextHeight] = useState(0);
-  const [selFillGradient, setSelFillGradient] = useState<GradConfig | null>(null);
+  const [selFillGradient, setSelFillGradient] = useState<{stops:{color:string;opacity:number;pos:number}[];angle:number}|null>(null);
 
   const [bgSolid, setBgSolid] = useState("#ffffff");
-  const [bgGradient, setBgGradient] = useState<{c1:string;c2:string;angle:number}|null>(null);
-
-  const isText = sel?.type === "i-text" || sel?.type === "textbox";
-  const isTextbox = sel?.type === "textbox";
-  const isPath = sel?.type === "path";
-  const isRect = sel?.type === "rect";
-  const hasClipPath = !!sel?.clipPath;
-  const isShapeType = (o: any) => o && ["rect", "circle", "triangle", "polygon"].includes(o.type);
-
-  const isMultiShapeSelected = sel?.type === "activeSelection" && (() => {
-    const objs = (sel as any).getObjects();
-    return objs.length >= 2 && objs.every((o: any) => o.type !== "image" && o.type !== "i-text" && o.type !== "textbox");
-  })();
+  const [bgGradient, setBgGradient] = useState<{stops:{color:string;opacity:number;pos:number}[];angle:number}|null>(null);
 
   const fitCanvasToScreen = useCallback(() => {
     if (!canvasContainerRef.current) return;
@@ -500,16 +395,16 @@ function EditorInner() {
 
     setSelFill(getObjColor(obj));
     setSelOpacity(Math.round((obj.opacity ?? 1) * 100));
-    setSelStroke(obj.stroke || "transparent");
+    setSelStroke(obj.stroke || "#000000");
     setSelStrokeW(obj.strokeWidth || 0);
     setSelRadius(obj.rx || 0);
     setSelRotation(Math.round(obj.angle || 0));
     setSelFontSize(Math.round(obj.fontSize || 48));
     setSelFontFamily(obj.fontFamily || "Montserrat");
-    setSelTextAlign(obj.textAlign || "left");
     setSelBold(obj.fontWeight === "bold");
     setSelItalic(obj.fontStyle === "italic");
     setSelUnderline(!!obj.underline);
+    setSelTextAlign(obj.textAlign || "left");
     setSelCharSpacing(obj.charSpacing ?? 0);
     setSelLineHeight(obj.lineHeight ?? 1.2);
     if (obj.type === "textbox") {
@@ -523,20 +418,11 @@ function EditorInner() {
     setSelBlur(uid && blurValueMap.current.has(uid) ? blurValueMap.current.get(uid)! : 0);
     const satFilter = (obj.filters||[]).find((f: any) => f.type === "Saturation");
     setSelSaturation(satFilter ? (satFilter.saturation ?? 0) : 0);
-    
     const fill = obj.fill;
     if (fill && fill.colorStops) {
-      setSelFillGradient({
-        angle: 90,
-        stops: fill.colorStops.map((s: any) => ({
-          offset: s.offset,
-          color: rgbToHex(s.color),
-          opacity: 1
-        }))
-      });
-    } else {
-      setSelFillGradient(null);
-    }
+      const stops = fill.colorStops.map((s: any) => ({ color: s.color || "#000", opacity: 1, pos: Math.round((s.offset||0)*100) }));
+      setSelFillGradient({ stops, angle: 90 });
+    } else { setSelFillGradient(null); }
   };
 
   const deleteSelected = () => {
@@ -558,343 +444,6 @@ function EditorInner() {
     canvas.requestRenderAll();
     syncSel(null);
     refreshLayers(canvas);
-  };
-
-  const upd = (props: Record<string, any>) => {
-    if (!fc.current || !sel) return;
-    sel.set(props);
-    if (isText && sel.fontFamily) {
-      document.fonts.load(`${sel.fontSize || 48}px "${sel.fontFamily}"`).finally(() => {
-        fc.current?.requestRenderAll();
-      });
-    } else {
-      fc.current.requestRenderAll();
-    }
-  };
-
-  const updateFill = (color: string) => {
-    setSelFill(color); setSelFillGradient(null);
-    upd({ fill: color });
-  };
-  const updateFillGradient = (g: GradConfig | null) => {
-    setSelFillGradient(g);
-    if (!g) { upd({ fill: selFill }); return; }
-    if (fc.current && sel) applyGradient(fc.current, sel, g);
-  };
-  const updateOpacity  = (v: number) => { setSelOpacity(v);  upd({ opacity: v/100 }); };
-  const updateStroke   = (c: string) => { setSelStroke(c);   upd({ stroke: c }); };
-  const updateStrokeW  = (v: number) => { setSelStrokeW(v);  upd({ strokeWidth: v, strokeUniform: true }); };
-  const updateRadius   = (v: number) => { setSelRadius(v);   upd({ rx: v, ry: v }); };
-  const updateRotation = (v: number) => { setSelRotation(v); upd({ angle: v }); };
-  const updateFontSize = (v: number) => {
-    setSelFontSize(v);
-    if (!fc.current || !sel) return;
-    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
-      sel.setSelectionStyles({ fontSize: v });
-      fc.current.requestRenderAll();
-    } else { upd({ fontSize: v }); }
-  };
-  const updateFontFamily = (v: string) => {
-    setSelFontFamily(v);
-    document.fonts.load(`${selFontSize}px "${v}"`).finally(() => {
-      upd({ fontFamily: v });
-    });
-  };
-  const updateTextAlign = (v: "left"|"center"|"right"|"justify") => {
-    setSelTextAlign(v);
-    upd({ textAlign: v });
-  };
-  const toggleBold = () => {
-    const n = !selBold; setSelBold(n);
-    if (!fc.current || !sel) return;
-    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
-      sel.setSelectionStyles({ fontWeight: n ? "bold" : "normal" });
-      fc.current.requestRenderAll();
-    } else {
-      sel.set({ fontWeight: n ? "bold" : "normal" });
-      if (sel.initDimensions) sel.initDimensions();
-      document.fonts.load(`bold ${sel.fontSize}px "${sel.fontFamily}"`).finally(() => {
-        fc.current?.requestRenderAll();
-      });
-    }
-  };
-  const toggleItalic = () => {
-    const n = !selItalic; setSelItalic(n);
-    if (!fc.current || !sel) return;
-    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
-      sel.setSelectionStyles({ fontStyle: n ? "italic" : "normal" });
-      fc.current.requestRenderAll();
-    } else { upd({ fontStyle: n ? "italic" : "normal" }); }
-  };
-  const toggleUnderline = () => {
-    const n = !selUnderline; setSelUnderline(n);
-    if (!fc.current || !sel) return;
-    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
-      sel.setSelectionStyles({ underline: n });
-      fc.current.requestRenderAll();
-    } else { upd({ underline: n }); }
-  };
-  const updateFillForText = (color: string) => {
-    if (sel?.isEditing && sel.selectionStart !== sel.selectionEnd) {
-      setSelFill(color);
-      sel.setSelectionStyles({ fill: color });
-      fc.current?.requestRenderAll();
-    } else {
-      updateFill(color);
-    }
-  };
-  const updateCharSpacing = (v: number) => { setSelCharSpacing(v); upd({ charSpacing: v }); };
-  const updateLineHeight  = (v: number) => { setSelLineHeight(v);  upd({ lineHeight: v }); };
-
-  const updateShadow = (on: boolean) => {
-    setSelShadow(on);
-    if (!fc.current || !sel) return;
-    sel.set("shadow", on ? new (window as any).fabric.Shadow({ color: selShadowColor, blur: selShadowBlur, offsetX: selShadowX, offsetY: selShadowY }) : null);
-    fc.current.requestRenderAll();
-  };
-  const applyShadow = (color: string, blur: number, ox: number, oy: number) => {
-    if (!fc.current || !sel || !selShadow) return;
-    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur, offsetX: ox, oy }));
-    fc.current.requestRenderAll();
-  };
-
-  const updateSaturation = (v: number) => {
-    setSelSaturation(v);
-    if (!fc.current || !sel) return;
-    const fabric = (window as any).fabric;
-    const filters = (sel.filters || []).filter((f: any) => f.type !== "Saturation");
-    filters.push(new fabric.Image.filters.Saturation({ saturation: v }));
-    sel.filters = filters;
-    sel.applyFilters();
-    fc.current.requestRenderAll();
-  };
-
-  const updateTextWidth = (v: number) => {
-    setSelTextWidth(v);
-    upd({ width: v });
-  };
-
-  const updateTextHeight = (v: number) => {
-    setSelTextHeight(v);
-    if (!fc.current || !sel) return;
-    if (v === 0) {
-      sel.set({ minHeight: undefined, __fixedHeight: false });
-      sel.__fixedHeight = false;
-      sel.initDimensions?.();
-      fc.current.requestRenderAll();
-    } else {
-      sel.__fixedHeight = true;
-      sel.set({ height: v, minHeight: v });
-      fc.current.requestRenderAll();
-    }
-  };
-
-  const updateBlur = (v: number) => {
-    setSelBlur(v);
-    if (!fc.current || !sel) return;
-    const uid = sel.__uid;
-    if (v > 0) blurValueMap.current.set(uid, v);
-    else blurValueMap.current.delete(uid);
-
-    if (sel.type === "image" && !blurOriginMap.current.has(uid)) {
-      const fabric = (window as any).fabric;
-      const filters = (sel.filters || []).filter((f: any) => f.type !== "Blur");
-      if (v > 0) filters.push(new fabric.Image.filters.Blur({ blur: v / 100 }));
-      sel.filters = filters;
-      sel.set({ padding: v > 0 ? Math.round(v * 0.8) : 0 });
-      sel.applyFilters();
-      fc.current.requestRenderAll();
-      return;
-    }
-
-    if (!blurPosMap.current.has(uid)) {
-      blurPosMap.current.set(uid, {
-        left: sel.left, top: sel.top,
-        scaleX: sel.scaleX || 1, scaleY: sel.scaleY || 1,
-        angle: sel.angle || 0,
-      });
-    }
-
-    if (!blurOriginMap.current.has(uid) && sel.type !== "image") {
-      blurOriginMap.current.set(uid, JSON.stringify(sel.toObject()));
-    }
-
-    if (blurTimer.current) clearTimeout(blurTimer.current);
-    blurTimer.current = setTimeout(() => {
-      const fabric = (window as any).fabric;
-      const currentV = blurValueMap.current.get(uid) ?? 0;
-      const pos = blurPosMap.current.get(uid)!;
-
-      if (currentV === 0 && blurOriginMap.current.has(uid)) {
-        const json = blurOriginMap.current.get(uid)!;
-        blurOriginMap.current.delete(uid);
-        blurPosMap.current.delete(uid);
-        const current = fc.current.getObjects().find((o: any) => o.__uid === uid);
-        if (current) fc.current.remove(current);
-        fabric.util.enlivenObjects([JSON.parse(json)], (objs: any[]) => {
-          const orig = objs[0];
-          orig.set({ left: pos.left, top: pos.top, angle: pos.angle, scaleX: pos.scaleX, scaleY: pos.scaleY });
-          orig.__uid = uid;
-          fc.current.add(orig);
-          fc.current.setActiveObject(orig);
-          setSel(orig);
-          setSelBlur(0);
-          fc.current.requestRenderAll();
-        });
-        return;
-      }
-
-      const sourceJson = blurOriginMap.current.get(uid)!;
-      const current = fc.current.getObjects().find((o: any) => o.__uid === uid);
-      if (current) fc.current.remove(current);
-
-      fabric.util.enlivenObjects([JSON.parse(sourceJson)], async (objs: any[]) => {
-        const sourceObj = objs[0];
-        const srcW = (sourceObj.width  || 100) * pos.scaleX;
-        const srcH = (sourceObj.height || 100) * pos.scaleY;
-        const blurPx = Math.max(1, Math.round(currentV * 0.3));
-        const pad = blurPx * 4;
-        const cw = Math.min(Math.ceil(srcW) + pad * 2, 1800);
-        const ch = Math.min(Math.ceil(srcH) + pad * 2, 1800);
-
-        const miniEl = document.createElement("canvas");
-        miniEl.width = cw; miniEl.height = ch;
-        const miniCanvas = new fabric.StaticCanvas(miniEl, { width: cw, height: ch, enableRetinaScaling: false });
-        sourceObj.set({ left: cw / 2, top: ch / 2, originX: "center", originY: "center", angle: 0, scaleX: pos.scaleX, scaleY: pos.scaleY });
-        miniCanvas.add(sourceObj);
-
-        await document.fonts.ready;
-        miniCanvas.renderAll();
-
-        const outEl = document.createElement("canvas");
-        outEl.width = cw; outEl.height = ch;
-        const ctx = outEl.getContext("2d")!;
-        ctx.filter = `blur(${blurPx}px)`;
-        ctx.drawImage(miniEl, 0, 0);
-        miniCanvas.dispose();
-
-        const dataURL = outEl.toDataURL("image/png");
-        fabric.Image.fromURL(dataURL, (img: any) => {
-          img.set({
-            left: pos.left + (srcW / 2) - (cw / 2),
-            top:  pos.top  + (srcH / 2) - (ch / 2),
-            angle: pos.angle,
-            scaleX: 1, scaleY: 1,
-            originX: "left", originY: "top",
-            strokeUniform: true,
-          });
-          img.__uid = uid;
-          fc.current.add(img);
-          fc.current.setActiveObject(img);
-          setSel(img);
-          setSelBlur(currentV);
-          fc.current.requestRenderAll();
-        });
-      });
-    }, 150);
-  };
-
-  const toggleLock = (uid: string) => {
-    if (!fc.current) return;
-    const obj = fc.current.getObjects().find((o: any) => o.__uid === uid);
-    if (!obj) return;
-    const locked = !obj.lockMovementX;
-    obj.set({
-      lockMovementX: locked, lockMovementY: locked,
-      lockRotation: locked, lockScalingX: locked, lockScalingY: locked,
-      selectable: !locked,
-      evented: !locked,
-      hoverCursor: locked ? "default" : "move",
-    });
-    if (locked && fc.current.getActiveObject() === obj) {
-      fc.current.discardActiveObject();
-      syncSel(null);
-    }
-    refreshLayers(fc.current);
-    fc.current.requestRenderAll();
-  };
-
-  const alignObj = (dir: string) => {
-    if (!fc.current || !sel) return;
-    const canvas = fc.current;
-    const cw = canvasWidth;
-    const ch = canvasHeight;
-    sel.setCoords();
-    const br = sel.getBoundingRect(true);
-    if (dir === "left")    sel.set({ left: sel.left - br.left });
-    if (dir === "hcenter") sel.set({ left: sel.left - br.left + (cw - br.width) / 2 });
-    if (dir === "right")   sel.set({ left: sel.left - br.left + cw - br.width });
-    if (dir === "top")     sel.set({ top: sel.top - br.top });
-    if (dir === "vcenter") sel.set({ top: sel.top - br.top + (ch - br.height) / 2 });
-    if (dir === "bottom")  sel.set({ top: sel.top - br.top + ch - br.height });
-    sel.setCoords();
-    canvas.requestRenderAll();
-  };
-
-  const convertShapeToFabricPath = (obj: any): any => {
-    if (obj.type === "path") return obj;
-    const fabric = (window as any).fabric;
-    const matrix = obj.calcTransformMatrix();
-    let d = "";
-
-    if (obj.type === "rect") {
-      const w = obj.width;
-      const h = obj.height;
-      const rx = Math.min(obj.rx || 0, w / 2);
-      const ry = Math.min(obj.ry || 0, h / 2);
-
-      if (rx > 0 || ry > 0) {
-        d = `M ${-w/2 + rx} ${-h/2} ` +
-            `L ${w/2 - rx} ${-h/2} Q ${w/2} ${-h/2} ${w/2} ${-h/2 + ry} ` +
-            `L ${w/2} ${h/2 - ry} Q ${w/2} ${h/2} ${w/2 - rx} ${h/2} ` +
-            `L ${-w/2 + rx} ${h/2} Q ${-w/2} ${h/2} ${-w/2} ${h/2 - ry} ` +
-            `L ${-w/2} ${-h/2 + ry} Q ${-w/2} ${-h/2} ${-w/2 + rx} ${-h/2} Z`;
-      } else {
-        d = `M ${-w/2} ${-h/2} L ${w/2} ${-h/2} L ${w/2} ${h/2} L ${-w/2} ${h/2} Z`;
-      }
-    } else if (obj.type === "circle") {
-      const r = obj.radius;
-      const k = 0.5522847498;
-      d = `M ${0} ${-r} ` +
-          `C ${r * k} ${-r} ${r} ${-r * k} ${r} 0 ` +
-          `C ${r} ${r * k} ${r * k} ${r} 0 ${r} ` +
-          `C ${-r * k} ${r} ${-r} ${r * k} ${-r} 0 ` +
-          `C ${-r} ${-r * k} ${-r * k} ${-r} 0 ${-r} Z`;
-    } else if (obj.type === "triangle") {
-      const w = obj.width;
-      const h = obj.height;
-      d = `M 0 ${-h/2} L ${w/2} ${h/2} L ${-w/2} ${h/2} Z`;
-    } else if (obj.type === "polygon" && obj.points) {
-      const pts = obj.points;
-      const poX = obj.pathOffset ? obj.pathOffset.x : 0;
-      const poY = obj.pathOffset ? obj.pathOffset.y : 0;
-      d = `M ${pts[0].x - poX} ${pts[0].y - poY} ` +
-          pts.slice(1).map((p: any) => `L ${p.x - poX} ${p.y - poY}`).join(" ") + " Z";
-    }
-
-    if (!d) return obj;
-
-    const path = new fabric.Path(d, {
-      fill: obj.fill,
-      stroke: obj.stroke,
-      strokeWidth: obj.strokeWidth,
-      strokeUniform: true,
-      opacity: obj.opacity ?? 1,
-    });
-
-    path.transform(matrix);
-    path.__uid = obj.__uid || Math.random().toString(36).slice(2);
-
-    const canvas = fc.current;
-    if (canvas) {
-      const idx = canvas.getObjects().indexOf(obj);
-      canvas.remove(obj);
-      if (idx >= 0) canvas.insertAt(path, idx, false);
-      else canvas.add(path);
-      canvas.setActiveObject(path);
-      syncSel(path);
-    }
-    return path;
   };
 
   const applyBooleanOperation = (operation: "unite" | "subtract" | "intersect" | "exclude") => {
@@ -1003,7 +552,7 @@ function EditorInner() {
 
       const finalPathData = result.pathData;
       const baseFill = objects[0].fill || "#3b82f6";
-      const baseStroke = objects[0].stroke || "transparent";
+      const baseStroke = objects[0].stroke || "#000000";
       const baseStrokeWidth = objects[0].strokeWidth || 0;
 
       const newPath = new fabric.Path(finalPathData, {
@@ -1238,11 +787,8 @@ function EditorInner() {
     updatePreview();
   };
 
-  const enterEditNodes = (inputObj: any) => {
-    if (!fc.current || !inputObj) return;
-    const pathObj = convertShapeToFabricPath(inputObj);
-    if (!pathObj || pathObj.type !== "path") return;
-
+  const enterEditNodes = (pathObj: any) => {
+    if (!fc.current || !pathObj || pathObj.type !== "path") return;
     const canvas = fc.current;
     const fabric = (window as any).fabric;
     setIsEditingNodes(true);
@@ -1321,6 +867,783 @@ function EditorInner() {
     commands.splice(idx, 1);
     selectedNodeRef.current = null;
     renderEditControls();
+  };
+
+  const redrawPenCanvas = () => {
+    if (!fc.current) return;
+    const canvas = fc.current;
+    const fabric = (window as any).fabric;
+    const pts = penPoints.current;
+    const handles = penCurveHandles.current;
+
+    penDots.current.forEach(d => canvas.remove(d));
+    penLines.current.forEach(l => canvas.remove(l));
+    penDots.current = [];
+    penLines.current = [];
+
+    pts.forEach((pt, i) => {
+      const dot = new fabric.Circle({
+        left: pt.x, top: pt.y, radius: 4, originX: "center", originY: "center",
+        fill: i === 0 ? "#22c55e" : "#4f46e5",
+        stroke: "white", strokeWidth: 1.5,
+        selectable: false, evented: false,
+      });
+      canvas.add(dot);
+      penDots.current.push(dot);
+
+      if (i > 0) {
+        const prev = pts[i - 1];
+        const prevH = handles[i - 1]?.[1] || prev;
+        const currH = handles[i]?.[0] || pt;
+        const curvePath = new fabric.Path(`M ${prev.x} ${prev.y} C ${prevH.x} ${prevH.y} ${currH.x} ${currH.y} ${pt.x} ${pt.y}`, {
+          stroke: "#4f46e5", strokeWidth: 1.5, strokeDashArray: [4, 3], fill: "transparent",
+          selectable: false, evented: false,
+        });
+        canvas.add(curvePath);
+        penLines.current.push(curvePath);
+      }
+    });
+
+    canvas.requestRenderAll();
+  };
+
+  const undoLastPenPoint = () => {
+    if (!fc.current) return;
+    const canvas = fc.current;
+
+    if (lastFinalizedPath.current) {
+      canvas.remove(lastFinalizedPath.current);
+      lastFinalizedPath.current = null;
+      activeToolRef.current = "pen";
+      setActiveTool("pen");
+      canvas.defaultCursor = "crosshair";
+      canvas.hoverCursor = "crosshair";
+      canvas.selection = false;
+      redrawPenCanvas();
+      return;
+    }
+
+    if (penPoints.current.length === 0) return;
+
+    penPoints.current.pop();
+    penCurveHandles.current.pop();
+
+    const lastDot = penDots.current.pop();
+    if (lastDot) canvas.remove(lastDot);
+
+    const lastLine = penLines.current.pop();
+    if (lastLine) canvas.remove(lastLine);
+
+    if (activeHandleLine.current) {
+      canvas.remove(activeHandleLine.current);
+      activeHandleLine.current = null;
+    }
+
+    if (penPoints.current.length === 0) {
+      cancelPen();
+    } else {
+      canvas.requestRenderAll();
+    }
+  };
+  undoLastPenPointRef.current = undoLastPenPoint;
+
+  // Renderizador principal e controle de redimensionamento e Zoom
+  useEffect(() => {
+    if (!fabricLoaded || !canvasRef.current) return;
+    const z = zoom / 100;
+    const currentW = Math.round(canvasWidth * z);
+    const currentH = Math.round(canvasHeight * z);
+
+    if (!fc.current) {
+      const canvas = new (window as any).fabric.Canvas(canvasRef.current, {
+        width: currentW,
+        height: currentH,
+        backgroundColor: "#ffffff",
+        selection: true,
+        centeredRotation: true,
+      });
+      canvas.setZoom(z);
+      fc.current = canvas;
+      const canvasEl = canvas.upperCanvasEl;
+      canvasElRef.current = canvasEl;
+      canvasEl.setAttribute("tabindex", "0");
+
+      const saveState = () => {
+        if (savingHistory.current) return;
+        try { historyRef.current.undo.push(JSON.stringify(canvas.toJSON())); historyRef.current.redo = []; if (historyRef.current.undo.length > 50) historyRef.current.undo.shift(); } catch {}
+      };
+      const restoreState = (json: string) => {
+        savingHistory.current = true;
+        try { canvas.loadFromJSON(JSON.parse(json), () => { try { canvas.renderAll(); refreshLayers(canvas); } catch {} savingHistory.current = false; }); } catch { savingHistory.current = false; }
+      };
+
+      canvas.on("selection:created", () => syncSel(canvas.getActiveObject()));
+      canvas.on("selection:updated", () => syncSel(canvas.getActiveObject()));
+      canvas.on("selection:cleared", () => syncSel(null));
+      canvas.on("object:modified", (e: any) => {
+        if (!savingHistory.current) {
+          saveState();
+          refreshLayers(canvas);
+          const obj = e.target;
+          if (obj?.type !== "textbox" && obj?.type !== "i-text") {
+            syncSel(obj);
+          }
+        }
+      });
+      canvas.on("object:added",    () => { if (!savingHistory.current) { saveState(); refreshLayers(canvas); } });
+      canvas.on("object:removed",  () => { if (!savingHistory.current) refreshLayers(canvas); });
+
+      canvas.on("mouse:dblclick", (e: any) => {
+        if (isEditingNodesRef.current) return;
+        if (e.target && e.target.type === "path" && !e.target.isControlHelper) {
+          enterEditNodes(e.target);
+        }
+      });
+
+      canvas.on("object:scaling", (e: any) => {
+        const obj = e.target;
+        if (!obj) return;
+        if (obj.type === "textbox" || obj.type === "i-text") {
+          const newSize = Math.round(obj.fontSize * obj.scaleY);
+          setSelFontSize(newSize);
+        }
+        if (obj.type === "rect") {
+          const storedRx = rectBeforeScale.current?.rx ?? (obj.rx || 0);
+          const sx = obj.scaleX || 1;
+          const sy = obj.scaleY || 1;
+          const newW = obj.width * sx;
+          const newH = obj.height * sy;
+          const maxRx = Math.min(newW, newH) / 2;
+          const newRx = Math.min(storedRx, maxRx);
+          obj.set({ width: newW, height: newH, rx: newRx, ry: newRx, scaleX: 1, scaleY: 1 });
+          rectBeforeScale.current = { rx: newRx, ry: newRx };
+          obj.setCoords();
+        }
+      });
+
+      canvas.on("object:scaled", (e: any) => {
+        const obj = e.target;
+        if (!obj) return;
+        if (obj.type === "textbox" || obj.type === "i-text") {
+          const newFontSize = Math.round(obj.fontSize * obj.scaleY);
+          const newWidth = obj.type === "textbox" ? obj.width * obj.scaleX : obj.width;
+          obj.set({ fontSize: newFontSize, width: newWidth, scaleX: 1, scaleY: 1 });
+          canvas.requestRenderAll();
+          syncSel(obj);
+        }
+        if (obj.type === "rect") {
+          rectBeforeScale.current = { rx: obj.rx || 0, ry: obj.ry || 0 };
+          canvas.requestRenderAll();
+          syncSel(obj);
+        }
+      });
+
+      canvas.on("mouse:down:before", (e: any) => {
+        if (activeToolRef.current !== "pen") return;
+        e.e.stopPropagation?.();
+      });
+
+      canvas.on("mouse:down", (e: any) => {
+        if (isEditingNodesRef.current && editingData.current) {
+          const p = canvas.getPointer(e.e);
+          const target = canvas.findTarget(e.e, false);
+          const isTargetHelper = target && target.isControlHelper;
+
+          if (!isTargetHelper) {
+            const { commands } = editingData.current;
+            let closestIdx = -1;
+            let closestDist = 25;
+
+            for (let i = 1; i < commands.length; i++) {
+              const cmd = commands[i];
+              if (cmd.type === "Z") continue;
+              const prevCmd = commands[i - 1];
+              if (!prevCmd) continue;
+
+              const px = prevCmd.x ?? 0;
+              const py = prevCmd.y ?? 0;
+              const cx = cmd.x ?? 0;
+              const cy = cmd.y ?? 0;
+              const mx = (px + cx) / 2;
+              const my = (py + cy) / 2;
+              const dist = Math.hypot(p.x - mx, p.y - my);
+
+              if (dist < closestDist) {
+                closestDist = dist;
+                closestIdx = i;
+              }
+            }
+
+            if (closestIdx !== -1) {
+              const prevCmd = commands[closestIdx - 1];
+              const nextCmd = commands[closestIdx];
+              const t = 0.5;
+
+              const p1x = prevCmd.x, p1y = prevCmd.y;
+              const c1x = nextCmd.type === "C" ? nextCmd.cp1x : p1x;
+              const c1y = nextCmd.type === "C" ? nextCmd.cp1y : p1y;
+              const c2x = nextCmd.type === "C" ? nextCmd.cp2x : nextCmd.x;
+              const c2y = nextCmd.type === "C" ? nextCmd.cp2y : nextCmd.y;
+              const p2x = nextCmd.x, p2y = nextCmd.y;
+
+              const m1x = p1x + (c1x - p1x) * t, m1y = p1y + (c1y - p1y) * t;
+              const m2x = c1x + (c2x - c1x) * t, m2y = c1y + (c2y - c1y) * t;
+              const m3x = c2x + (p2x - c2x) * t, m3y = c2y + (p2y - c2y) * t;
+              const m4x = m1x + (m2x - m1x) * t, m4y = m1y + (m2y - m1y) * t;
+              const m5x = m2x + (m3x - m2x) * t, m5y = m2y + (m3y - m2y) * t;
+              const midX = m4x + (m5x - m4x) * t, midY = m4y + (m5y - m4y) * t;
+
+              if (nextCmd.type === "C") {
+                nextCmd.cp1x = m3x; nextCmd.cp1y = m3y;
+                nextCmd.cp2x = m5x; nextCmd.cp2y = m5y;
+              }
+
+              commands.splice(closestIdx, 0, {
+                type: "C",
+                cp1x: m1x, cp1y: m1y,
+                cp2x: m4x, cp2y: m4y,
+                x: midX, y: midY,
+              });
+
+              renderEditControls();
+              return;
+            }
+          }
+        }
+
+        if (activeToolRef.current !== "pen" || isEditingNodesRef.current) return;
+        const fabric = (window as any).fabric;
+        const p = canvas.getPointer(e.e);
+        const pts = penPoints.current;
+
+        if (pts.length > 1) {
+          const first = pts[0];
+          const dist = Math.hypot(p.x - first.x, p.y - first.y);
+          if (dist < 14) { finalizePenRef.current(true); return; }
+        }
+
+        isPenDragging.current = true;
+        pts.push({ x: p.x, y: p.y });
+        penCurveHandles.current.push([{ x: p.x, y: p.y }, { x: p.x, y: p.y }]);
+
+        const dot = new fabric.Circle({
+          left: p.x, top: p.y, radius: 4, originX: "center", originY: "center",
+          fill: pts.length === 1 ? "#22c55e" : "#4f46e5",
+          stroke: "white", strokeWidth: 1.5,
+          selectable: false, evented: false,
+        });
+        canvas.add(dot);
+        penDots.current.push(dot);
+
+        if (pts.length > 1) {
+          const prev = pts[pts.length - 2];
+          const prevHandle = penCurveHandles.current[pts.length - 2][1];
+          const currHandle = penCurveHandles.current[pts.length - 1][0];
+          const curvePath = new fabric.Path(`M ${prev.x} ${prev.y} C ${prevHandle.x} ${prevHandle.y} ${currHandle.x} ${currHandle.y} ${p.x} ${p.y}`, {
+            stroke: "#4f46e5", strokeWidth: 1.5, strokeDashArray: [4, 3], fill: "transparent",
+            selectable: false, evented: false,
+          });
+          canvas.add(curvePath);
+          penLines.current.push(curvePath);
+        }
+
+        canvas.requestRenderAll();
+      });
+
+      canvas.on("mouse:move", (e: any) => {
+        if (activeToolRef.current === "select" && !isEditingNodesRef.current) {
+          const target = canvas.findTarget(e.e, false);
+          canvas.defaultCursor = (target && target.type === "path" && !target.isControlHelper) ? "crosshair" : "default";
+        }
+
+        if (activeToolRef.current !== "pen" || !isPenDragging.current) return;
+        const fabric = (window as any).fabric;
+        const p = canvas.getPointer(e.e);
+        const pts = penPoints.current;
+        const currIdx = pts.length - 1;
+        const anchor = pts[currIdx];
+
+        const dx = p.x - anchor.x;
+        const dy = p.y - anchor.y;
+
+        penCurveHandles.current[currIdx] = [
+          { x: anchor.x - dx, y: anchor.y - dy },
+          { x: anchor.x + dx, y: anchor.y + dy }
+        ];
+
+        if (activeHandleLine.current) canvas.remove(activeHandleLine.current);
+        activeHandleLine.current = new fabric.Line([anchor.x - dx, anchor.y - dy, anchor.x + dx, anchor.y + dy], {
+          stroke: "#ef4444", strokeWidth: 1, selectable: false, evented: false, strokeDashArray: [2, 2]
+        });
+        canvas.add(activeHandleLine.current);
+
+        if (pts.length > 1) {
+          const prev = pts[pts.length - 2];
+          const prevH = penCurveHandles.current[pts.length - 2][1];
+          const currH = penCurveHandles.current[currIdx][0];
+          const lastLine = penLines.current[penLines.current.length - 1];
+          if (lastLine) canvas.remove(lastLine);
+
+          const newPath = new fabric.Path(`M ${prev.x} ${prev.y} C ${prevH.x} ${prevH.y} ${currH.x} ${currH.y} ${anchor.x} ${anchor.y}`, {
+            stroke: "#4f46e5", strokeWidth: 1.5, strokeDashArray: [4, 3], fill: "transparent", selectable: false, evented: false,
+          });
+          canvas.add(newPath);
+          penLines.current[penLines.current.length - 1] = newPath;
+        }
+
+        canvas.requestRenderAll();
+      });
+
+      canvas.on("mouse:up", () => {
+        if (activeToolRef.current !== "pen") return;
+        isPenDragging.current = false;
+        if (activeHandleLine.current) {
+          canvas.remove(activeHandleLine.current);
+          activeHandleLine.current = null;
+          canvas.requestRenderAll();
+        }
+      });
+
+      const onKey = (e: KeyboardEvent) => {
+        const tag = (document.activeElement as HTMLElement)?.tagName;
+        const isInput = tag === "INPUT" || tag === "TEXTAREA";
+        const ctrl = e.ctrlKey || e.metaKey;
+        const obj = canvas.getActiveObject();
+
+        if ((e.key === "Delete" || e.key === "Backspace") && !isInput) {
+          if (isEditingNodesRef.current) {
+            e.preventDefault();
+            deleteSelectedNode();
+            return;
+          }
+          if (obj && !obj.lockMovementX && !obj.isControlHelper && !obj.isEditPreview) {
+            if (obj.type === "i-text" && obj.isEditing) return;
+            saveState();
+            deleteSelected();
+          }
+          return;
+        }
+        if (isInput) return;
+
+        if (ctrl) {
+          switch (e.key.toLowerCase()) {
+            case "c": e.preventDefault(); if (obj) obj.clone((c: any) => { clipboardRef.current = c; }); break;
+            case "v": e.preventDefault();
+              if (!clipboardRef.current) return;
+              clipboardRef.current.clone((c: any) => {
+                c.set({ left: c.left + 20, top: c.top + 20, evented: true });
+                if (c.type === "activeSelection") { c.canvas = canvas; c.forEachObject((o: any) => canvas.add(o)); c.setCoords(); }
+                else canvas.add(c);
+                clipboardRef.current.top += 20; clipboardRef.current.left += 20;
+                canvas.setActiveObject(c); canvas.requestRenderAll();
+              }); break;
+            case "d": e.preventDefault();
+              if (isEditingNodesRef.current) { toggleNodeSmooth(); return; }
+              if (!obj) return;
+              obj.clone((c: any) => { c.set({ left: obj.left+20, top: obj.top+20 }); canvas.add(c); canvas.setActiveObject(c); canvas.requestRenderAll(); }); break;
+            case "z": e.preventDefault();
+              if (lastFinalizedPath.current || (activeToolRef.current === "pen" && penPoints.current.length > 0)) {
+                undoLastPenPointRef.current();
+                return;
+              }
+              if (e.shiftKey) { const n = historyRef.current.redo.pop(); if (!n) return; historyRef.current.undo.push(JSON.stringify(canvas.toJSON())); restoreState(n); }
+              else { const p = historyRef.current.undo.pop(); if (!p) return; historyRef.current.redo.push(JSON.stringify(canvas.toJSON())); restoreState(p); }
+              break;
+            case "y": e.preventDefault(); { const n = historyRef.current.redo.pop(); if (!n) return; historyRef.current.undo.push(JSON.stringify(canvas.toJSON())); restoreState(n); } break;
+            case "a": e.preventDefault(); { const all = new (window as any).fabric.ActiveSelection(canvas.getObjects().filter((o: any) => !o.isControlHelper && !o.isEditPreview), { canvas }); canvas.setActiveObject(all); canvas.requestRenderAll(); } break;
+            case "g": e.preventDefault(); if (obj?.type === "activeSelection") { canvas.setActiveObject(obj.toGroup()); canvas.requestRenderAll(); } break;
+          }
+          return;
+        }
+        if (obj && ["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key)) {
+          e.preventDefault(); const s = e.shiftKey ? 10 : 1;
+          if (e.key==="ArrowLeft") obj.set("left", obj.left-s);
+          if (e.key==="ArrowRight") obj.set("left", obj.left+s);
+          if (e.key==="ArrowUp") obj.set("top", obj.top-s);
+          if (e.key==="ArrowDown") obj.set("top", obj.top+s);
+          obj.setCoords(); canvas.requestRenderAll();
+        }
+        if (e.key === "Escape") {
+          if (isEditingNodesRef.current) {
+            exitEditNodes();
+          } else if (activeToolRef.current === "pen") {
+            cancelPenRef.current(); activeToolRef.current = "select"; setActiveTool("select");
+            if (fc.current) { fc.current.defaultCursor="default"; fc.current.hoverCursor="move"; fc.current.selection=true; }
+          } else {
+            canvas.discardActiveObject(); canvas.requestRenderAll();
+          }
+        }
+        if (e.key === "Enter") {
+          if (isEditingNodesRef.current) {
+            exitEditNodes();
+          } else if (activeToolRef.current === "pen") {
+            finalizePenRef.current(true);
+          }
+        }
+      };
+      window.addEventListener("keydown", onKey);
+      return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
+    } else {
+      const canvas = fc.current;
+      canvas.setDimensions({ width: currentW, height: currentH });
+      canvas.setZoom(z);
+      canvas.calcOffset();
+      canvas.renderAll();
+    }
+  }, [fabricLoaded, canvasWidth, canvasHeight, zoom]);
+
+  useEffect(() => {
+    if (!fc.current) return;
+    if (bgGradient) {
+      const fab = (window as any).fabric;
+      if (!fab) return;
+      const rad = (bgGradient.angle * Math.PI) / 180;
+      const bgColorStops = bgGradient.stops.map((s: any) => {
+        const hex = s.color.startsWith("#") ? s.color : "#000000";
+        const r = parseInt(hex.slice(1,3),16), gr = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+        return { offset: s.pos/100, color: `rgba(${r},${gr},${b},${s.opacity})` };
+      });
+      const grad = new fab.Gradient({ type: "linear", coords: { x1: (Math.cos(rad+Math.PI)+1)/2*canvasWidth, y1: (Math.sin(rad+Math.PI)+1)/2*canvasHeight, x2: (Math.cos(rad)+1)/2*canvasWidth, y2: (Math.sin(rad)+1)/2*canvasHeight }, colorStops: bgColorStops });
+      fc.current.setBackgroundColor(grad, () => fc.current?.renderAll());
+    } else {
+      fc.current.setBackgroundColor(bgSolid, () => fc.current?.renderAll());
+    }
+  }, [bgSolid, bgGradient, canvasWidth, canvasHeight]);
+
+  const upd = (props: Record<string, any>) => {
+    if (!fc.current || !sel) return;
+    sel.set(props);
+    if (isText && sel.fontFamily) {
+      document.fonts.load(`${sel.fontSize || 48}px "${sel.fontFamily}"`).finally(() => {
+        fc.current?.requestRenderAll();
+      });
+    } else {
+      fc.current.requestRenderAll();
+    }
+  };
+
+  const updateFill = (color: string) => {
+    setSelFill(color); setSelFillGradient(null);
+    upd({ fill: color });
+  };
+  const updateFillGradient = (g: {stops:{color:string;opacity:number;pos:number}[];angle:number}|null) => {
+    setSelFillGradient(g);
+    if (!g) { upd({ fill: selFill }); return; }
+    if (fc.current && sel) applyGradient(fc.current, sel, g);
+  };
+  const updateOpacity  = (v: number) => { setSelOpacity(v);  upd({ opacity: v/100 }); };
+  const updateStroke   = (c: string) => { setSelStroke(c);   upd({ stroke: c }); };
+  const updateStrokeW  = (v: number) => { setSelStrokeW(v);  upd({ strokeWidth: v, strokeUniform: true }); };
+  const updateRadius   = (v: number) => { setSelRadius(v);   upd({ rx: v, ry: v }); };
+  const updateRotation = (v: number) => { setSelRotation(v); upd({ angle: v }); };
+  const updateFontSize = (v: number) => {
+    setSelFontSize(v);
+    if (!fc.current || !sel) return;
+    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      sel.setSelectionStyles({ fontSize: v });
+      fc.current.requestRenderAll();
+    } else { upd({ fontSize: v }); }
+  };
+  const updateFontFamily = (v: string) => {
+    setSelFontFamily(v);
+    document.fonts.load(`${selFontSize}px "${v}"`).finally(() => {
+      upd({ fontFamily: v });
+    });
+  };
+  const updateTextAlign = (align: string) => {
+    setSelTextAlign(align);
+    if (!fc.current || !sel) return;
+    sel.set({ textAlign: align });
+    fc.current.requestRenderAll();
+  };
+
+  const toggleBold = () => {
+    const n = !selBold; setSelBold(n);
+    if (!fc.current || !sel) return;
+    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      sel.setSelectionStyles({ fontWeight: n ? "bold" : "normal" });
+      fc.current.requestRenderAll();
+    } else {
+      sel.set({ fontWeight: n ? "bold" : "normal" });
+      if (sel.initDimensions) sel.initDimensions();
+      document.fonts.load(`bold ${sel.fontSize}px "${sel.fontFamily}"`).finally(() => {
+        fc.current?.requestRenderAll();
+      });
+    }
+  };
+  const toggleItalic = () => {
+    const n = !selItalic; setSelItalic(n);
+    if (!fc.current || !sel) return;
+    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      sel.setSelectionStyles({ fontStyle: n ? "italic" : "normal" });
+      fc.current.requestRenderAll();
+    } else { upd({ fontStyle: n ? "italic" : "normal" }); }
+  };
+  const toggleUnderline = () => {
+    const n = !selUnderline; setSelUnderline(n);
+    if (!fc.current || !sel) return;
+    if (sel.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      sel.setSelectionStyles({ underline: n });
+      fc.current.requestRenderAll();
+    } else { upd({ underline: n }); }
+  };
+  const updateFillForText = (color: string) => {
+    if (sel?.isEditing && sel.selectionStart !== sel.selectionEnd) {
+      setSelFill(color);
+      sel.setSelectionStyles({ fill: color });
+      fc.current?.requestRenderAll();
+    } else {
+      updateFill(color);
+    }
+  };
+  const updateCharSpacing = (v: number) => { setSelCharSpacing(v); upd({ charSpacing: v }); };
+  const updateLineHeight  = (v: number) => { setSelLineHeight(v);  upd({ lineHeight: v }); };
+
+  const updateShadow = (on: boolean) => {
+    setSelShadow(on);
+    if (!fc.current || !sel) return;
+    sel.set("shadow", on ? new (window as any).fabric.Shadow({ color: selShadowColor, blur: selShadowBlur, offsetX: selShadowX, offsetY: selShadowY }) : null);
+    fc.current.requestRenderAll();
+  };
+  const applyShadow = (color: string, blur: number, ox: number, oy: number) => {
+    if (!fc.current || !sel || !selShadow) return;
+    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur, offsetX: ox, oy }));
+    fc.current.requestRenderAll();
+  };
+
+  const updateBlur = (v: number) => {
+    setSelBlur(v);
+    if (!fc.current || !sel) return;
+    const uid = sel.__uid;
+    if (v > 0) blurValueMap.current.set(uid, v);
+    else blurValueMap.current.delete(uid);
+
+    if (sel.type === "image" && !blurOriginMap.current.has(uid)) {
+      const fabric = (window as any).fabric;
+      const filters = (sel.filters || []).filter((f: any) => f.type !== "Blur");
+      if (v > 0) filters.push(new fabric.Image.filters.Blur({ blur: v / 100 }));
+      sel.filters = filters;
+      sel.set({ padding: v > 0 ? Math.round(v * 0.8) : 0 });
+      sel.applyFilters();
+      fc.current.requestRenderAll();
+      return;
+    }
+
+    if (!blurPosMap.current.has(uid)) {
+      blurPosMap.current.set(uid, {
+        left: sel.left, top: sel.top,
+        scaleX: sel.scaleX || 1, scaleY: sel.scaleY || 1,
+        angle: sel.angle || 0,
+      });
+    }
+
+    if (!blurOriginMap.current.has(uid) && sel.type !== "image") {
+      blurOriginMap.current.set(uid, JSON.stringify(sel.toObject()));
+    }
+
+    if (blurTimer.current) clearTimeout(blurTimer.current);
+    blurTimer.current = setTimeout(() => {
+      const fabric = (window as any).fabric;
+      const currentV = blurValueMap.current.get(uid) ?? 0;
+      const pos = blurPosMap.current.get(uid)!;
+
+      if (currentV === 0 && blurOriginMap.current.has(uid)) {
+        const json = blurOriginMap.current.get(uid)!;
+        blurOriginMap.current.delete(uid);
+        blurPosMap.current.delete(uid);
+        const current = fc.current.getObjects().find((o: any) => o.__uid === uid);
+        if (current) fc.current.remove(current);
+        fabric.util.enlivenObjects([JSON.parse(json)], (objs: any[]) => {
+          const orig = objs[0];
+          orig.set({ left: pos.left, top: pos.top, angle: pos.angle, scaleX: pos.scaleX, scaleY: pos.scaleY });
+          orig.__uid = uid;
+          fc.current.add(orig);
+          fc.current.setActiveObject(orig);
+          setSel(orig);
+          setSelBlur(0);
+          fc.current.requestRenderAll();
+        });
+        return;
+      }
+
+      const sourceJson = blurOriginMap.current.get(uid)!;
+      const current = fc.current.getObjects().find((o: any) => o.__uid === uid);
+      if (current) fc.current.remove(current);
+
+      fabric.util.enlivenObjects([JSON.parse(sourceJson)], async (objs: any[]) => {
+        const sourceObj = objs[0];
+        const srcW = (sourceObj.width  || 100) * pos.scaleX;
+        const srcH = (sourceObj.height || 100) * pos.scaleY;
+        const blurPx = Math.max(1, Math.round(currentV * 0.3));
+        const pad = blurPx * 4;
+        const cw = Math.min(Math.ceil(srcW) + pad * 2, 1800);
+        const ch = Math.min(Math.ceil(srcH) + pad * 2, 1800);
+
+        const miniEl = document.createElement("canvas");
+        miniEl.width = cw; miniEl.height = ch;
+        const miniCanvas = new fabric.StaticCanvas(miniEl, { width: cw, height: ch, enableRetinaScaling: false });
+        sourceObj.set({ left: cw / 2, top: ch / 2, originX: "center", originY: "center", angle: 0, scaleX: pos.scaleX, scaleY: pos.scaleY });
+        miniCanvas.add(sourceObj);
+
+        await document.fonts.ready;
+        miniCanvas.renderAll();
+
+        const outEl = document.createElement("canvas");
+        outEl.width = cw; outEl.height = ch;
+        const ctx = outEl.getContext("2d")!;
+        ctx.filter = `blur(${blurPx}px)`;
+        ctx.drawImage(miniEl, 0, 0);
+        miniCanvas.dispose();
+
+        const dataURL = outEl.toDataURL("image/png");
+        fabric.Image.fromURL(dataURL, (img: any) => {
+          img.set({
+            left: pos.left + (srcW / 2) - (cw / 2),
+            top:  pos.top  + (srcH / 2) - (ch / 2),
+            angle: pos.angle,
+            scaleX: 1, scaleY: 1,
+            originX: "left", originY: "top",
+            strokeUniform: true,
+          });
+          img.__uid = uid;
+          fc.current.add(img);
+          fc.current.setActiveObject(img);
+          setSel(img);
+          setSelBlur(currentV);
+          fc.current.requestRenderAll();
+        });
+      });
+    }, 150);
+  };
+
+  const toggleLock = (uid: string) => {
+    if (!fc.current) return;
+    const obj = fc.current.getObjects().find((o: any) => o.__uid === uid);
+    if (!obj) return;
+    const locked = !obj.lockMovementX;
+    obj.set({
+      lockMovementX: locked, lockMovementY: locked,
+      lockRotation: locked, lockScalingX: locked, lockScalingY: locked,
+      selectable: !locked,
+      evented: !locked,
+      hoverCursor: locked ? "default" : "move",
+    });
+    if (locked && fc.current.getActiveObject() === obj) {
+      fc.current.discardActiveObject();
+      syncSel(null);
+    }
+    refreshLayers(fc.current);
+    fc.current.requestRenderAll();
+  };
+
+  const alignObj = (dir: string) => {
+    if (!fc.current || !sel) return;
+    const canvas = fc.current;
+    const cw = canvasWidth;
+    const ch = canvasHeight;
+    sel.setCoords();
+    const br = sel.getBoundingRect(true);
+    if (dir === "left")    sel.set({ left: sel.left - br.left });
+    if (dir === "hcenter") sel.set({ left: sel.left - br.left + (cw - br.width) / 2 });
+    if (dir === "right")   sel.set({ left: sel.left - br.left + cw - br.width });
+    if (dir === "top")     sel.set({ top: sel.top - br.top });
+    if (dir === "vcenter") sel.set({ top: sel.top - br.top + (ch - br.height) / 2 });
+    if (dir === "bottom")  sel.set({ top: sel.top - br.top + ch - br.height });
+    sel.setCoords();
+    canvas.requestRenderAll();
+  };
+
+  const add = (fn: (fabric: any) => any) => {
+    if (!fc.current) return;
+    const obj = fn((window as any).fabric);
+    fc.current.add(obj); fc.current.setActiveObject(obj); syncSel(obj);
+  };
+  const addText = () => {
+    if (!fc.current) return;
+    const fab = (window as any).fabric;
+    const fontToLoad = `${selFontSize}px "${selFontFamily}"`;
+    document.fonts.load(fontToLoad).finally(() => {
+      const t = new fab.Textbox("Texto aqui", {
+        left: canvasWidth / 2,
+        top: canvasHeight / 2,
+        originX: "center",
+        originY: "center",
+        width: 300,
+        fontSize: selFontSize,
+        fontFamily: selFontFamily,
+        fill: "#000000",
+        strokeUniform: true,
+        splitByGrapheme: false,
+      });
+      fc.current.add(t);
+      fc.current.setActiveObject(t);
+      syncSel(t);
+      fc.current.requestRenderAll();
+      t.enterEditing();
+    });
+  };
+
+  const updateSaturation = (v: number) => {
+    setSelSaturation(v);
+    if (!fc.current || !sel) return;
+    const fabric = (window as any).fabric;
+    const filters = (sel.filters || []).filter((f: any) => f.type !== "Saturation");
+    filters.push(new fabric.Image.filters.Saturation({ saturation: v }));
+    sel.filters = filters;
+    sel.applyFilters();
+    fc.current.requestRenderAll();
+  };
+
+  const updateTextWidth = (v: number) => {
+    setSelTextWidth(v);
+    upd({ width: v });
+  };
+
+  const updateTextHeight = (v: number) => {
+    setSelTextHeight(v);
+    if (!fc.current || !sel) return;
+    if (v === 0) {
+      sel.set({ minHeight: undefined, __fixedHeight: false });
+      sel.__fixedHeight = false;
+      sel.initDimensions?.();
+      fc.current.requestRenderAll();
+    } else {
+      sel.__fixedHeight = true;
+      sel.set({ height: v, minHeight: v });
+      fc.current.requestRenderAll();
+    }
+  };
+  const addRect  = (r=0) => add(fab => new fab.Rect({ left:canvasWidth/2-75, top:canvasHeight/2-50, width:150, height:100, fill:"#3b82f6", rx:r, ry:r, strokeUniform:true }));
+  const addCirc  = () => add(fab => new fab.Circle({ left:canvasWidth/2-60, top:canvasHeight/2-60, radius:60, fill:"#3b82f6", strokeUniform:true }));
+  const addTri   = () => add(fab => new fab.Triangle({ left:canvasWidth/2-60, top:canvasHeight/2-60, width:120, height:120, fill:"#3b82f6", strokeUniform:true }));
+  const addLine  = () => add(fab => new fab.Line([canvasWidth/2-80, canvasHeight/2, canvasWidth/2+80, canvasHeight/2], { stroke:"#000000", strokeWidth:3, strokeUniform:true }));
+  const addStar  = () => {
+    const points: { x: number; y: number }[] = [];
+    for (let i=0;i<10;i++) { const r = i%2===0?60:24; const a = (Math.PI/5)*i - Math.PI/2; points.push({ x: r*Math.cos(a), y: r*Math.sin(a) }); }
+    add(fab => new fab.Polygon(points, { left:canvasWidth/2, top:canvasHeight/2, originX:"center", originY:"center", fill:"#eab308", strokeUniform:true }));
+  };
+  const addArrow = () => {
+    const points: { x: number; y: number }[] = [{ x:0,y:20 },{ x:80,y:20 },{ x:80,y:0 },{ x:120,y:35 },{ x:80,y:70 },{ x:80,y:50 },{ x:0,y:50 }];
+    add(fab => new fab.Polygon(points, { left:canvasWidth/2-60, top:canvasHeight/2-35, fill:"#3b82f6", strokeUniform:true }));
+  };
+
+  const handleImg = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !fc.current) return;
+    const r = new FileReader();
+    r.onload = ev => (window as any).fabric.Image.fromURL(ev.target?.result as string, (img: any) => {
+      if (img.width > canvasWidth * 0.8) img.scaleToWidth(canvasWidth * 0.8);
+      const scaledW = img.getScaledWidth();
+      const scaledH = img.getScaledHeight();
+      img.set({
+        left: (canvasWidth - scaledW) / 2,
+        top: (canvasHeight - scaledH) / 2,
+        originX: "left",
+        originY: "top",
+      });
+      fc.current.add(img); fc.current.setActiveObject(img); syncSel(img);
+    });
+    r.readAsDataURL(file); e.target.value = "";
   };
 
   const convertTextToPath = async () => {
@@ -1465,9 +1788,185 @@ function EditorInner() {
     worker.postMessage({ type: "removebg", imageData: pixelData.data.buffer, width: pw, height: ph }, [pixelData.data.buffer]);
   };
 
+  const finalizePen = (close: boolean) => {
+    if (!fc.current) return;
+    const canvas = fc.current;
+    const fabric = (window as any).fabric;
+    const pts = penPoints.current;
+    const handles = penCurveHandles.current;
+    if (pts.length < 2) { cancelPen(); return; }
+
+    let d = `M ${pts[0].x} ${pts[0].y}`;
+    for (let i = 1; i < pts.length; i++) {
+      const prev = pts[i - 1];
+      const curr = pts[i];
+      const h1 = handles[i - 1]?.[1] || prev;
+      const h2 = handles[i]?.[0]    || curr;
+      d += ` C ${h1.x} ${h1.y} ${h2.x} ${h2.y} ${curr.x} ${curr.y}`;
+    }
+    if (close && pts.length > 2) {
+      const h1 = handles[pts.length - 1]?.[1] || pts[pts.length - 1];
+      const h2 = handles[0]?.[0] || pts[0];
+      d += ` C ${h1.x} ${h1.y} ${h2.x} ${h2.y} ${pts[0].x} ${pts[0].y} Z`;
+    }
+
+    const path = new fabric.Path(d, {
+      fill: close ? (selFill !== "transparent" ? selFill : "#4f46e5") : "transparent",
+      stroke: "#000000",
+      strokeWidth: 2,
+      strokeUniform: true,
+    });
+
+    penLines.current.forEach(l => canvas.remove(l));
+    penDots.current.forEach(d => canvas.remove(d));
+    if (activeHandleLine.current) {
+      canvas.remove(activeHandleLine.current);
+      activeHandleLine.current = null;
+    }
+    penLines.current = [];
+    penDots.current = [];
+
+    canvas.add(path);
+    canvas.setActiveObject(path);
+    syncSel(path);
+    lastFinalizedPath.current = path;
+
+    activeToolRef.current = "select";
+    setActiveTool("select");
+    canvas.defaultCursor = "default";
+    canvas.hoverCursor = "move";
+    canvas.selection = true;
+    canvas.requestRenderAll();
+  };
+
+  const cancelPen = () => {
+    if (!fc.current) return;
+    penLines.current.forEach(l => fc.current.remove(l));
+    penDots.current.forEach(d => fc.current.remove(d));
+    if (activeHandleLine.current) fc.current.remove(activeHandleLine.current);
+    penPoints.current = [];
+    penLines.current = [];
+    penDots.current = [];
+    penCurveHandles.current = [];
+    activeHandleLine.current = null;
+    lastFinalizedPath.current = null;
+    fc.current.requestRenderAll();
+  };
+
+  const startPen = () => {
+    if (isEditingNodes) exitEditNodes();
+    lastFinalizedPath.current = null;
+    setActiveTool("pen"); activeToolRef.current = "pen";
+    if (fc.current) {
+      fc.current.defaultCursor = "crosshair";
+      fc.current.hoverCursor = "crosshair";
+      fc.current.selection = false;
+      fc.current.discardActiveObject();
+      fc.current.requestRenderAll();
+    }
+  };
+
+  const stopPen = () => {
+    setActiveTool("select"); activeToolRef.current = "select";
+    cancelPenRef.current();
+    if (fc.current) {
+      fc.current.defaultCursor = "default";
+      fc.current.hoverCursor = "move";
+      fc.current.selection = true;
+      fc.current.isDrawingMode = false;
+    }
+  };
+
+  finalizePenRef.current = finalizePen;
+  cancelPenRef.current = cancelPen;
+
+  const createMask = () => {
+    if (!fc.current) return;
+    const canvas = fc.current;
+    const active = canvas.getActiveObject();
+    if (!active || active.type !== "activeSelection") return;
+    const objects = (active as any).getObjects();
+    const image = objects.find((o: any) => o.type === "image");
+    const shape = objects.find((o: any) => o.type !== "image");
+    if (!image || !shape) { alert("Selecione uma imagem e uma forma juntas."); return; }
+
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+
+    const imgCenter = image.getCenterPoint();
+    const shapeCenter = shape.getCenterPoint();
+
+    shape.clone((clippedShape: any) => {
+      const imgScaleX = image.scaleX || 1;
+      const imgScaleY = image.scaleY || 1;
+
+      clippedShape.set({
+        left: (shapeCenter.x - imgCenter.x) / imgScaleX,
+        top: (shapeCenter.y - imgCenter.y) / imgScaleY,
+        originX: "center",
+        originY: "center",
+        scaleX: (shape.scaleX || 1) / imgScaleX,
+        scaleY: (shape.scaleY || 1) / imgScaleY,
+        angle: (shape.angle || 0) - (image.angle || 0),
+        absolutePositioned: false,
+      });
+
+      image.__originalShape = shape;
+      image.clipPath = clippedShape;
+      image.setCoords();
+
+      canvas.remove(shape);
+      canvas.setActiveObject(image);
+      syncSel(image);
+      refreshLayers(canvas);
+      canvas.requestRenderAll();
+    });
+  };
+
+  const removeMask = () => {
+    if (!fc.current || !sel || !sel.clipPath) return;
+    const canvas = fc.current;
+    const image = sel;
+    const clip = image.clipPath;
+
+    if (image.__originalShape) {
+      const orig = image.__originalShape;
+      const imgCenter = image.getCenterPoint();
+      const imgScaleX = image.scaleX || 1;
+      const imgScaleY = image.scaleY || 1;
+
+      orig.set({
+        left: imgCenter.x + (clip.left || 0) * imgScaleX,
+        top: imgCenter.y + (clip.top || 0) * imgScaleY,
+        originX: "center",
+        originY: "center",
+        scaleX: (clip.scaleX || 1) * imgScaleX,
+        scaleY: (clip.scaleY || 1) * imgScaleY,
+        angle: (clip.angle || 0) + (image.angle || 0),
+      });
+      orig.setCoords();
+      canvas.add(orig);
+      delete image.__originalShape;
+    }
+
+    image.clipPath = null;
+    image.setCoords();
+    syncSel(image);
+    refreshLayers(canvas);
+    canvas.requestRenderAll();
+  };
+
   const exportDataUrl = () => {
     const canvas = fc.current;
+    const currentZoom = canvas.getZoom();
+    canvas.setZoom(1);
+    canvas.setWidth(canvasWidth);
+    canvas.setHeight(canvasHeight);
     const dataUrl = canvas.toDataURL({ format:"png", multiplier:1 });
+    canvas.setZoom(currentZoom);
+    canvas.setWidth(Math.round(canvasWidth * currentZoom));
+    canvas.setHeight(Math.round(canvasHeight * currentZoom));
+    canvas.requestRenderAll();
     return dataUrl;
   };
 
@@ -1488,6 +1987,18 @@ function EditorInner() {
       setSaved(true); setTimeout(() => setSaved(false), 2500);
     } finally { setSaving(false); }
   };
+
+  const isText = sel?.type === "i-text" || sel?.type === "textbox";
+  const isTextbox = sel?.type === "textbox";
+  const isPath = sel?.type === "path";
+  const isRect = sel?.type === "rect";
+  const isEditableShape = ["rect","circle","triangle","polygon","path"].includes(sel?.type || "");
+  const hasClipPath = !!sel?.clipPath;
+
+  const isMultiShapeSelected = sel?.type === "activeSelection" && (() => {
+    const objs = (sel as any).getObjects();
+    return objs.length >= 2 && objs.every((o: any) => o.type !== "image" && o.type !== "i-text" && o.type !== "textbox");
+  })();
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col overflow-hidden" style={{ fontFamily: "system-ui, sans-serif" }}>
@@ -1673,18 +2184,11 @@ function EditorInner() {
           )}
         </div>
 
-        {/* ── CANVAS VIEWPORT (Zoom via CSS Transform) ────── */}
+        {/* ── CANVAS VIEWPORT ───────────────────────────── */}
         <div ref={canvasContainerRef} className="flex-1 overflow-auto flex items-center justify-center p-8 bg-gray-100">
-          <div
-            style={{
-              transform: `scale(${zoom / 100})`,
-              transformOrigin: "center center",
-              transition: "transform 0.05s ease-out",
-            }}
-            className="shadow-2xl flex-shrink-0"
-          >
+          <div className="shadow-2xl">
             {!fabricLoaded ? (
-              <div style={{ width: canvasWidth, height: canvasHeight }} className="bg-white flex items-center justify-center">
+              <div style={{ width: Math.round(canvasWidth * (zoom / 100)), height: Math.round(canvasHeight * (zoom / 100)) }} className="bg-white flex items-center justify-center">
                 <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
               </div>
             ) : <canvas ref={canvasRef} />}
@@ -1697,7 +2201,7 @@ function EditorInner() {
             <div className="p-3 bg-indigo-50 border-b border-indigo-100 flex flex-col gap-2">
               <p className="font-semibold text-indigo-900">Modo Edição de Nós</p>
               <p className="text-[11px] text-indigo-700">
-                • <b>Clique sobre o traçado</b> para inserir novas vértices.<br/>
+                • <b>Clique sobre o traçado</b> para inserir novas vértices no Mesh.<br/>
                 • Arraste vértices azuis para mover pontos com suas curvas acompanhando.<br/>
                 • Arraste pontos vermelhos para ajustar a curvatura.<br/>
                 • <b>Ctrl+D</b>: Alternar curva/canto reto.<br/>
@@ -1722,8 +2226,7 @@ function EditorInner() {
             <div className="p-3 flex flex-col gap-3 border-b border-gray-200">
               <p className="font-semibold text-gray-600 uppercase tracking-wide" style={{fontSize:10}}>Propriedades</p>
 
-              {/* Botão de Edição de Nós */}
-              {(isPath || isShapeType(sel)) && !isEditingNodes && (
+              {isEditableShape && !isEditingNodes && (
                 <button
                   onClick={() => enterEditNodes(sel)}
                   className="w-full py-2 bg-indigo-50 text-indigo-700 font-medium rounded-lg border border-indigo-200 hover:bg-indigo-100 transition"
@@ -1732,7 +2235,7 @@ function EditorInner() {
                 </button>
               )}
 
-              {/* Operações Booleanas */}
+              {/* Operações Booleanas (Paper.js) */}
               {isMultiShapeSelected && (
                 <div className="flex flex-col gap-1.5 p-2 bg-slate-50 border border-slate-200 rounded-xl">
                   <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider">Operações Booleanas</p>
@@ -1788,15 +2291,13 @@ function EditorInner() {
                 </button>
               )}
 
-              {/* Preenchimento & Gradiente */}
               {sel.type !== "image" && sel.type !== "activeSelection" && (
                 <>
                   <Sec title="Preenchimento" />
                   {!selFillGradient && (
-                    <ColorPicker
+                    <ColorPickerWithNone
                       value={selFill}
-                      onChange={isText ? updateFillForText : updateFill}
-                      allowTransparent={true}
+                      onChange={v => { (isText ? updateFillForText : updateFill)(v); setSelFillGradient(null); }}
                     />
                   )}
                   <GradientEditor value={selFillGradient} onChange={updateFillGradient} />
@@ -1810,34 +2311,14 @@ function EditorInner() {
                 </>
               )}
 
-              {/* Borda com opção sem cor e espessura em slider */}
               {sel.type !== "image" && sel.type !== "activeSelection" && (
                 <>
                   <Sec title="Borda" />
-                  <ColorPicker
+                  <ColorPickerWithNone
                     value={selStroke}
-                    onChange={c => {
-                      setSelStroke(c);
-                      updateStroke(c);
-                      if (c !== "transparent" && selStrokeW === 0) {
-                        setSelStrokeW(2);
-                        updateStrokeW(2);
-                      }
-                    }}
-                    label="Cor da borda"
-                    allowTransparent={true}
+                    onChange={v => { setSelStroke(v); updateStroke(v === "transparent" ? "" : v); if (v === "transparent") { setSelStrokeW(0); updateStrokeW(0); } }}
                   />
-                  <SliderRow
-                    label="Espessura da borda"
-                    value={selStrokeW}
-                    min={0}
-                    max={50}
-                    unit="px"
-                    onChange={v => {
-                      setSelStrokeW(v);
-                      updateStrokeW(v);
-                    }}
-                  />
+                  <SliderRow label="Espessura" value={selStrokeW} min={0} max={50} onChange={v => { setSelStrokeW(v); updateStrokeW(v); }} />
                 </>
               )}
 
@@ -1855,7 +2336,6 @@ function EditorInner() {
                 </>
               )}
 
-              {/* Controles de Texto */}
               {isText && (
                 <>
                   <Sec title="Texto" />
@@ -1866,10 +2346,9 @@ function EditorInner() {
                     </select>
                   </div>
                   <NumRow label="Tamanho" value={selFontSize} min={6} max={400} onChange={updateFontSize} />
-
                   <div>
-                    <p className="text-gray-400 mb-1.5">Estilo e Alinhamento</p>
-                    <div className="flex gap-1.5 mb-1.5">
+                    <p className="text-gray-400 mb-1.5">Formatação</p>
+                    <div className="flex gap-1.5">
                       <button onClick={toggleBold}
                         className={`flex-1 py-1.5 rounded-lg border text-sm font-bold transition ${selBold ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
                         B
@@ -1883,43 +2362,18 @@ function EditorInner() {
                         U
                       </button>
                     </div>
-
-                    <div className="grid grid-cols-4 gap-1">
-                      <button
-                        type="button"
-                        onClick={() => updateTextAlign("left")}
-                        title="Alinhar à Esquerda"
-                        className={`py-1.5 rounded-lg border flex items-center justify-center transition ${selTextAlign === "left" ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M3 12h12M3 18h18"/></svg>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => updateTextAlign("center")}
-                        title="Centralizar"
-                        className={`py-1.5 rounded-lg border flex items-center justify-center transition ${selTextAlign === "center" ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M6 12h12M3 18h18"/></svg>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => updateTextAlign("right")}
-                        title="Alinhar à Direita"
-                        className={`py-1.5 rounded-lg border flex items-center justify-center transition ${selTextAlign === "right" ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M9 12h12M3 18h18"/></svg>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => updateTextAlign("justify")}
-                        title="Justificar"
-                        className={`py-1.5 rounded-lg border flex items-center justify-center transition ${selTextAlign === "justify" ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
-                      </button>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 mb-1.5">Alinhamento</p>
+                    <div className="flex gap-1">
+                      {(["left","center","right","justify"] as const).map(a => (
+                        <button key={a} onClick={() => updateTextAlign(a)}
+                          className={`flex-1 py-1.5 rounded-lg border text-xs transition ${selTextAlign===a ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-500 hover:bg-gray-50"}`}>
+                          {a==="left"?"⬅":a==="center"?"↔":a==="right"?"➡":"☰"}
+                        </button>
+                      ))}
                     </div>
                   </div>
-
                   <div>
                     <div className="flex justify-between mb-1">
                       <p className="text-gray-400">Espaço entre letras</p>
@@ -1978,7 +2432,7 @@ function EditorInner() {
               </div>
               {selShadow && (
                 <div className="flex flex-col gap-2">
-                  <ColorPicker value={selShadowColor} onChange={c => { setSelShadowColor(c); applyShadow(c, selShadowBlur, selShadowX, selShadowY); }} label="Cor" allowTransparent={false} />
+                  <ColorPicker value={selShadowColor} onChange={c => { setSelShadowColor(c); applyShadow(c, selShadowBlur, selShadowX, selShadowY); }} label="Cor" />
                   <SliderRow label="Blur" value={selShadowBlur} min={0} max={60} onChange={v => { setSelShadowBlur(v); applyShadow(selShadowColor, v, selShadowX, selShadowY); }} />
                   <SliderRow label="X" value={selShadowX} min={-50} max={50} onChange={v => { setSelShadowX(v); applyShadow(selShadowColor, selShadowBlur, v, selShadowY); }} />
                   <SliderRow label="Y" value={selShadowY} min={-50} max={50} onChange={v => { setSelShadowY(v); applyShadow(selShadowColor, selShadowBlur, selShadowX, v); }} />
@@ -2025,14 +2479,8 @@ function EditorInner() {
           ) : (
             <div className="p-3 flex flex-col gap-3 border-b border-gray-200">
               <p className="font-semibold text-gray-600 uppercase tracking-wide" style={{fontSize:10}}>Fundo do canvas</p>
-              <ColorPicker value={bgGradient ? bgGradient.c1 : bgSolid} onChange={bg => { setBgSolid(bg); setBgGradient(null); }} allowTransparent={false} />
-              <GradientEditor value={bgGradient ? { angle: bgGradient.angle, stops: [{ offset: 0, color: bgGradient.c1, opacity: 1 }, { offset: 1, color: bgGradient.c2, opacity: 1 }] } : null} onChange={g => {
-                if (g && g.stops.length >= 2) {
-                  setBgGradient({ c1: g.stops[0].color, c2: g.stops[g.stops.length - 1].color, angle: g.angle });
-                } else {
-                  setBgGradient(null);
-                }
-              }} />
+              <ColorPicker value={bgSolid} onChange={bg => { setBgSolid(bg); setBgGradient(null); }} label="" />
+              <GradientEditor value={bgGradient} onChange={g => { if (g) setBgGradient(g); else setBgGradient(null); }} />
             </div>
           )}
 
