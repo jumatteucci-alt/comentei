@@ -2701,7 +2701,15 @@ function EditorInner() {
                     if (!pixelDrawingRef.current) return;
                     if (pixelTool === "eraser") {
                       const r = pixelBrushSize / 2;
-                      if (pixelSoftness === 0) {
+                      if (!pixelDrawingRef.current) {
+                        // Preview: restore snapshot and draw circle outline
+                        const snap = pixelUndoStack.current[pixelUndoStack.current.length - 1];
+                        if (snap) ctx.putImageData(snap, 0, 0);
+                        ctx.save();
+                        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+                        ctx.strokeStyle = "#4f46e5"; ctx.lineWidth = 1.5; ctx.setLineDash([3, 2]);
+                        ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+                      } else if (pixelSoftness === 0) {
                         ctx.globalCompositeOperation = "destination-out";
                         ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
                         ctx.globalCompositeOperation = "source-over";
