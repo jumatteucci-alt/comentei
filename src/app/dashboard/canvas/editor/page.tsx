@@ -2723,7 +2723,7 @@ function EditorInner() {
                       </div>
                       <div style={{
                         height: 20, borderRadius: 6,
-                        background: `linear-gradient(${gradMaskAngle - 90}deg, ${gradMaskC1}${Math.round(gradMaskA1*255).toString(16).padStart(2,"0")}, ${gradMaskC2}${Math.round(gradMaskA2*255).toString(16).padStart(2,"0")})`
+                        background: `linear-gradient(${gradMaskAngle - 90}deg, ${gradMaskC2}${Math.round(gradMaskA2*255).toString(16).padStart(2,"0")}, ${gradMaskC1}${Math.round(gradMaskA1*255).toString(16).padStart(2,"0")})`
                       }} />
                       <button onClick={applyGradientMask}
                         className="w-full py-1.5 bg-purple-600 text-white rounded-lg text-xs font-medium hover:bg-purple-700 transition">
