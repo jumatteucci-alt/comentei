@@ -250,6 +250,13 @@ function EditorInner() {
   const blurTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rectBeforeScale = useRef<{ rx: number; ry: number } | null>(null);
 
+  const [showGradientMask, setShowGradientMask] = useState(false);
+  const [gradMaskC1, setGradMaskC1] = useState("#000000");
+  const [gradMaskA1, setGradMaskA1] = useState(1);
+  const [gradMaskC2, setGradMaskC2] = useState("#000000");
+  const [gradMaskA2, setGradMaskA2] = useState(0);
+  const [gradMaskAngle, setGradMaskAngle] = useState(180);
+
   const [site, setSite] = useState<Site | null>(null);
   const [fabricLoaded, setFabricLoaded] = useState(false);
   const [openTypeLoaded, setOpenTypeLoaded] = useState(false);
@@ -446,6 +453,73 @@ function EditorInner() {
     canvas.requestRenderAll();
     syncSel(null);
     refreshLayers(canvas);
+  };
+
+  const applyGradientMask = () => {
+    if (!fc.current || !sel || sel.type !== "image") return;
+    const fabric = (window as any).fabric;
+    const imgEl = (sel as any)._element as HTMLImageElement;
+    const w = imgEl.naturalWidth || sel.width;
+    const h = imgEl.naturalHeight || sel.height;
+
+    // Cria canvas temporário com a imagem + máscara de gradiente
+    const tmpCanvas = document.createElement("canvas");
+    tmpCanvas.width = w; tmpCanvas.height = h;
+    const ctx = tmpCanvas.getContext("2d")!;
+
+    // Desenha imagem original
+    ctx.drawImage(imgEl, 0, 0, w, h);
+
+    // Cria gradiente de máscara
+    const rad = (gradMaskAngle * Math.PI) / 180;
+    const x1 = (Math.cos(rad + Math.PI) + 1) / 2 * w;
+    const y1 = (Math.sin(rad + Math.PI) + 1) / 2 * h;
+    const x2 = (Math.cos(rad) + 1) / 2 * w;
+    const y2 = (Math.sin(rad) + 1) / 2 * h;
+
+    const grad = ctx.createLinearGradient(x1, y1, x2, y2);
+
+    const toHex = (n: number) => Math.round(n * 255).toString(16).padStart(2, "0");
+    grad.addColorStop(0, `${gradMaskC1}${toHex(gradMaskA1)}`);
+    grad.addColorStop(1, `${gradMaskC2}${toHex(gradMaskA2)}`);
+
+    // Aplica máscara pixel a pixel preservando cor original
+    const imageData = ctx.getImageData(0, 0, w, h);
+    const data = imageData.data;
+
+    // Cria canvas só com o gradiente para ler os valores de alpha
+    const gradCanvas = document.createElement("canvas");
+    gradCanvas.width = w; gradCanvas.height = h;
+    const gCtx = gradCanvas.getContext("2d")!;
+    gCtx.fillStyle = grad;
+    gCtx.fillRect(0, 0, w, h);
+    const gradData = gCtx.getImageData(0, 0, w, h).data;
+
+    // Multiplica alpha original pelo alpha do gradiente
+    for (let i = 3; i < data.length; i += 4) {
+      const maskAlpha = (gradData[i - 3] * 0.299 + gradData[i - 2] * 0.587 + gradData[i - 1] * 0.114) / 255;
+      // Usa a cor do gradiente como máscara de opacidade
+      const gradAlpha = gradData[i] / 255;
+      data[i] = Math.round(data[i] * gradAlpha);
+    }
+    ctx.putImageData(imageData, 0, 0);
+
+    const dataURL = tmpCanvas.toDataURL("image/png");
+    const left = sel.left; const top = sel.top;
+    const scaleX = sel.scaleX || 1; const scaleY = sel.scaleY || 1;
+    const angle = sel.angle || 0;
+    const uid = sel.__uid;
+
+    fc.current.remove(sel);
+    fabric.Image.fromURL(dataURL, (img: any) => {
+      img.set({ left, top, scaleX, scaleY, angle, strokeUniform: true });
+      img.__uid = uid;
+      fc.current.add(img);
+      fc.current.setActiveObject(img);
+      syncSel(img);
+      fc.current.requestRenderAll();
+    });
+    setShowGradientMask(false);
   };
 
   const applyBooleanOperation = (operation: "unite" | "subtract" | "intersect" | "exclude") => {
@@ -2570,12 +2644,55 @@ function EditorInner() {
                 <>
                   <Sec title="Imagem" />
                   <button
-                    onClick={removeBackgroundLocal}
-                    disabled={removingBg}
-                    className="w-full py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition text-xs disabled:opacity-50 font-medium"
-                  >
-                    {removingBg ? rmbgProgress || "Processando..." : "✂ Remover fundo"}
+                    onClick={() => setShowGradientMask(v => !v)}
+                    className={`w-full py-2 rounded-lg border transition text-xs font-medium ${showGradientMask ? "bg-purple-600 text-white border-purple-600" : "border-purple-200 text-purple-600 hover:bg-purple-50"}`}>
+                    🎭 {showGradientMask ? "Fechar máscara" : "Máscara com gradiente"}
                   </button>
+                  {showGradientMask && (
+                    <div className="flex flex-col gap-2 p-2 border border-purple-100 rounded-lg">
+                      <div className="flex gap-1">
+                        <div className="flex-1">
+                          <p className="text-gray-400 mb-1" style={{fontSize:10}}>Cor inicial</p>
+                          <div className="flex gap-1">
+                            <input type="color" value={gradMaskC1} onChange={e => setGradMaskC1(e.target.value)} className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0" />
+                          </div>
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-gray-400 mb-1" style={{fontSize:10}}>Opac. inicial</p>
+                          <input type="range" min={0} max={1} step={0.01} value={gradMaskA1}
+                            onChange={e => setGradMaskA1(+e.target.value)} className="w-full accent-indigo-600" />
+                          <span className="text-gray-400" style={{fontSize:9}}>{Math.round(gradMaskA1*100)}%</span>
+                        </div>
+                      </div>
+                      <div className="flex gap-1">
+                        <div className="flex-1">
+                          <p className="text-gray-400 mb-1" style={{fontSize:10}}>Cor final</p>
+                          <div className="flex gap-1">
+                            <input type="color" value={gradMaskC2} onChange={e => setGradMaskC2(e.target.value)} className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0" />
+                          </div>
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-gray-400 mb-1" style={{fontSize:10}}>Opac. final</p>
+                          <input type="range" min={0} max={1} step={0.01} value={gradMaskA2}
+                            onChange={e => setGradMaskA2(+e.target.value)} className="w-full accent-indigo-600" />
+                          <span className="text-gray-400" style={{fontSize:9}}>{Math.round(gradMaskA2*100)}%</span>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-gray-400 mb-1" style={{fontSize:10}}>Ângulo: {gradMaskAngle}°</p>
+                        <input type="range" min={0} max={360} value={gradMaskAngle}
+                          onChange={e => setGradMaskAngle(+e.target.value)} className="w-full accent-indigo-600" />
+                      </div>
+                      <div style={{
+                        height: 20, borderRadius: 6,
+                        background: `linear-gradient(${gradMaskAngle}deg, ${gradMaskC1}${Math.round(gradMaskA1*255).toString(16).padStart(2,"0")}, ${gradMaskC2}${Math.round(gradMaskA2*255).toString(16).padStart(2,"0")})`
+                      }} />
+                      <button onClick={applyGradientMask}
+                        className="w-full py-1.5 bg-purple-600 text-white rounded-lg text-xs font-medium hover:bg-purple-700 transition">
+                        Aplicar máscara
+                      </button>
+                    </div>
+                  )}
                   <Sec title="Saturação" />
                   <SliderRow label="" value={Math.round(selSaturation * 100)} min={-100} max={100} unit="%" onChange={v => updateSaturation(v / 100)} />
                   <div className="flex justify-between text-gray-300 mt-0.5" style={{fontSize:9}}><span>P&amp;B</span><span>Normal</span><span>Vivo</span></div>
