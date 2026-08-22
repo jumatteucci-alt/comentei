@@ -888,6 +888,23 @@ function EditorInner() {
         const cp2 = fabric.util.transformPoint({ x: cmd[3] - poX, y: cmd[4] - poY }, matrix);
         const end = fabric.util.transformPoint({ x: cmd[5] - poX, y: cmd[6] - poY }, matrix);
         commands.push({ type: "C", cp1x: cp1.x, cp1y: cp1.y, cp2x: cp2.x, cp2y: cp2.y, x: end.x, y: end.y });
+      } else if (type === "Q") {
+        // Converte quadratic bezier para cubic (C) para compatibilidade com o editor
+        const prevCmd = commands[commands.length - 1];
+        const x0 = prevCmd?.x ?? 0;
+        const y0 = prevCmd?.y ?? 0;
+        const qp = fabric.util.transformPoint({ x: cmd[1] - poX, y: cmd[2] - poY }, matrix);
+        const end = fabric.util.transformPoint({ x: cmd[3] - poX, y: cmd[4] - poY }, matrix);
+        // Fórmula de conversão Q→C: cp1 = P0 + 2/3*(QP-P0), cp2 = P2 + 2/3*(QP-P2)
+        commands.push({
+          type: "C",
+          cp1x: x0 + (2/3) * (qp.x - x0),
+          cp1y: y0 + (2/3) * (qp.y - y0),
+          cp2x: end.x + (2/3) * (qp.x - end.x),
+          cp2y: end.y + (2/3) * (qp.y - end.y),
+          x: end.x,
+          y: end.y,
+        });
       } else if (type === "Z" || type === "z") {
         commands.push({ type: "Z" });
       }
