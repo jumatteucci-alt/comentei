@@ -332,6 +332,7 @@ function EditorInner() {
   const pixelCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const pixelEditImgRef = useRef<any>(null);
   const pixelOrigSrcRef = useRef<string>("");
+  const pixelBaseCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const stampSourceRef = useRef<{x:number;y:number}|null>(null);
   const lassoPointsRef = useRef<{x:number;y:number}[]>([]);
   const lassoActiveRef = useRef(false);
@@ -494,17 +495,25 @@ function EditorInner() {
   // ── Pixel editor ────────────────────────────────────────────────
   const enterPixelEdit = (imgObj: any) => {
     if (!fc.current || !imgObj || imgObj.type !== "image") return;
-    if (imgObj.__pixelLayerId) { enterPixelLayerEdit(imgObj.__pixelLayerId); return; }
     pixelBaseUidRef.current = imgObj.__uid || (imgObj.__uid = Math.random().toString(36).slice(2));
     setSelectedPixelLayerId(null);
     setSelectedPixelLayerIds([PIXEL_BASE_ID]);
     pixelEditImgRef.current = imgObj;
+
+    const storedLayers = Array.isArray(imgObj.__pixelLayers) ? imgObj.__pixelLayers : [];
+    setPixelLayers(storedLayers);
+
     const imgEl = imgObj._element as HTMLImageElement;
+    const storedBase = imgObj.__pixelBaseCanvas as HTMLCanvasElement | undefined;
     const origC = document.createElement("canvas");
-    origC.width  = imgEl.naturalWidth  || imgObj.width;
-    origC.height = imgEl.naturalHeight || imgObj.height;
-    origC.getContext("2d")!.drawImage(imgEl, 0, 0);
+    origC.width = storedBase?.width || imgEl.naturalWidth || imgObj.width;
+    origC.height = storedBase?.height || imgEl.naturalHeight || imgObj.height;
+    const octx = origC.getContext("2d")!;
+    if (storedBase) octx.drawImage(storedBase, 0, 0);
+    else octx.drawImage(imgEl, 0, 0);
+    pixelBaseCanvasRef.current = origC;
     pixelOrigSrcRef.current = origC.toDataURL("image/png");
+
     imgObj.opacity = 0;
     fc.current.discardActiveObject();
     fc.current.requestRenderAll();
@@ -554,52 +563,92 @@ function EditorInner() {
       || null;
   };
 
+  const renderPixelCompositeToProject = (baseObj: any, baseCanvas: HTMLCanvasElement, layersToRender: typeof pixelLayers) => {
+    if (!fc.current || !baseObj) return;
+    const composite = document.createElement("canvas");
+    composite.width = baseCanvas.width;
+    composite.height = baseCanvas.height;
+    const ctx = composite.getContext("2d")!;
+    ctx.drawImage(baseCanvas, 0, 0);
+    layersToRender.forEach(layer => {
+      ctx.drawImage(layer.canvas, 0, 0, layer.canvas.width, layer.canvas.height,
+        layer.offsetX || 0, layer.offsetY || 0, layer.canvas.width * (layer.scale || 1), layer.canvas.height * (layer.scale || 1));
+    });
+    const fabric = (window as any).fabric;
+    const dataURL = composite.toDataURL("image/png");
+    const left = baseObj.left, top = baseObj.top;
+    const scaleX = baseObj.scaleX || 1, scaleY = baseObj.scaleY || 1;
+    const angle = baseObj.angle || 0, uid = baseObj.__uid;
+    const baseCopy = document.createElement("canvas");
+    baseCopy.width = baseCanvas.width; baseCopy.height = baseCanvas.height;
+    baseCopy.getContext("2d")!.drawImage(baseCanvas, 0, 0);
+    fc.current.remove(baseObj);
+    fabric.Image.fromURL(dataURL, (img: any) => {
+      img.set({ left, top, scaleX, scaleY, angle, strokeUniform: true });
+      img.__uid = uid;
+      img.__pixelBaseCanvas = baseCopy;
+      img.__pixelLayers = layersToRender;
+      pixelBaseUidRef.current = uid;
+      fc.current.add(img);
+      fc.current.setActiveObject(img);
+      syncSel(img);
+      refreshLayers(fc.current);
+      fc.current.requestRenderAll();
+    });
+  };
+
   const exitPixelEdit = (save = true) => {
     const imgObj = pixelEditImgRef.current;
     const pCanvas = pixelCanvasRef.current;
     const layerId = pixelEditLayerIdRef.current;
+    if (save) clearLassoVisual();
+
     if (layerId) {
+      const baseObj = findPixelBaseObject();
+      let nextLayers = pixelLayers;
       if (save && pCanvas) {
         const nextCanvas = document.createElement("canvas");
         nextCanvas.width = pCanvas.width; nextCanvas.height = pCanvas.height;
         nextCanvas.getContext("2d")!.drawImage(pCanvas, 0, 0);
-        setPixelLayers(prev => prev.map(l => l.id === layerId ? { ...l, canvas: nextCanvas } : l));
+        nextLayers = pixelLayers.map(l => l.id === layerId ? { ...l, canvas: nextCanvas } : l);
+        setPixelLayers(nextLayers);
       }
-      setPixelEditMode(false); pixelEditLayerIdRef.current = null; pixelCanvasRef.current = null;
+      if (save && baseObj) {
+        let baseCanvas = baseObj.__pixelBaseCanvas as HTMLCanvasElement | undefined;
+        if (!baseCanvas) {
+          baseCanvas = document.createElement("canvas");
+          const bel = baseObj._element as HTMLImageElement;
+          baseCanvas.width = bel?.naturalWidth || baseObj.width || canvasWidth;
+          baseCanvas.height = bel?.naturalHeight || baseObj.height || canvasHeight;
+          baseCanvas.getContext("2d")!.drawImage(bel, 0, 0);
+        }
+        renderPixelCompositeToProject(baseObj, baseCanvas, nextLayers);
+      }
+      setPixelEditMode(false);
+      pixelEditLayerIdRef.current = null; pixelCanvasRef.current = null; pixelBaseCanvasRef.current = null;
       stampSourceRef.current = null; lassoPointsRef.current = []; lassoSelectionRef.current = [];
       lassoActiveRef.current = false; pixelUndoStack.current = []; setLassoSelected(false);
+      setSelectedPixelLayerId(null); setSelectedPixelLayerIds([]);
       return;
     }
+
     if (!fc.current || !imgObj) { setPixelEditMode(false); return; }
     if (save && pCanvas) {
-      const fabric = (window as any).fabric;
-      const dataURL = pCanvas.toDataURL("image/png");
-      const left = imgObj.left; const top = imgObj.top;
-      const scaleX = imgObj.scaleX || 1; const scaleY = imgObj.scaleY || 1;
-      const angle = imgObj.angle || 0; const uid = imgObj.__uid;
-      fc.current.remove(imgObj);
-      fabric.Image.fromURL(dataURL, (img: any) => {
-        img.set({ left, top, scaleX, scaleY, angle, strokeUniform: true });
-        img.__uid = uid;
-        fc.current.add(img);
-        fc.current.setActiveObject(img);
-        syncSel(img);
-        fc.current.requestRenderAll();
-      });
+      const cleanBase = document.createElement("canvas");
+      cleanBase.width = pCanvas.width; cleanBase.height = pCanvas.height;
+      cleanBase.getContext("2d")!.drawImage(pCanvas, 0, 0);
+      renderPixelCompositeToProject(imgObj, cleanBase, pixelLayers);
     } else {
       imgObj.opacity = 1;
       fc.current.setActiveObject(imgObj);
       fc.current.requestRenderAll();
     }
     setPixelEditMode(false);
-    pixelEditImgRef.current = null;
-    pixelEditLayerIdRef.current = null;
-    stampSourceRef.current = null;
-    lassoPointsRef.current = [];
-    lassoSelectionRef.current = [];
-    lassoActiveRef.current = false;
-    pixelUndoStack.current = [];
-    setLassoSelected(false);
+    pixelEditImgRef.current = null; pixelEditLayerIdRef.current = null;
+    pixelCanvasRef.current = null; pixelBaseCanvasRef.current = null;
+    stampSourceRef.current = null; lassoPointsRef.current = []; lassoSelectionRef.current = [];
+    lassoActiveRef.current = false; pixelUndoStack.current = []; setLassoSelected(false);
+    setSelectedPixelLayerId(null); setSelectedPixelLayerIds([]);
   };
 
   const mergePixelSelections = () => {
@@ -2795,11 +2844,13 @@ function EditorInner() {
                       el.width = editLayer.canvas.width; el.height = editLayer.canvas.height;
                       ctx.drawImage(editLayer.canvas, 0, 0);
                     } else {
+                      const baseCanvas = pixelBaseCanvasRef.current;
                       const imgEl = pixelEditImgRef.current?._element as HTMLImageElement;
-                      if (!imgEl) return;
-                      el.width = imgEl.naturalWidth || pixelEditImgRef.current?.width || 100;
-                      el.height = imgEl.naturalHeight || pixelEditImgRef.current?.height || 100;
-                      ctx.drawImage(imgEl, 0, 0);
+                      if (!baseCanvas && !imgEl) return;
+                      el.width = baseCanvas?.width || imgEl.naturalWidth || pixelEditImgRef.current?.width || 100;
+                      el.height = baseCanvas?.height || imgEl.naturalHeight || pixelEditImgRef.current?.height || 100;
+                      if (baseCanvas) ctx.drawImage(baseCanvas, 0, 0);
+                      else ctx.drawImage(imgEl, 0, 0);
                     }
                     pixelUndoStack.current = [];
                     const snap = ctx.getImageData(0, 0, el.width, el.height);
@@ -2990,7 +3041,9 @@ function EditorInner() {
                       const maskC = document.createElement("canvas");
                       maskC.width = el.width; maskC.height = el.height;
                       const maskCtx = maskC.getContext("2d")!;
-                      maskCtx.drawImage(el, 0, 0);
+                      const cleanSnap = pixelSnapshotRef.current;
+                      if (cleanSnap) maskCtx.putImageData(cleanSnap, 0, 0);
+                      else maskCtx.drawImage(el, 0, 0);
                       maskCtx.save();
                       maskCtx.globalCompositeOperation = "destination-in";
                       maskCtx.beginPath(); maskCtx.moveTo(pts[0].x, pts[0].y);
@@ -3190,66 +3243,6 @@ function EditorInner() {
               );
             })()}
 
-            {/* Lasso layers remain visible on the main canvas after leaving pixel edit. */}
-            {!pixelEditMode && pixelLayers.map((layer, layerIndex) => {
-              const z = zoom / 100;
-              const offsetX = layer.offsetX || 0;
-              const offsetY = layer.offsetY || 0;
-              const layerScale = layer.scale || 1;
-              const displayW = layer.canvas.width * z * layerScale;
-              const displayH = layer.canvas.height * z * layerScale;
-              const selected = selectedPixelLayerId === layer.id;
-              const handles = [
-                { key: "nw", left: -6, right: undefined, top: -6, bottom: undefined, cursor: "nwse-resize" },
-                { key: "ne", left: undefined, right: -6, top: -6, bottom: undefined, cursor: "nesw-resize" },
-                { key: "sw", left: -6, right: undefined, top: undefined, bottom: -6, cursor: "nesw-resize" },
-                { key: "se", left: undefined, right: -6, top: undefined, bottom: -6, cursor: "nwse-resize" },
-              ] as const;
-              return <div key={`main-${layer.id}`}
-                style={{ position:"absolute", left:offsetX*z, top:offsetY*z, width:displayW, height:displayH,
-                  cursor:"move", pointerEvents:"auto", outline:selected ? "1.5px solid #2563eb" : "none", boxSizing:"border-box", zIndex:selected ? 100 : 20 + layerIndex }}
-                onMouseDown={ev => {
-                  ev.preventDefault(); ev.stopPropagation();
-                  setSelectedPixelLayerId(layer.id); setSelectedPixelLayerIds([layer.id]);
-                  const rect = ev.currentTarget.getBoundingClientRect();
-                  const hs = 18;
-                  const nearLeft = ev.clientX <= rect.left + hs, nearRight = ev.clientX >= rect.right - hs;
-                  const nearTop = ev.clientY <= rect.top + hs, nearBottom = ev.clientY >= rect.bottom - hs;
-                  const handle = nearTop && nearLeft ? "nw" : nearTop && nearRight ? "ne" : nearBottom && nearLeft ? "sw" : nearBottom && nearRight ? "se" : null;
-                  if (handle) {
-                    pixelResizeLayerRef.current = { id:layer.id, handle, startX:ev.clientX, startY:ev.clientY, startScale:layerScale,
-                      startOffsetX:offsetX, startOffsetY:offsetY, baseWidth:layer.canvas.width*z, baseHeight:layer.canvas.height*z };
-                    pixelResizingRef.current = true; pixelMovingRef.current = false; return;
-                  }
-                  pixelMoveLayerRef.current = { id:layer.id, canvas:layer.canvas, startX:ev.clientX, startY:ev.clientY, offsetX, offsetY };
-                  pixelMovingRef.current = true; pixelResizingRef.current = false;
-                }}
-                onMouseMove={ev => {
-                  if (pixelResizingRef.current && pixelResizeLayerRef.current?.id === layer.id) {
-                    const r = pixelResizeLayerRef.current;
-                    const dx=ev.clientX-r.startX, dy=ev.clientY-r.startY;
-                    let delta=0;
-                    if(r.handle==="se") delta=Math.max(dx,dy); if(r.handle==="nw") delta=-Math.min(dx,dy);
-                    if(r.handle==="ne") delta=Math.max(-dx,dy); if(r.handle==="sw") delta=Math.max(dx,-dy);
-                    const reference=Math.max(r.baseWidth,r.baseHeight,1);
-                    const nextScale=Math.max(.05,r.startScale+delta/reference);
-                    const scaleDelta=nextScale-r.startScale;
-                    let nextOffsetX=r.startOffsetX, nextOffsetY=r.startOffsetY;
-                    if(r.handle==="nw"||r.handle==="sw") nextOffsetX=r.startOffsetX-r.baseWidth*scaleDelta/z;
-                    if(r.handle==="nw"||r.handle==="ne") nextOffsetY=r.startOffsetY-r.baseHeight*scaleDelta/z;
-                    setPixelLayers(prev=>prev.map(l=>l.id===layer.id?{...l,scale:nextScale,offsetX:nextOffsetX,offsetY:nextOffsetY}:l)); return;
-                  }
-                  if(!pixelMovingRef.current || pixelMoveLayerRef.current?.id!==layer.id) return;
-                  const m=pixelMoveLayerRef.current;
-                  const dx=(ev.clientX-m.startX)/z, dy=(ev.clientY-m.startY)/z;
-                  setPixelLayers(prev=>prev.map(l=>l.id===layer.id?{...l,offsetX:m.offsetX+dx,offsetY:m.offsetY+dy}:l));
-                }}
-                onMouseUp={()=>{pixelMovingRef.current=false;pixelResizingRef.current=false;pixelMoveLayerRef.current=null;pixelResizeLayerRef.current=null;}}
-              >
-                <canvas width={layer.canvas.width} height={layer.canvas.height} ref={el=>{if(el){const c=el.getContext("2d")!;c.clearRect(0,0,el.width,el.height);c.drawImage(layer.canvas,0,0)}}} style={{display:"block",width:"100%",height:"100%",imageRendering:"pixelated",pointerEvents:"none"}} />
-                {selected && handles.map(h=><div key={h.key} style={{position:"absolute",left:h.left,right:h.right,top:h.top,bottom:h.bottom,width:12,height:12,border:"2px solid #2563eb",background:"#fff",borderRadius:2,cursor:h.cursor,boxSizing:"border-box"}} />)}
-              </div>;
-            })}
           </div>
         </div>
         <div className="w-56 bg-white border-l border-gray-200 flex flex-col flex-shrink-0 overflow-y-auto text-xs">
@@ -3698,30 +3691,7 @@ function EditorInner() {
               )}
             </div>
             <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
-              {(() => {
-                const baseObj = findPixelBaseObject();
-                const activeBase = selectedPixelLayerIds.includes(PIXEL_BASE_ID);
-                return <div className={`flex items-center gap-2 px-3 py-2 ${activeBase ? "bg-indigo-50 text-indigo-700 font-semibold border-l-2 border-indigo-600" : "text-gray-600 hover:bg-gray-50"}`}>
-                  <div className="w-8 h-8 rounded bg-gray-100 flex-shrink-0 overflow-hidden border border-gray-200">
-                    <canvas width={32} height={32} ref={el=>{if(el&&baseObj?._element){const c=el.getContext("2d")!;c.clearRect(0,0,32,32);c.drawImage(baseObj._element,0,0,32,32)}}}/>
-                  </div>
-                  <span className="flex-1 truncate text-xs cursor-pointer" onClick={e=>{
-                    const shift=(e as any).shiftKey;
-                    setSelectedPixelLayerId(null);
-                    setSelectedPixelLayerIds(prev=>shift?(prev.includes(PIXEL_BASE_ID)?prev.filter(id=>id!==PIXEL_BASE_ID):[...prev,PIXEL_BASE_ID]):[PIXEL_BASE_ID]);
-                    if(!shift&&baseObj&&fc.current){fc.current.setActiveObject(baseObj);syncSel(baseObj);fc.current.requestRenderAll();}
-                  }} onDoubleClick={()=>{if(baseObj) enterPixelEdit(baseObj);}}>Imagem base</span>
-                </div>;
-              })()}
-              {pixelLayers.slice().reverse().map(layer => {
-                const active = selectedPixelLayerIds.includes(layer.id);
-                return <div key={layer.id} draggable onDragStart={e=>e.dataTransfer.setData("pixelLayerId",layer.id)} onDragOver={e=>e.preventDefault()} onDrop={e=>{const id=e.dataTransfer.getData("pixelLayerId"); if(!id||id===layer.id)return; setPixelLayers(prev=>{const a=[...prev],fi=a.findIndex(x=>x.id===id),ti=a.findIndex(x=>x.id===layer.id);if(fi<0||ti<0)return prev;const [m]=a.splice(fi,1);a.splice(ti,0,m);return a;});}} className={`flex items-center gap-2 px-3 py-2 ${active?"bg-indigo-50 text-indigo-700 font-semibold border-l-2 border-indigo-600":"text-gray-600 hover:bg-gray-50"}`}>
-                  <canvas width={32} height={32} ref={el=>{if(el){const c=el.getContext("2d")!;c.clearRect(0,0,32,32);c.drawImage(layer.canvas,0,0,32,32)}}} className="w-8 h-8 rounded bg-gray-100 border border-gray-200 flex-shrink-0"/>
-                  <span className="flex-1 truncate text-xs cursor-pointer" onClick={e=>{const shift=e.shiftKey;setSelectedPixelLayerIds(prev=>shift?(prev.includes(layer.id)?prev.filter(id=>id!==layer.id):[...prev,layer.id]):[layer.id]);setSelectedPixelLayerId(layer.id);if(!shift&&fc.current){fc.current.discardActiveObject();fc.current.requestRenderAll();syncSel(null);}}} onDoubleClick={()=>enterPixelLayerEdit(layer.id)}>{layer.name}</span>
-                </div>;
-              })}
-              {selectedPixelLayerIds.length > 1 && <button onClick={()=>mergePixelSelections()} className="mx-3 my-2 py-1.5 rounded bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700">Mesclar camadas</button>}
-              {layers.length === 0 && pixelLayers.length === 0 ? (
+              {layers.length === 0 ? (
                 <p className="text-gray-400 p-3 text-center">Sem elementos</p>
               ) : layers.map((layer, index) => {
                 const isActive = selectedUids.includes(layer.id);
