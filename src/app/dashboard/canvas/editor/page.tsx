@@ -2123,6 +2123,10 @@ function EditorInner() {
         backgroundColor: "#ffffff",
         selection: true,
         centeredRotation: true,
+        // Make clicking objects less fragile, especially custom-rendered 3D objects.
+        targetFindTolerance: 8,
+        perPixelTargetFind: false,
+        preserveObjectStacking: true,
       });
       canvas.setZoom(z);
       fc.current = canvas;
@@ -2212,6 +2216,33 @@ function EditorInner() {
       });
 
       canvas.on("mouse:down", (e: any) => {
+        // Robust selection fallback. Custom renderers (3D/blur) can make Fabric's
+        // normal target detection feel inconsistent near visual edges. In Select
+        // mode, if Fabric did not resolve a target, pick the topmost object whose
+        // transformed bounding box contains the pointer.
+        if (activeToolRef.current === "select" && !isEditingNodesRef.current && !e.target) {
+          const pointer = canvas.getPointer(e.e);
+          const objects = canvas.getObjects().filter((o:any) =>
+            o && o.visible !== false && o.selectable !== false && o.evented !== false &&
+            !o.isControlHelper && !o.isEditPreview
+          );
+          for (let i = objects.length - 1; i >= 0; i--) {
+            const o = objects[i];
+            try {
+              o.setCoords?.();
+              const br = o.getBoundingRect(true, true);
+              const pad = o.__threeD?.enabled ? 10 : 4;
+              if (pointer.x >= br.left - pad && pointer.x <= br.left + br.width + pad &&
+                  pointer.y >= br.top - pad && pointer.y <= br.top + br.height + pad) {
+                canvas.setActiveObject(o);
+                syncSel(o);
+                canvas.requestRenderAll();
+                break;
+              }
+            } catch {}
+          }
+        }
+
         if (isEditingNodesRef.current && editingData.current) {
           const p = canvas.getPointer(e.e);
           const target = canvas.findTarget(e.e, false);
@@ -2701,6 +2732,9 @@ function EditorInner() {
     if(!supported3DShape(obj)) return;
     const cfg:Shape3DSettings={enabled:!!obj.__threeD?.enabled,depth:Number(obj.__threeD?.depth??32),rotX:Number(obj.__threeD?.rotX??0),rotY:Number(obj.__threeD?.rotY??0),rotZ:Number(obj.__threeD?.rotZ??0),perspective:Number(obj.__threeD?.perspective??45),sideColor:obj.__threeD?.sideColor||"#334155",light:Number(obj.__threeD?.light??100),...(patch||{})};
     obj.__threeD={...cfg}; install3DRenderer(obj);
+    // 3D is only a visual renderer: never let it disable normal Fabric interaction.
+    if (!obj.lockMovementX) obj.set({ selectable:true, evented:true });
+    obj.setCoords?.();
     const version = (obj.__threeDRenderVersion || 0) + 1;
     obj.__threeDRenderVersion = version;
     const rendered = cfg.enabled ? await render3D(obj,cfg) : null;
