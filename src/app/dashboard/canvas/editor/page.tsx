@@ -2804,32 +2804,47 @@ function EditorInner() {
                       return;
                     }
 
-                    // Ctrl+C — copia pixels da seleção para clipboard
+                    // Ctrl+C — copia pixels da seleção (só o bounding box)
                     if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && ev.key.toLowerCase() === "c") {
                       const pts = lassoSelectionRef.current;
                       if (!pts.length) return;
-                      const copyC = document.createElement("canvas");
-                      copyC.width = el.width; copyC.height = el.height;
-                      const copyCtx = copyC.getContext("2d")!;
-                      copyCtx.drawImage(el, 0, 0);
-                      copyCtx.save();
-                      copyCtx.globalCompositeOperation = "destination-in";
-                      copyCtx.beginPath(); copyCtx.moveTo(pts[0].x, pts[0].y);
-                      pts.forEach(p => copyCtx.lineTo(p.x, p.y)); copyCtx.closePath(); copyCtx.fill();
-                      copyCtx.restore();
-                      (window as any).__pixelClipboard = copyC;
+                      // Calculate bounding box of selection
+                      const minX = Math.floor(Math.min(...pts.map(p => p.x)));
+                      const minY = Math.floor(Math.min(...pts.map(p => p.y)));
+                      const maxX = Math.ceil(Math.max(...pts.map(p => p.x)));
+                      const maxY = Math.ceil(Math.max(...pts.map(p => p.y)));
+                      const bw = maxX - minX; const bh = maxY - minY;
+                      // Full canvas copy masked to selection
+                      const maskC = document.createElement("canvas");
+                      maskC.width = el.width; maskC.height = el.height;
+                      const maskCtx = maskC.getContext("2d")!;
+                      maskCtx.drawImage(el, 0, 0);
+                      maskCtx.save();
+                      maskCtx.globalCompositeOperation = "destination-in";
+                      maskCtx.beginPath(); maskCtx.moveTo(pts[0].x, pts[0].y);
+                      pts.forEach(p => maskCtx.lineTo(p.x, p.y)); maskCtx.closePath(); maskCtx.fill();
+                      maskCtx.restore();
+                      // Crop to bounding box
+                      const cropC = document.createElement("canvas");
+                      cropC.width = bw; cropC.height = bh;
+                      cropC.getContext("2d")!.drawImage(maskC, minX, minY, bw, bh, 0, 0, bw, bh);
+                      (window as any).__pixelClipboard = { canvas: cropC, originX: minX, originY: minY };
                       return;
                     }
 
-                    // Ctrl+V — cola como nova camada
+                    // Ctrl+V — cola como nova camada (tamanho da seleção)
                     if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && ev.key.toLowerCase() === "v") {
-                      const clipboard = (window as any).__pixelClipboard as HTMLCanvasElement;
-                      if (!clipboard) return;
-                      const layerCanvas = document.createElement("canvas");
-                      layerCanvas.width = el.width; layerCanvas.height = el.height;
-                      layerCanvas.getContext("2d")!.drawImage(clipboard, 0, 0);
-                      const newLayer = { id: Math.random().toString(36).slice(2), name: `Camada colada`, canvas: layerCanvas, offsetX: 0, offsetY: 0 };
-                      setPixelLayers(prev => [...prev, newLayer]);
+                      const cb = (window as any).__pixelClipboard;
+                      if (!cb) return;
+                      const clipCanvas = cb.canvas as HTMLCanvasElement;
+                      const newLayer = {
+                        id: Math.random().toString(36).slice(2),
+                        name: `Camada ${Date.now().toString().slice(-4)}`,
+                        canvas: clipCanvas,
+                        offsetX: cb.originX || 0,
+                        offsetY: cb.originY || 0,
+                      };
+                      setPixelLayers(prev => [...prev, newLayer as any]);
                       return;
                     }
 
@@ -2949,63 +2964,89 @@ function EditorInner() {
         </div>
         <div className="w-56 bg-white border-l border-gray-200 flex flex-col flex-shrink-0 overflow-y-auto text-xs">
           {pixelEditMode ? (
-            <div className="p-3 flex flex-col gap-3">
-              <p className="font-semibold text-blue-900 text-xs uppercase tracking-wide">Edição de pixels</p>
-              <p className="text-blue-700 text-xs leading-relaxed">
-                <b>Duplo clique</b> na imagem — aplica e sai
-              </p>
-              <p className="text-gray-500 text-xs leading-relaxed">
-                <b>Ctrl+Z</b> — desfazer<br/>
-                <b>Esc</b> — sair sem salvar
-              </p>
-              {pixelTool === "lasso" && (
-                <div className="bg-blue-50 rounded-lg p-2 flex flex-col gap-1">
-                  <p className="text-blue-700 text-xs font-medium">Laço</p>
-                  <p className="text-blue-600 text-xs leading-relaxed">
-                    Arraste para selecionar.<br/>
-                    <b>Delete</b> — apaga seleção<br/>
-                    <b>Ctrl+Shift+I</b> — inverte seleção
-                  </p>
-                  {lassoSelected && <p className="text-green-600 text-xs">✓ Seleção ativa</p>}
+            <div className="flex flex-col h-full">
+              {/* Instructions */}
+              <div className="p-3 flex flex-col gap-2 border-b border-gray-100">
+                <p className="font-semibold text-blue-900 text-xs uppercase tracking-wide">Edição de pixels</p>
+                <p className="text-gray-500 text-xs leading-relaxed">
+                  <b>Duplo clique</b> — aplica e sai<br/>
+                  <b>Ctrl+Z</b> — desfazer<br/>
+                  <b>Esc</b> — sair sem salvar
+                </p>
+                {pixelTool === "lasso" && (
+                  <div className="bg-blue-50 rounded-lg p-2 flex flex-col gap-1">
+                    <p className="text-blue-700 text-xs font-medium">Laço</p>
+                    <p className="text-blue-600 text-xs leading-relaxed">
+                      <b>Delete</b> — apaga seleção<br/>
+                      <b>Ctrl+C</b> — copia seleção<br/>
+                      <b>Ctrl+V</b> — cola como camada<br/>
+                      <b>Ctrl+Shift+I</b> — inverte
+                    </p>
+                    {lassoSelected && <p className="text-green-600 text-xs font-medium">✓ Seleção ativa</p>}
+                  </div>
+                )}
+                {pixelTool === "stamp" && (
+                  <div className="bg-blue-50 rounded-lg p-2">
+                    <p className="text-blue-700 text-xs font-medium mb-1">Carimbo clone</p>
+                    <p className="text-blue-600 text-xs leading-relaxed">
+                      <b>Alt+clique</b> — define fonte<br/>
+                      Arraste para clonar
+                    </p>
+                    {stampSourceRef.current
+                      ? <p className="text-green-600 text-xs mt-1">✓ Fonte definida</p>
+                      : <p className="text-orange-500 text-xs mt-1">Fonte não definida</p>
+                    }
+                  </div>
+                )}
+              </div>
+
+              {/* Layers panel — always visible */}
+              <div className="flex flex-col flex-1 overflow-y-auto">
+                <p className="px-3 py-2 font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-100" style={{fontSize:10}}>Camadas</p>
+
+                {/* Base image layer */}
+                <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-50">
+                  <div className="w-8 h-8 rounded bg-gray-100 flex-shrink-0 overflow-hidden border border-gray-200">
+                    <canvas ref={el => {
+                      if (el && pixelCanvasRef.current) {
+                        el.width = 32; el.height = 32;
+                        el.getContext("2d")!.drawImage(pixelCanvasRef.current, 0, 0, 32, 32);
+                      }
+                    }} width={32} height={32} style={{width:32,height:32}} />
+                  </div>
+                  <span className="text-xs text-gray-700 flex-1">Imagem base</span>
+                  <div className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" title="Camada ativa" />
                 </div>
-              )}
-              {pixelTool === "stamp" && (
-                <div className="bg-blue-50 rounded-lg p-2">
-                  <p className="text-blue-700 text-xs font-medium mb-1">Carimbo clone</p>
-                  <p className="text-blue-600 text-xs leading-relaxed">
-                    <b>Alt+clique</b> — define fonte<br/>
-                    Arraste para clonar
-                  </p>
-                  {stampSourceRef.current
-                    ? <p className="text-green-600 text-xs mt-1">✓ Fonte definida</p>
-                    : <p className="text-orange-500 text-xs mt-1">Fonte não definida</p>
-                  }
-                </div>
-              )}
-              {pixelTool === "move" && pixelLayers.length > 0 && (
-                <div className="bg-blue-50 rounded-lg p-2 flex flex-col gap-1">
-                  <p className="text-blue-700 text-xs font-medium mb-1">Camadas coladas</p>
-                  {pixelLayers.map(layer => (
-                    <div key={layer.id} className="flex items-center gap-1 justify-between">
-                      <span className="text-blue-600 text-xs truncate flex-1">{layer.name}</span>
-                      <button onClick={() => {
-                        // Merge layer into main canvas
-                        const el = pixelCanvasRef.current;
-                        if (!el) return;
-                        const ctx = el.getContext("2d")!;
-                        const offsetX = (layer as any).offsetX || 0;
-                        const offsetY = (layer as any).offsetY || 0;
-                        ctx.drawImage(layer.canvas, offsetX, offsetY);
-                        pixelSnapshotRef.current = ctx.getImageData(0, 0, el.width, el.height);
-                        setPixelLayers(prev => prev.filter(l => l.id !== layer.id));
-                      }} className="text-green-600 hover:text-green-800 text-xs px-1">✓</button>
-                      <button onClick={() => setPixelLayers(prev => prev.filter(l => l.id !== layer.id))}
-                        className="text-red-400 hover:text-red-600 text-xs px-1">✕</button>
+
+                {/* Pasted layers */}
+                {pixelLayers.map((layer, i) => (
+                  <div key={layer.id} className="flex items-center gap-2 px-3 py-2 border-b border-gray-50 hover:bg-gray-50">
+                    <div className="w-8 h-8 rounded bg-gray-100 flex-shrink-0 overflow-hidden border border-gray-200">
+                      <canvas ref={el => {
+                        if (el && layer.canvas) {
+                          el.width = 32; el.height = 32;
+                          el.getContext("2d")!.drawImage(layer.canvas, 0, 0, 32, 32);
+                        }
+                      }} width={32} height={32} style={{width:32,height:32}} />
                     </div>
-                  ))}
-                  <p className="text-blue-500 text-xs mt-1">✓ mescla na imagem · ✕ descarta</p>
-                </div>
-              )}
+                    <span className="text-xs text-gray-700 flex-1 truncate">{layer.name}</span>
+                    <button onClick={() => {
+                      const el = pixelCanvasRef.current;
+                      if (!el) return;
+                      const ctx = el.getContext("2d")!;
+                      ctx.drawImage(layer.canvas, (layer as any).offsetX || 0, (layer as any).offsetY || 0);
+                      pixelSnapshotRef.current = ctx.getImageData(0, 0, el.width, el.height);
+                      setPixelLayers(prev => prev.filter(l => l.id !== layer.id));
+                    }} className="text-green-600 hover:text-green-800 text-xs flex-shrink-0" title="Mesclar">✓</button>
+                    <button onClick={() => setPixelLayers(prev => prev.filter(l => l.id !== layer.id))}
+                      className="text-red-400 hover:text-red-600 text-xs flex-shrink-0" title="Descartar">✕</button>
+                  </div>
+                ))}
+
+                {pixelLayers.length === 0 && (
+                  <p className="text-gray-400 text-xs p-3 text-center">Ctrl+C e Ctrl+V para criar camadas</p>
+                )}
+              </div>
             </div>
           ) : null}
           {!pixelEditMode && isEditingNodes && (
