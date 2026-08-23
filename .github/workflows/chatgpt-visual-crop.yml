@@ -1,0 +1,56 @@
+name: Apply visual crop editor update
+on:
+  push:
+    paths:
+      - '.github/workflows/chatgpt-visual-crop.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Patch editor
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/app/dashboard/canvas/editor/page.tsx')
+          s = p.read_text()
+
+          old = '''  const [cropMode, setCropMode] = useState(false);\n  const [cropX, setCropX] = useState(0);\n  const [cropY, setCropY] = useState(0);\n  const [cropW, setCropW] = useState(100);\n  const [cropH, setCropH] = useState(100);'''
+          new = '''  const [cropMode, setCropMode] = useState(false);\n  const [cropX, setCropX] = useState(0);\n  const [cropY, setCropY] = useState(0);\n  const [cropW, setCropW] = useState(100);\n  const [cropH, setCropH] = useState(100);\n  const cropDragRef = useRef<{ mode: string; startX: number; startY: number; x: number; y: number; w: number; h: number } | null>(null);'''
+          assert old in s, 'crop state block not found'
+          s = s.replace(old, new, 1)
+
+          old = '''  const setCropAspect = (ratio: number) => {\n    if (!sel || sel.type !== "image") return;\n    const iw = sel.width || 1, ih = sel.height || 1;\n    const currentWPx = iw * cropW/100;\n    let nextW = cropW, nextH = (currentWPx / ratio) / ih * 100;\n    if (nextH > 100) { nextH = 100; nextW = (ih * nextH/100 * ratio) / iw * 100; }\n    applyImageCrop(cropX, cropY, nextW, nextH);\n  };'''
+          new = '''  const setCropAspect = (ratio: number) => {\n    if (!sel || sel.type !== "image") return;\n    const iw = sel.width || 1, ih = sel.height || 1;\n    const currentWPx = iw * cropW/100;\n    let nextW = cropW, nextH = (currentWPx / ratio) / ih * 100;\n    if (nextH > 100) { nextH = 100; nextW = (ih * nextH/100 * ratio) / iw * 100; }\n    const cx = cropX + cropW / 2, cy = cropY + cropH / 2;\n    const nx = Math.max(0, Math.min(100 - nextW, cx - nextW / 2));\n    const ny = Math.max(0, Math.min(100 - nextH, cy - nextH / 2));\n    applyImageCrop(nx, ny, nextW, nextH);\n  };\n\n  const cropPointerToPercent = (clientX: number, clientY: number) => {\n    if (!fc.current || !sel || sel.type !== "image") return null;\n    const fabric = (window as any).fabric;\n    const canvas = fc.current;\n    const pointer = canvas.getPointer({ clientX, clientY, target: canvas.upperCanvasEl } as any);\n    const inverse = fabric.util.invertTransform(sel.calcTransformMatrix());\n    const local = fabric.util.transformPoint(pointer, inverse);\n    const iw = sel.width || 1, ih = sel.height || 1;\n    return {\n      x: ((local.x + iw / 2) / iw) * 100,\n      y: ((local.y + ih / 2) / ih) * 100,\n    };\n  };\n\n  const startCropDrag = (mode: string, e: React.PointerEvent) => {\n    if (!cropMode || !sel || sel.type !== "image") return;\n    e.preventDefault();\n    e.stopPropagation();\n    const p = cropPointerToPercent(e.clientX, e.clientY);\n    if (!p) return;\n    cropDragRef.current = { mode, startX: p.x, startY: p.y, x: cropX, y: cropY, w: cropW, h: cropH };\n    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);\n  };\n\n  useEffect(() => {\n    if (!cropMode) return;\n    const onMove = (e: PointerEvent) => {\n      const drag = cropDragRef.current;\n      if (!drag || !sel || sel.type !== "image") return;\n      const p = cropPointerToPercent(e.clientX, e.clientY);\n      if (!p) return;\n      const minSize = 2;\n      let left = drag.x, top = drag.y, right = drag.x + drag.w, bottom = drag.y + drag.h;\n      if (drag.mode === "move") {\n        const dx = p.x - drag.startX, dy = p.y - drag.startY;\n        left = Math.max(0, Math.min(100 - drag.w, drag.x + dx));\n        top = Math.max(0, Math.min(100 - drag.h, drag.y + dy));\n        right = left + drag.w; bottom = top + drag.h;\n      } else {\n        if (drag.mode.includes("w")) left = Math.max(0, Math.min(right - minSize, p.x));\n        if (drag.mode.includes("e")) right = Math.min(100, Math.max(left + minSize, p.x));\n        if (drag.mode.includes("n")) top = Math.max(0, Math.min(bottom - minSize, p.y));\n        if (drag.mode.includes("s")) bottom = Math.min(100, Math.max(top + minSize, p.y));\n      }\n      applyImageCrop(left, top, right - left, bottom - top);\n    };\n    const onUp = () => { cropDragRef.current = null; };\n    window.addEventListener("pointermove", onMove);\n    window.addEventListener("pointerup", onUp);\n    window.addEventListener("pointercancel", onUp);\n    return () => {\n      window.removeEventListener("pointermove", onMove);\n      window.removeEventListener("pointerup", onUp);\n      window.removeEventListener("pointercancel", onUp);\n    };\n  }, [cropMode, sel, cropX, cropY, cropW, cropH]);'''
+          assert old in s, 'setCropAspect block not found'
+          s = s.replace(old, new, 1)
+
+          marker = '''            ) : <canvas ref={canvasRef} />}\n\n            {/* Pixel editor overlay */}'''
+          overlay = '''            ) : <canvas ref={canvasRef} />}\n\n            {/* Visual non-destructive crop overlay */}\n            {!pixelEditMode && cropMode && sel?.type === "image" && (() => {\n              const m = sel.calcTransformMatrix?.();\n              if (!m) return null;\n              const z = zoom / 100;\n              const iw = sel.width || 1, ih = sel.height || 1;\n              const left = (m[4] - m[0] * iw / 2 - m[2] * ih / 2) * z;\n              const top = (m[5] - m[1] * iw / 2 - m[3] * ih / 2) * z;\n              const transform = `matrix(${m[0]}, ${m[1]}, ${m[2]}, ${m[3]}, 0, 0)`;\n              const handles = [\n                ["nw", 0, 0, "nwse-resize"], ["n", 50, 0, "ns-resize"], ["ne", 100, 0, "nesw-resize"],\n                ["e", 100, 50, "ew-resize"], ["se", 100, 100, "nwse-resize"], ["s", 50, 100, "ns-resize"],\n                ["sw", 0, 100, "nesw-resize"], ["w", 0, 50, "ew-resize"],\n              ] as const;\n              return (\n                <div style={{ position:"absolute", left, top, width: iw * z, height: ih * z, transform, transformOrigin:"0 0", zIndex: 50, pointerEvents:"auto" }}>\n                  <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,.42)", pointerEvents:"none" }} />\n                  <div\n                    onPointerDown={e => startCropDrag("move", e)}\n                    style={{\n                      position:"absolute", left:`${cropX}%`, top:`${cropY}%`, width:`${cropW}%`, height:`${cropH}%`,\n                      boxSizing:"border-box", border:"2px solid white", outline:"1px solid #4f46e5", cursor:"move",\n                      boxShadow:"0 0 0 9999px rgba(0,0,0,.0)", background:"rgba(255,255,255,.01)"\n                    }}\n                  >\n                    <div style={{ position:"absolute", inset:0, boxShadow:"0 0 0 9999px rgba(0,0,0,-0.42)", pointerEvents:"none" }} />\n                    {[1,2].map(i => <div key={`v${i}`} style={{position:"absolute",left:`${i*33.333}%`,top:0,bottom:0,borderLeft:"1px solid rgba(255,255,255,.55)",pointerEvents:"none"}} />)}\n                    {[1,2].map(i => <div key={`h${i}`} style={{position:"absolute",top:`${i*33.333}%`,left:0,right:0,borderTop:"1px solid rgba(255,255,255,.55)",pointerEvents:"none"}} />)}\n                    {handles.map(([mode, x, y, cursor]) => (\n                      <div key={mode} onPointerDown={e => startCropDrag(mode, e)}\n                        style={{ position:"absolute", left:`${x}%`, top:`${y}%`, width:12, height:12, transform:"translate(-50%,-50%)", background:"white", border:"2px solid #4f46e5", borderRadius:2, cursor, zIndex:2 }} />\n                    ))}\n                  </div>\n                </div>\n              );\n            })()}\n\n            {/* Pixel editor overlay */}'''
+          assert marker in s, 'canvas overlay marker not found'
+          s = s.replace(marker, overlay, 1)
+
+          old = '''                  <button onClick={() => setCropMode(v => !v)}\n                    className={`w-full py-2 rounded-lg border text-xs font-medium transition ${cropMode ? "bg-indigo-600 text-white border-indigo-600" : "border-indigo-200 text-indigo-600 hover:bg-indigo-50"}`}>\n                    ✂ {cropMode ? "Fechar recorte" : ((sel as any).__crop ? "Editar recorte" : "Recortar imagem")}\n                  </button>'''
+          new = '''                  <button onClick={() => setCropMode(v => !v)}\n                    className={`w-full py-2 rounded-lg border text-xs font-medium transition ${cropMode ? "bg-indigo-600 text-white border-indigo-600" : "border-indigo-200 text-indigo-600 hover:bg-indigo-50"}`}>\n                    ✂ {cropMode ? "Fechar recorte" : ((sel as any).__crop ? "Editar recorte" : "Recortar imagem")}\n                  </button>'''
+          assert old in s
+
+          p.write_text(s)
+          PY
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Commit change
+        run: |
+          git config user.name "chatgpt-editor"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/app/dashboard/canvas/editor/page.tsx
+          git commit -m "feat: add direct visual crop handles"
+          git push origin main
