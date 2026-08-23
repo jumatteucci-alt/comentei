@@ -85,7 +85,48 @@ function ColorPickerWithNone({ value, onChange }: { value: string; onChange: (c:
 }
 
 type GradStop = { color: string; opacity: number; pos: number };
-type GradValue = { stops: GradStop[]; angle: number };
+type GradValue = { stops: GradStop[]; angle: number; type: "linear" | "radial" };
+
+function parseGradientColor(color: string, explicitOpacity?: number): { color: string; opacity: number } {
+  const raw = (color || "#000000").trim();
+  let opacity = explicitOpacity ?? 1;
+
+  if (raw.startsWith("#")) {
+    let hex = raw.slice(1);
+    if (hex.length === 3 || hex.length === 4) hex = hex.split("").map(ch => ch + ch).join("");
+    if (hex.length === 8) {
+      opacity *= parseInt(hex.slice(6, 8), 16) / 255;
+      hex = hex.slice(0, 6);
+    }
+    if (/^[0-9a-fA-F]{6}$/.test(hex)) return { color: `#${hex.toLowerCase()}`, opacity: Math.max(0, Math.min(1, opacity)) };
+  }
+
+  const m = raw.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)/i);
+  if (m) {
+    const clamp = (n:number) => Math.max(0, Math.min(255, Math.round(n)));
+    const toHex = (n:number) => clamp(n).toString(16).padStart(2, "0");
+    if (m[4] !== undefined) opacity *= Math.max(0, Math.min(1, Number(m[4])));
+    return { color: `#${toHex(Number(m[1]))}${toHex(Number(m[2]))}${toHex(Number(m[3]))}`, opacity: Math.max(0, Math.min(1, opacity)) };
+  }
+
+  return { color: "#000000", opacity: Math.max(0, Math.min(1, opacity)) };
+}
+
+function gradientFromFabric(fill: any): GradValue | null {
+  if (!fill?.colorStops?.length) return null;
+  const stops: GradStop[] = fill.colorStops.map((s: any) => {
+    const parsed = parseGradientColor(s.color || "#000000", typeof s.opacity === "number" ? s.opacity : 1);
+    return { color: parsed.color, opacity: parsed.opacity, pos: Math.round(Math.max(0, Math.min(1, Number(s.offset ?? 0))) * 1000) / 10 };
+  });
+  const type: "linear" | "radial" = fill.type === "radial" ? "radial" : "linear";
+  let angle = 90;
+  if (type === "linear" && fill.coords) {
+    const dx = Number(fill.coords.x2 ?? 0) - Number(fill.coords.x1 ?? 0);
+    const dy = Number(fill.coords.y2 ?? 0) - Number(fill.coords.y1 ?? 0);
+    if (dx || dy) angle = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+  }
+  return { stops, angle, type };
+}
 
 function GradientEditor({ value, onChange }: { value: GradValue; onChange: (g: GradValue) => void }) {
   const [selectedStop, setSelectedStop] = useState(0);
@@ -97,42 +138,53 @@ function GradientEditor({ value, onChange }: { value: GradValue; onChange: (g: G
     if (selectedStop >= g.stops.length) setSelectedStop(Math.max(0, g.stops.length - 1));
   }, [g.stops.length, selectedStop]);
 
-  const rgba = (s: GradStop) => {
-    const hex = s.color.startsWith("#") ? s.color : "#000000";
+  const rgba = (st: GradStop) => {
+    const parsed = parseGradientColor(st.color, st.opacity);
+    const hex = parsed.color;
     const r = parseInt(hex.slice(1,3),16), gr = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
-    return `rgba(${r},${gr},${b},${s.opacity})`;
+    return `rgba(${r},${gr},${b},${parsed.opacity})`;
   };
   const sortedStops = [...g.stops].sort((a,b) => a.pos - b.pos);
-  const previewGrad = sortedStops.map(s => `${rgba(s)} ${s.pos}%`).join(", ");
+  const previewGrad = sortedStops.map(st => `${rgba(st)} ${st.pos}%`).join(", ");
+  const previewBackground = g.type === "radial"
+    ? `radial-gradient(circle at center, ${previewGrad})`
+    : `linear-gradient(${(g.angle + 90) % 360}deg, ${previewGrad})`;
 
   const updateStop = (i: number, patch: Partial<GradStop>) => {
-    const stops = g.stops.map((s, idx) => idx === i ? { ...s, ...patch } : s);
+    const stops = g.stops.map((st, idx) => idx === i ? { ...st, ...patch } : st);
     onChange({ ...g, stops });
   };
 
   const colorAt = (pos: number) => {
     const stops = sortedStops;
-    const before = [...stops].reverse().find(s => s.pos <= pos) || stops[0];
-    const after = stops.find(s => s.pos >= pos) || stops[stops.length - 1];
+    const before = [...stops].reverse().find(st => st.pos <= pos) || stops[0];
+    const after = stops.find(st => st.pos >= pos) || stops[stops.length - 1];
     if (!before || !after || before === after || before.pos === after.pos) return { color: before?.color || "#ffffff", opacity: before?.opacity ?? 1 };
     const t = (pos - before.pos) / (after.pos - before.pos);
-    const hexToRgb = (hex: string) => { const h = hex.startsWith("#") ? hex : "#000000"; return [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)]; };
-    const [r1,g1,b1] = hexToRgb(before.color), [r2,g2,b2] = hexToRgb(after.color);
+    const p1 = parseGradientColor(before.color, before.opacity), p2 = parseGradientColor(after.color, after.opacity);
+    const hexToRgb = (hex: string) => [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)];
+    const [r1,g1,b1] = hexToRgb(p1.color), [r2,g2,b2] = hexToRgb(p2.color);
     const toHex = (n:number) => Math.round(n).toString(16).padStart(2,"0");
     return {
       color: `#${toHex(r1+(r2-r1)*t)}${toHex(g1+(g2-g1)*t)}${toHex(b1+(b2-b1)*t)}`,
-      opacity: before.opacity + (after.opacity - before.opacity) * t,
+      opacity: p1.opacity + (p2.opacity - p1.opacity) * t,
     };
   };
 
-  const posFromPointer = (clientX: number) => {
+  const posFromPointer = (clientX: number, clientY?: number) => {
     const rect = previewRef.current?.getBoundingClientRect();
     if (!rect) return 0;
+    if (g.type === "radial" && typeof clientY === "number") {
+      const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+      const dx = clientX - cx, dy = clientY - cy;
+      const maxR = Math.max(1, Math.min(rect.width, rect.height) / 2);
+      return Math.max(0, Math.min(100, Math.sqrt(dx*dx + dy*dy) / maxR * 100));
+    }
     return Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
   };
 
-  const addStopAt = (clientX: number) => {
-    const pos = posFromPointer(clientX);
+  const addStopAt = (clientX: number, clientY: number) => {
+    const pos = posFromPointer(clientX, clientY);
     const sampled = colorAt(pos);
     const next = [...g.stops, { color: sampled.color, opacity: sampled.opacity, pos }];
     onChange({ ...g, stops: next });
@@ -150,20 +202,35 @@ function GradientEditor({ value, onChange }: { value: GradValue; onChange: (g: G
 
   return (
     <div className="flex flex-col gap-2">
+      <div className="grid grid-cols-2 gap-1">
+        <button type="button" onClick={() => onChange({ ...g, type: "linear" })}
+          className={`py-1.5 rounded-lg border text-xs transition ${g.type === "linear" ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-500 hover:bg-gray-50"}`}>
+          Linear
+        </button>
+        <button type="button" onClick={() => onChange({ ...g, type: "radial" })}
+          className={`py-1.5 rounded-lg border text-xs transition ${g.type === "radial" ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-500 hover:bg-gray-50"}`}>
+          Radial
+        </button>
+      </div>
+
+      {g.type === "linear" && (
+        <SliderRow label="Orientação" value={Math.round(g.angle)} min={0} max={360} unit="°" onChange={angle => onChange({ ...g, angle })} />
+      )}
+
       <div
         ref={previewRef}
         className="relative h-14 rounded-lg border border-gray-200 cursor-crosshair select-none"
-        style={{ background: `linear-gradient(${g.angle}deg, ${previewGrad})` }}
-        onPointerDown={e => { if (e.target === e.currentTarget) addStopAt(e.clientX); }}
+        style={{ background: previewBackground }}
+        onPointerDown={e => { if (e.target === e.currentTarget) addStopAt(e.clientX, e.clientY); }}
         onPointerMove={e => {
           if (draggingStop === null) return;
-          updateStop(draggingStop, { pos: posFromPointer(e.clientX) });
+          updateStop(draggingStop, { pos: posFromPointer(e.clientX, e.clientY) });
         }}
         onPointerUp={() => setDraggingStop(null)}
         onPointerCancel={() => setDraggingStop(null)}
         onPointerLeave={() => { if (draggingStop !== null) setDraggingStop(null); }}
       >
-        {g.stops.map((s, i) => (
+        {g.stops.map((st, i) => (
           <button
             key={i}
             type="button"
@@ -171,8 +238,8 @@ function GradientEditor({ value, onChange }: { value: GradValue; onChange: (g: G
             onPointerDown={e => { e.stopPropagation(); setSelectedStop(i); setDraggingStop(i); (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); }}
             onPointerUp={e => { e.stopPropagation(); setDraggingStop(null); }}
             style={{
-              position: "absolute", left: `${s.pos}%`, bottom: -7, transform: "translateX(-50%)",
-              width: 15, height: 15, borderRadius: "50%", background: rgba(s),
+              position: "absolute", left: `${st.pos}%`, bottom: -7, transform: "translateX(-50%)",
+              width: 15, height: 15, borderRadius: "50%", background: rgba(st),
               border: i === selectedStop ? "3px solid #4f46e5" : "2px solid white",
               boxShadow: "0 0 0 1px rgba(0,0,0,.25)", cursor: "ew-resize",
             }}
@@ -189,7 +256,7 @@ function GradientEditor({ value, onChange }: { value: GradValue; onChange: (g: G
             )}
           </div>
           <div className="flex gap-1.5">
-            <input type="color" value={current.color.startsWith("#") ? current.color : "#000000"}
+            <input type="color" value={parseGradientColor(current.color).color}
               onChange={e => updateStop(selectedStop, { color: e.target.value })}
               className="w-8 h-8 rounded border border-gray-200 cursor-pointer p-0 flex-shrink-0" />
             <input type="text" value={current.color}
@@ -205,7 +272,7 @@ function GradientEditor({ value, onChange }: { value: GradValue; onChange: (g: G
 
 function FillColorPickerWithGradient({ solid, gradient, onSolid, onGradient }: { solid: string; gradient: GradValue | null; onSolid: (c:string)=>void; onGradient: (g:GradValue)=>void }) {
   const isNone = solid === "transparent" || solid === "";
-  const defaultGradient: GradValue = { stops: [{ color:"#4f46e5", opacity:1, pos:0 }, { color:"#ec4899", opacity:1, pos:100 }], angle: 90 };
+  const defaultGradient: GradValue = { stops: [{ color:"#4f46e5", opacity:1, pos:0 }, { color:"#ec4899", opacity:1, pos:100 }], angle: 90, type: "linear" };
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap gap-1 mb-1">
@@ -260,21 +327,39 @@ function Sec({ title }: { title: string }) {
   return <p className="text-xs font-semibold text-gray-600 pt-2 border-t border-gray-100">{title}</p>;
 }
 
-function applyGradient(fc: any, obj: any, g: { stops: {color:string;opacity:number;pos:number}[]; angle: number }) {
+function applyGradient(fc: any, obj: any, g: GradValue) {
   const fabric = (window as any).fabric;
-  const rad = (g.angle * Math.PI) / 180;
   const w = (obj.width || 100) * (obj.scaleX || 1);
   const h = (obj.height || 100) * (obj.scaleY || 1);
-  const x1 = (Math.cos(rad + Math.PI) + 1) / 2 * w;
-  const y1 = (Math.sin(rad + Math.PI) + 1) / 2 * h;
-  const x2 = (Math.cos(rad) + 1) / 2 * w;
-  const y2 = (Math.sin(rad) + 1) / 2 * h;
-  const colorStops = g.stops.map(s => {
-    const hex = s.color.startsWith("#") ? s.color : "#000000";
+  const colorStops = g.stops.map(st => {
+    const parsed = parseGradientColor(st.color, st.opacity);
+    const hex = parsed.color;
     const r = parseInt(hex.slice(1,3),16), gr = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
-    return { offset: s.pos/100, color: `rgba(${r},${gr},${b},${s.opacity})` };
+    return { offset: st.pos/100, color: `rgba(${r},${gr},${b},${parsed.opacity})` };
   });
-  const gradient = new fabric.Gradient({ type: "linear", coords: { x1, y1, x2, y2 }, colorStops });
+
+  let gradient: any;
+  if (g.type === "radial") {
+    const radius = Math.max(1, Math.min(w, h) / 2);
+    gradient = new fabric.Gradient({
+      type: "radial",
+      coords: { x1: w/2, y1: h/2, r1: 0, x2: w/2, y2: h/2, r2: radius },
+      colorStops,
+    });
+  } else {
+    const rad = (g.angle * Math.PI) / 180;
+    gradient = new fabric.Gradient({
+      type: "linear",
+      coords: {
+        x1: (Math.cos(rad + Math.PI) + 1) / 2 * w,
+        y1: (Math.sin(rad + Math.PI) + 1) / 2 * h,
+        x2: (Math.cos(rad) + 1) / 2 * w,
+        y2: (Math.sin(rad) + 1) / 2 * h,
+      },
+      colorStops,
+    });
+  }
+  obj.__fillGradient = { type: g.type, angle: g.angle, stops: g.stops.map(st => ({ ...st })) };
   obj.set("fill", gradient);
   fc.requestRenderAll();
 }
@@ -427,7 +512,7 @@ function EditorInner() {
   const [selLineHeight, setSelLineHeight] = useState(1.2);
   const [selTextWidth, setSelTextWidth] = useState(300);
   const [selTextHeight, setSelTextHeight] = useState(0);
-  const [selFillGradient, setSelFillGradient] = useState<{stops:{color:string;opacity:number;pos:number}[];angle:number}|null>(null);
+  const [selFillGradient, setSelFillGradient] = useState<GradValue|null>(null);
 
   // Pixel editor
   const [pixelEditMode, setPixelEditMode] = useState(false);
@@ -518,7 +603,7 @@ function EditorInner() {
   }, []);
 
   const [bgSolid, setBgSolid] = useState("#ffffff");
-  const [bgGradient, setBgGradient] = useState<{stops:{color:string;opacity:number;pos:number}[];angle:number}|null>(null);
+  const [bgGradient, setBgGradient] = useState<GradValue|null>(null);
 
   const fitCanvasToScreen = useCallback(() => {
     if (!canvasContainerRef.current) return;
@@ -645,8 +730,15 @@ function EditorInner() {
     }
     const fill = obj.fill;
     if (fill && fill.colorStops) {
-      const stops = fill.colorStops.map((s: any) => ({ color: s.color || "#000", opacity: 1, pos: Math.round((s.offset||0)*100) }));
-      setSelFillGradient({ stops, angle: 90 });
+      const restored = obj.__fillGradient || gradientFromFabric(fill);
+      setSelFillGradient(restored ? {
+        type: restored.type === "radial" ? "radial" : "linear",
+        angle: typeof restored.angle === "number" ? restored.angle : 90,
+        stops: restored.stops.map((st:any) => {
+          const parsed = parseGradientColor(st.color, st.opacity);
+          return { color: parsed.color, opacity: parsed.opacity, pos: Number(st.pos) };
+        }),
+      } : null);
     } else { setSelFillGradient(null); }
   };
 
@@ -2323,13 +2415,20 @@ function EditorInner() {
     if (bgGradient) {
       const fab = (window as any).fabric;
       if (!fab) return;
-      const rad = (bgGradient.angle * Math.PI) / 180;
-      const bgColorStops = bgGradient.stops.map((s: any) => {
-        const hex = s.color.startsWith("#") ? s.color : "#000000";
+      const bgColorStops = bgGradient.stops.map((st: any) => {
+        const parsed = parseGradientColor(st.color, st.opacity);
+        const hex = parsed.color;
         const r = parseInt(hex.slice(1,3),16), gr = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
-        return { offset: s.pos/100, color: `rgba(${r},${gr},${b},${s.opacity})` };
+        return { offset: st.pos/100, color: `rgba(${r},${gr},${b},${parsed.opacity})` };
       });
-      const grad = new fab.Gradient({ type: "linear", coords: { x1: (Math.cos(rad+Math.PI)+1)/2*canvasWidth, y1: (Math.sin(rad+Math.PI)+1)/2*canvasHeight, x2: (Math.cos(rad)+1)/2*canvasWidth, y2: (Math.sin(rad)+1)/2*canvasHeight }, colorStops: bgColorStops });
+      let grad: any;
+      if (bgGradient.type === "radial") {
+        const radius = Math.max(1, Math.min(canvasWidth, canvasHeight) / 2);
+        grad = new fab.Gradient({ type: "radial", coords: { x1: canvasWidth/2, y1: canvasHeight/2, r1: 0, x2: canvasWidth/2, y2: canvasHeight/2, r2: radius }, colorStops: bgColorStops });
+      } else {
+        const rad = (bgGradient.angle * Math.PI) / 180;
+        grad = new fab.Gradient({ type: "linear", coords: { x1: (Math.cos(rad+Math.PI)+1)/2*canvasWidth, y1: (Math.sin(rad+Math.PI)+1)/2*canvasHeight, x2: (Math.cos(rad)+1)/2*canvasWidth, y2: (Math.sin(rad)+1)/2*canvasHeight }, colorStops: bgColorStops });
+      }
       fc.current.setBackgroundColor(grad, () => fc.current?.renderAll());
     } else {
       fc.current.setBackgroundColor(bgSolid, () => fc.current?.renderAll());
@@ -2352,7 +2451,7 @@ function EditorInner() {
     setSelFill(color); setSelFillGradient(null);
     upd({ fill: color });
   };
-  const updateFillGradient = (g: {stops:{color:string;opacity:number;pos:number}[];angle:number}|null) => {
+  const updateFillGradient = (g: GradValue|null) => {
     setSelFillGradient(g);
     if (!g) { upd({ fill: selFill }); return; }
     if (fc.current && sel) applyGradient(fc.current, sel, g);
