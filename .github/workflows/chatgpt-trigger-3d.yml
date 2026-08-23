@@ -20,3 +20,5 @@ jobs:
           git add .github/workflows/chatgpt-shape-3d.yml
           git commit -m "chore: trigger editable 3d shapes workflow"
           git push origin main
+
+# retrigger
