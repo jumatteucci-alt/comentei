@@ -87,78 +87,152 @@ function ColorPickerWithNone({ value, onChange }: { value: string; onChange: (c:
 type GradStop = { color: string; opacity: number; pos: number };
 type GradValue = { stops: GradStop[]; angle: number };
 
-function GradientEditor({ value, onChange }: { value: GradValue | null; onChange: (g: GradValue | null) => void }) {
-  const [on, setOn] = useState(!!value);
-  const defaultG: GradValue = { stops: [{ color:"#4f46e5", opacity:1, pos:0 },{ color:"#ec4899", opacity:1, pos:100 }], angle: 90 };
-  const g: GradValue = value || defaultG;
+function GradientEditor({ value, onChange }: { value: GradValue; onChange: (g: GradValue) => void }) {
+  const [selectedStop, setSelectedStop] = useState(0);
+  const [draggingStop, setDraggingStop] = useState<number | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const g = value;
+
+  useEffect(() => {
+    if (selectedStop >= g.stops.length) setSelectedStop(Math.max(0, g.stops.length - 1));
+  }, [g.stops.length, selectedStop]);
+
+  const rgba = (s: GradStop) => {
+    const hex = s.color.startsWith("#") ? s.color : "#000000";
+    const r = parseInt(hex.slice(1,3),16), gr = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+    return `rgba(${r},${gr},${b},${s.opacity})`;
+  };
+  const sortedStops = [...g.stops].sort((a,b) => a.pos - b.pos);
+  const previewGrad = sortedStops.map(s => `${rgba(s)} ${s.pos}%`).join(", ");
 
   const updateStop = (i: number, patch: Partial<GradStop>) => {
-    const stops = g.stops.map((s, idx) => idx===i ? {...s,...patch} : s);
-    onChange({ ...g, stops });
-  };
-  const addStop = () => {
-    const stops = [...g.stops, { color:"#ffffff", opacity:1, pos:50 }].sort((a,b)=>a.pos-b.pos);
-    onChange({ ...g, stops });
-  };
-  const removeStop = (i: number) => {
-    if (g.stops.length <= 2) return;
-    const stops = g.stops.filter((_,idx) => idx!==i);
+    const stops = g.stops.map((s, idx) => idx === i ? { ...s, ...patch } : s);
     onChange({ ...g, stops });
   };
 
-  const previewGrad = g.stops.map(s => {
-    const hex = s.color.startsWith("#") ? s.color : "#000";
-    const r = parseInt(hex.slice(1,3),16), gr = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
-    return `rgba(${r},${gr},${b},${s.opacity}) ${s.pos}%`;
-  }).join(", ");
+  const colorAt = (pos: number) => {
+    const stops = sortedStops;
+    const before = [...stops].reverse().find(s => s.pos <= pos) || stops[0];
+    const after = stops.find(s => s.pos >= pos) || stops[stops.length - 1];
+    if (!before || !after || before === after || before.pos === after.pos) return { color: before?.color || "#ffffff", opacity: before?.opacity ?? 1 };
+    const t = (pos - before.pos) / (after.pos - before.pos);
+    const hexToRgb = (hex: string) => { const h = hex.startsWith("#") ? hex : "#000000"; return [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)]; };
+    const [r1,g1,b1] = hexToRgb(before.color), [r2,g2,b2] = hexToRgb(after.color);
+    const toHex = (n:number) => Math.round(n).toString(16).padStart(2,"0");
+    return {
+      color: `#${toHex(r1+(r2-r1)*t)}${toHex(g1+(g2-g1)*t)}${toHex(b1+(b2-b1)*t)}`,
+      opacity: before.opacity + (after.opacity - before.opacity) * t,
+    };
+  };
+
+  const posFromPointer = (clientX: number) => {
+    const rect = previewRef.current?.getBoundingClientRect();
+    if (!rect) return 0;
+    return Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
+  };
+
+  const addStopAt = (clientX: number) => {
+    const pos = posFromPointer(clientX);
+    const sampled = colorAt(pos);
+    const next = [...g.stops, { color: sampled.color, opacity: sampled.opacity, pos }];
+    onChange({ ...g, stops: next });
+    setSelectedStop(next.length - 1);
+  };
+
+  const removeSelected = () => {
+    if (g.stops.length <= 2) return;
+    const stops = g.stops.filter((_, i) => i !== selectedStop);
+    onChange({ ...g, stops });
+    setSelectedStop(Math.max(0, Math.min(selectedStop - 1, stops.length - 1)));
+  };
+
+  const current = g.stops[selectedStop] || g.stops[0];
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-gray-400">Usar gradiente</span>
-        <button onClick={() => { const next = !on; setOn(next); onChange(next ? g : null); }}
-          className={`w-9 h-5 rounded-full transition ${on ? "bg-indigo-500" : "bg-gray-200"}`}>
-          <span className={`block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${on ? "translate-x-4" : ""}`} />
-        </button>
+      <div
+        ref={previewRef}
+        className="relative h-14 rounded-lg border border-gray-200 cursor-crosshair select-none"
+        style={{ background: `linear-gradient(${g.angle}deg, ${previewGrad})` }}
+        onPointerDown={e => { if (e.target === e.currentTarget) addStopAt(e.clientX); }}
+        onPointerMove={e => {
+          if (draggingStop === null) return;
+          updateStop(draggingStop, { pos: posFromPointer(e.clientX) });
+        }}
+        onPointerUp={() => setDraggingStop(null)}
+        onPointerCancel={() => setDraggingStop(null)}
+        onPointerLeave={() => { if (draggingStop !== null) setDraggingStop(null); }}
+      >
+        {g.stops.map((s, i) => (
+          <button
+            key={i}
+            type="button"
+            title="Arraste para mover este ponto"
+            onPointerDown={e => { e.stopPropagation(); setSelectedStop(i); setDraggingStop(i); (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); }}
+            onPointerUp={e => { e.stopPropagation(); setDraggingStop(null); }}
+            style={{
+              position: "absolute", left: `${s.pos}%`, bottom: -7, transform: "translateX(-50%)",
+              width: 15, height: 15, borderRadius: "50%", background: rgba(s),
+              border: i === selectedStop ? "3px solid #4f46e5" : "2px solid white",
+              boxShadow: "0 0 0 1px rgba(0,0,0,.25)", cursor: "ew-resize",
+            }}
+          />
+        ))}
       </div>
-      {on && (
-        <div className="flex flex-col gap-2">
-          <div style={{ background: `linear-gradient(${g.angle}deg, ${previewGrad})`, height: 20, borderRadius: 6 }} />
-          <div>
-            <p className="text-xs text-gray-400 mb-1">Ângulo: {g.angle}°</p>
-            <input type="range" min={0} max={360} value={g.angle} onChange={e => onChange({ ...g, angle: +e.target.value })} className="w-full accent-indigo-600" />
+
+      {current && (
+        <div className="mt-2 flex flex-col gap-2 p-2 border border-gray-100 rounded-lg">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-500">Ponto selecionado</span>
+            {g.stops.length > 2 && (
+              <button type="button" onClick={removeSelected} className="text-xs text-red-400 hover:text-red-600">Excluir ponto</button>
+            )}
           </div>
-          {g.stops.map((s, i) => (
-            <div key={i} className="flex flex-col gap-1 p-2 border border-gray-100 rounded-lg">
-              <div className="flex items-center gap-1 justify-between">
-                <span className="text-xs text-gray-400">Cor {i+1}</span>
-                {g.stops.length > 2 && (
-                  <button onClick={() => removeStop(i)} className="text-red-400 hover:text-red-600 text-xs">✕</button>
-                )}
-              </div>
-              <div className="flex gap-1">
-                <input type="color" value={s.color.startsWith("#") ? s.color : "#000000"}
-                  onChange={e => updateStop(i, { color: e.target.value })} className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0 flex-shrink-0" />
-                <input type="text" value={s.color} onChange={e => updateStop(i, { color: e.target.value })}
-                  className="flex-1 px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:border-indigo-400 min-w-0" />
-              </div>
-              <div className="flex items-center gap-1">
-                <span className="text-xs text-gray-400 w-12 flex-shrink-0">Posição</span>
-                <input type="range" min={0} max={100} value={s.pos} onChange={e => updateStop(i, { pos: +e.target.value })} className="flex-1 accent-indigo-600" />
-                <span className="text-xs text-gray-400 w-7 text-right">{s.pos}%</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <span className="text-xs text-gray-400 w-12 flex-shrink-0">Opac.</span>
-                <input type="range" min={0} max={1} step={0.01} value={s.opacity} onChange={e => updateStop(i, { opacity: +e.target.value })} className="flex-1 accent-indigo-600" />
-                <span className="text-xs text-gray-400 w-7 text-right">{Math.round(s.opacity*100)}%</span>
-              </div>
-            </div>
-          ))}
-          <button onClick={addStop} className="w-full py-1.5 border border-dashed border-gray-300 text-gray-400 rounded-lg text-xs hover:border-indigo-300 hover:text-indigo-500 transition">
-            + Adicionar cor
-          </button>
+          <div className="flex gap-1.5">
+            <input type="color" value={current.color.startsWith("#") ? current.color : "#000000"}
+              onChange={e => updateStop(selectedStop, { color: e.target.value })}
+              className="w-8 h-8 rounded border border-gray-200 cursor-pointer p-0 flex-shrink-0" />
+            <input type="text" value={current.color}
+              onChange={e => updateStop(selectedStop, { color: e.target.value })}
+              className="flex-1 px-2 py-1 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 min-w-0" />
+          </div>
+          <SliderRow label="Opacidade" value={Math.round(current.opacity * 100)} min={0} max={100} unit="%" onChange={v => updateStop(selectedStop, { opacity: v / 100 })} />
         </div>
       )}
+    </div>
+  );
+}
+
+function FillColorPickerWithGradient({ solid, gradient, onSolid, onGradient }: { solid: string; gradient: GradValue | null; onSolid: (c:string)=>void; onGradient: (g:GradValue)=>void }) {
+  const isNone = solid === "transparent" || solid === "";
+  const defaultGradient: GradValue = { stops: [{ color:"#4f46e5", opacity:1, pos:0 }, { color:"#ec4899", opacity:1, pos:100 }], angle: 90 };
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap gap-1 mb-1">
+        <button onClick={() => onSolid("transparent")} title="Sem cor"
+          style={{ outline: !gradient && isNone ? "2px solid #4f46e5" : "1px solid #e4e4e0", outlineOffset: "1px", background: "#fff" }}
+          className="relative w-5 h-5 rounded overflow-hidden flex-shrink-0 transition">
+          <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom right, transparent calc(50% - 1px), #ef4444 calc(50% - 1px), #ef4444 calc(50% + 1px), transparent calc(50% + 1px))" }} />
+        </button>
+        <button onClick={() => onGradient(gradient || defaultGradient)} title="Gradiente"
+          style={{ background: "linear-gradient(135deg,#4f46e5,#22c55e,#f59e0b,#ec4899)", outline: gradient ? "2px solid #4f46e5" : "1px solid #e4e4e0", outlineOffset: "1px" }}
+          className="w-5 h-5 rounded transition flex-shrink-0" />
+        {SWATCHES.map(col => (
+          <button key={col} onClick={() => onSolid(col)}
+            style={{ background: col, outline: !gradient && solid === col ? "2px solid #4f46e5" : "1px solid #e4e4e0", outlineOffset: "1px" }}
+            className="w-5 h-5 rounded transition flex-shrink-0" />
+        ))}
+      </div>
+      {gradient ? (
+        <GradientEditor value={gradient} onChange={onGradient} />
+      ) : !isNone ? (
+        <div className="flex gap-1.5">
+          <input type="color" value={solid.startsWith("#") ? solid : "#000000"}
+            onChange={e => onSolid(e.target.value)} className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0 flex-shrink-0" />
+          <input type="text" value={solid} onChange={e => onSolid(e.target.value)}
+            className="flex-1 px-2 py-1 border border-gray-200 rounded-lg text-xs focus:outline-none focus:border-indigo-400 min-w-0" />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -249,6 +323,32 @@ function EditorInner() {
   const blurPosMap    = useRef<Map<string, {left:number;top:number;scaleX:number;scaleY:number;angle:number}>>(new Map());
   const blurTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rectBeforeScale = useRef<{ rx: number; ry: number } | null>(null);
+
+  const applyVectorBlurRendering = (obj: any, value: number) => {
+    if (!obj || obj.type === "image") return;
+    obj.__vectorBlur = Math.max(0, value || 0);
+    if (!obj.__vectorBlurOriginalRender) {
+      obj.__vectorBlurOriginalRender = obj._render;
+      obj._render = function(ctx: CanvasRenderingContext2D) {
+        ctx.save();
+        const blurValue = Math.max(0, this.__vectorBlur || 0);
+        if (blurValue > 0) ctx.filter = `blur(${Math.max(0.25, blurValue * 0.3)}px)`;
+        this.__vectorBlurOriginalRender.call(this, ctx);
+        ctx.restore();
+      };
+    }
+    obj.set({ padding: obj.__vectorBlur > 0 ? Math.ceil(obj.__vectorBlur * 1.2) : 0 });
+    obj.dirty = true;
+  };
+
+  const copyBlurMetadata = (source: any, target: any) => {
+    if (!source || !target) return;
+    const blur = source.__vectorBlur ?? (source.__uid ? blurValueMap.current.get(source.__uid) : 0) ?? 0;
+    if (target.type !== "image" && blur > 0) {
+      target.__vectorBlur = blur;
+      applyVectorBlurRendering(target, blur);
+    }
+  };
 
   const [showGradientMask, setShowGradientMask] = useState(false);
   const [gradMaskC1, setGradMaskC1] = useState("#000000");
@@ -528,7 +628,7 @@ function EditorInner() {
     setSelShadow(!!sh && !glowOn);
     if (sh && !glowOn) { setSelShadowColor(obj.__shadowBaseColor || sh.color || "#000000"); setSelShadowBlur(sh.blur||10); setSelShadowX(sh.offsetX||5); setSelShadowY(sh.offsetY||5); }
     const uid = obj.__uid;
-    setSelBlur(uid && blurValueMap.current.has(uid) ? blurValueMap.current.get(uid)! : 0);
+    setSelBlur(obj.__vectorBlur ?? (uid && blurValueMap.current.has(uid) ? blurValueMap.current.get(uid)! : 0));
     const satFilter = (obj.filters||[]).find((f: any) => f.type === "Saturation");
     setSelSaturation(satFilter ? (satFilter.saturation ?? 0) : 0);
     if (obj.__gradMask) {
@@ -2117,20 +2217,47 @@ function EditorInner() {
 
         if (ctrl) {
           switch (e.key.toLowerCase()) {
-            case "c": e.preventDefault(); if (obj) obj.clone((c: any) => { clipboardRef.current = c; }); break;
+            case "c": e.preventDefault(); if (obj) obj.clone((c: any) => {
+              copyBlurMetadata(obj, c);
+              clipboardRef.current = c;
+            }); break;
             case "v": e.preventDefault();
               if (!clipboardRef.current) return;
-              clipboardRef.current.clone((c: any) => {
-                c.set({ left: c.left + 20, top: c.top + 20, evented: true });
-                if (c.type === "activeSelection") { c.canvas = canvas; c.forEachObject((o: any) => canvas.add(o)); c.setCoords(); }
-                else canvas.add(c);
-                clipboardRef.current.top += 20; clipboardRef.current.left += 20;
-                canvas.setActiveObject(c); canvas.requestRenderAll();
-              }); break;
+              {
+                const clipboardBlur = clipboardRef.current.__vectorBlur || 0;
+                clipboardRef.current.clone((c: any) => {
+                  c.set({ left: c.left + 20, top: c.top + 20, evented: true });
+                  if (c.type === "activeSelection") {
+                    c.canvas = canvas;
+                    c.forEachObject((o: any) => { o.__uid = Math.random().toString(36).slice(2); canvas.add(o); });
+                    c.setCoords();
+                  } else {
+                    c.__uid = Math.random().toString(36).slice(2);
+                    if (clipboardBlur > 0 && c.type !== "image") {
+                      c.__vectorBlur = clipboardBlur;
+                      blurValueMap.current.set(c.__uid, clipboardBlur);
+                      applyVectorBlurRendering(c, clipboardBlur);
+                    }
+                    canvas.add(c);
+                  }
+                  clipboardRef.current.top += 20; clipboardRef.current.left += 20;
+                  canvas.setActiveObject(c);
+                  syncSel(c);
+                  canvas.requestRenderAll();
+                });
+              } break;
             case "d": e.preventDefault();
               if (isEditingNodesRef.current) { toggleNodeSmooth(); return; }
               if (!obj) return;
-              obj.clone((c: any) => { c.set({ left: obj.left+20, top: obj.top+20 }); canvas.add(c); canvas.setActiveObject(c); canvas.requestRenderAll(); }); break;
+              {
+                const sourceBlur = obj.__vectorBlur ?? (obj.__uid ? blurValueMap.current.get(obj.__uid) : 0) ?? 0;
+                obj.clone((c: any) => {
+                  c.set({ left: obj.left+20, top: obj.top+20 });
+                  c.__uid = Math.random().toString(36).slice(2);
+                  if (sourceBlur > 0 && c.type !== "image") { c.__vectorBlur = sourceBlur; blurValueMap.current.set(c.__uid, sourceBlur); applyVectorBlurRendering(c, sourceBlur); }
+                  canvas.add(c); canvas.setActiveObject(c); syncSel(c); canvas.requestRenderAll();
+                });
+              } break;
             case "z": e.preventDefault();
               if (lastFinalizedPath.current || (activeToolRef.current === "pen" && penPoints.current.length > 0)) {
                 undoLastPenPointRef.current();
@@ -2335,106 +2462,26 @@ function EditorInner() {
   const updateBlur = (v: number) => {
     setSelBlur(v);
     if (!fc.current || !sel) return;
-    const uid = sel.__uid;
+    const uid = sel.__uid || (sel.__uid = Math.random().toString(36).slice(2));
     if (v > 0) blurValueMap.current.set(uid, v);
     else blurValueMap.current.delete(uid);
 
-    if (sel.type === "image" && !blurOriginMap.current.has(uid)) {
+    if (sel.type === "image") {
       const fabric = (window as any).fabric;
       const filters = (sel.filters || []).filter((f: any) => f.type !== "Blur");
       if (v > 0) filters.push(new fabric.Image.filters.Blur({ blur: v / 100 }));
       sel.filters = filters;
       sel.set({ padding: v > 0 ? Math.round(v * 0.8) : 0 });
       sel.applyFilters();
+      sel.dirty = true;
       fc.current.requestRenderAll();
       return;
     }
 
-    if (!blurPosMap.current.has(uid)) {
-      blurPosMap.current.set(uid, {
-        left: sel.left, top: sel.top,
-        scaleX: sel.scaleX || 1, scaleY: sel.scaleY || 1,
-        angle: sel.angle || 0,
-      });
-    }
-
-    if (!blurOriginMap.current.has(uid) && sel.type !== "image") {
-      blurOriginMap.current.set(uid, JSON.stringify(sel.toObject()));
-    }
-
-    if (blurTimer.current) clearTimeout(blurTimer.current);
-    blurTimer.current = setTimeout(() => {
-      const fabric = (window as any).fabric;
-      const currentV = blurValueMap.current.get(uid) ?? 0;
-      const pos = blurPosMap.current.get(uid)!;
-
-      if (currentV === 0 && blurOriginMap.current.has(uid)) {
-        const json = blurOriginMap.current.get(uid)!;
-        blurOriginMap.current.delete(uid);
-        blurPosMap.current.delete(uid);
-        const current = fc.current.getObjects().find((o: any) => o.__uid === uid);
-        if (current) fc.current.remove(current);
-        fabric.util.enlivenObjects([JSON.parse(json)], (objs: any[]) => {
-          const orig = objs[0];
-          orig.set({ left: pos.left, top: pos.top, angle: pos.angle, scaleX: pos.scaleX, scaleY: pos.scaleY });
-          orig.__uid = uid;
-          fc.current.add(orig);
-          fc.current.setActiveObject(orig);
-          setSel(orig);
-          setSelBlur(0);
-          fc.current.requestRenderAll();
-        });
-        return;
-      }
-
-      const sourceJson = blurOriginMap.current.get(uid)!;
-      const current = fc.current.getObjects().find((o: any) => o.__uid === uid);
-      if (current) fc.current.remove(current);
-
-      fabric.util.enlivenObjects([JSON.parse(sourceJson)], async (objs: any[]) => {
-        const sourceObj = objs[0];
-        const srcW = (sourceObj.width  || 100) * pos.scaleX;
-        const srcH = (sourceObj.height || 100) * pos.scaleY;
-        const blurPx = Math.max(1, Math.round(currentV * 0.3));
-        const pad = blurPx * 4;
-        const cw = Math.min(Math.ceil(srcW) + pad * 2, 1800);
-        const ch = Math.min(Math.ceil(srcH) + pad * 2, 1800);
-
-        const miniEl = document.createElement("canvas");
-        miniEl.width = cw; miniEl.height = ch;
-        const miniCanvas = new fabric.StaticCanvas(miniEl, { width: cw, height: ch, enableRetinaScaling: false });
-        sourceObj.set({ left: cw / 2, top: ch / 2, originX: "center", originY: "center", angle: 0, scaleX: pos.scaleX, scaleY: pos.scaleY });
-        miniCanvas.add(sourceObj);
-
-        await document.fonts.ready;
-        miniCanvas.renderAll();
-
-        const outEl = document.createElement("canvas");
-        outEl.width = cw; outEl.height = ch;
-        const ctx = outEl.getContext("2d")!;
-        ctx.filter = `blur(${blurPx}px)`;
-        ctx.drawImage(miniEl, 0, 0);
-        miniCanvas.dispose();
-
-        const dataURL = outEl.toDataURL("image/png");
-        fabric.Image.fromURL(dataURL, (img: any) => {
-          img.set({
-            left: pos.left + (srcW / 2) - (cw / 2),
-            top:  pos.top  + (srcH / 2) - (ch / 2),
-            angle: pos.angle,
-            scaleX: 1, scaleY: 1,
-            originX: "left", originY: "top",
-            strokeUniform: true,
-          });
-          img.__uid = uid;
-          fc.current.add(img);
-          fc.current.setActiveObject(img);
-          setSel(img);
-          setSelBlur(currentV);
-          fc.current.requestRenderAll();
-        });
-      });
-    }, 150);
+    // Vector/text objects remain true Fabric objects. Blur is applied only at render time,
+    // so copy/paste, node editing, fills and strokes remain fully editable.
+    applyVectorBlurRendering(sel, v);
+    fc.current.requestRenderAll();
   };
 
   const toggleLock = (uid: string) => {
@@ -4039,13 +4086,12 @@ function EditorInner() {
               {sel.type !== "image" && sel.type !== "activeSelection" && (
                 <>
                   <Sec title="Preenchimento" />
-                  {!selFillGradient && (
-                    <ColorPickerWithNone
-                      value={selFill}
-                      onChange={v => { (isText ? updateFillForText : updateFill)(v); setSelFillGradient(null); }}
-                    />
-                  )}
-                  <GradientEditor value={selFillGradient} onChange={updateFillGradient} />
+                  <FillColorPickerWithGradient
+                    solid={selFill}
+                    gradient={selFillGradient}
+                    onSolid={v => { (isText ? updateFillForText : updateFill)(v); setSelFillGradient(null); }}
+                    onGradient={g => updateFillGradient(g)}
+                  />
                 </>
               )}
 
