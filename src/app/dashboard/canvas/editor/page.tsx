@@ -2645,10 +2645,9 @@ function EditorInner() {
                     if (pixelTool === "stamp" && ev.altKey) { stampSourceRef.current = { x, y }; return; }
 
                     if (pixelTool === "lasso") {
-                      // Clear previous lasso selection by restoring last saved state
-                      if (pixelUndoStack.current.length > 0) {
-                        const last = pixelUndoStack.current[pixelUndoStack.current.length - 1];
-                        ctx.putImageData(last, 0, 0);
+                      // Restaura snapshot limpo (sem contorno do laço anterior)
+                      if (pixelSnapshotRef.current) {
+                        ctx.putImageData(pixelSnapshotRef.current, 0, 0);
                       }
                       lassoActiveRef.current = true;
                       lassoPointsRef.current = [{ x, y }];
