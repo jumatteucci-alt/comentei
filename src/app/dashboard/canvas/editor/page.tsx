@@ -565,29 +565,64 @@ function EditorInner() {
 
   const renderPixelCompositeToProject = (baseObj: any, baseCanvas: HTMLCanvasElement, layersToRender: typeof pixelLayers) => {
     if (!fc.current || !baseObj) return;
+
+    // Expand the visible image so every internal pixel layer is included, even
+    // when a layer was moved outside the original base-image bounds.
+    const minX = Math.floor(Math.min(0, ...layersToRender.map(layer => layer.offsetX || 0)));
+    const minY = Math.floor(Math.min(0, ...layersToRender.map(layer => layer.offsetY || 0)));
+    const maxX = Math.ceil(Math.max(baseCanvas.width, ...layersToRender.map(layer =>
+      (layer.offsetX || 0) + layer.canvas.width * (layer.scale || 1))));
+    const maxY = Math.ceil(Math.max(baseCanvas.height, ...layersToRender.map(layer =>
+      (layer.offsetY || 0) + layer.canvas.height * (layer.scale || 1))));
+
+    const outW = Math.max(1, maxX - minX);
+    const outH = Math.max(1, maxY - minY);
+
+    // The base itself also gets the transparent expansion. This keeps all
+    // internal layer coordinates relative to the new composite top-left when
+    // the user re-enters pixel edit mode later.
+    const expandedBase = document.createElement("canvas");
+    expandedBase.width = outW;
+    expandedBase.height = outH;
+    expandedBase.getContext("2d")!.drawImage(baseCanvas, -minX, -minY);
+
+    const normalizedLayers = layersToRender.map(layer => ({
+      ...layer,
+      offsetX: (layer.offsetX || 0) - minX,
+      offsetY: (layer.offsetY || 0) - minY,
+    }));
+
     const composite = document.createElement("canvas");
-    composite.width = baseCanvas.width;
-    composite.height = baseCanvas.height;
+    composite.width = outW;
+    composite.height = outH;
     const ctx = composite.getContext("2d")!;
-    ctx.drawImage(baseCanvas, 0, 0);
-    layersToRender.forEach(layer => {
+    ctx.drawImage(expandedBase, 0, 0);
+    normalizedLayers.forEach(layer => {
       ctx.drawImage(layer.canvas, 0, 0, layer.canvas.width, layer.canvas.height,
-        layer.offsetX || 0, layer.offsetY || 0, layer.canvas.width * (layer.scale || 1), layer.canvas.height * (layer.scale || 1));
+        layer.offsetX, layer.offsetY,
+        layer.canvas.width * (layer.scale || 1), layer.canvas.height * (layer.scale || 1));
     });
+
     const fabric = (window as any).fabric;
     const dataURL = composite.toDataURL("image/png");
-    const left = baseObj.left, top = baseObj.top;
+    const oldLeft = baseObj.left || 0, oldTop = baseObj.top || 0;
     const scaleX = baseObj.scaleX || 1, scaleY = baseObj.scaleY || 1;
     const angle = baseObj.angle || 0, uid = baseObj.__uid;
-    const baseCopy = document.createElement("canvas");
-    baseCopy.width = baseCanvas.width; baseCopy.height = baseCanvas.height;
-    baseCopy.getContext("2d")!.drawImage(baseCanvas, 0, 0);
+
+    // If the composite expanded to the left/top, move the Fabric image by the
+    // same transformed amount so the original base pixels stay visually fixed.
+    const rad = angle * Math.PI / 180;
+    const localDX = minX * scaleX;
+    const localDY = minY * scaleY;
+    const left = oldLeft + localDX * Math.cos(rad) - localDY * Math.sin(rad);
+    const top = oldTop + localDX * Math.sin(rad) + localDY * Math.cos(rad);
+
     fc.current.remove(baseObj);
     fabric.Image.fromURL(dataURL, (img: any) => {
-      img.set({ left, top, scaleX, scaleY, angle, strokeUniform: true });
+      img.set({ left, top, scaleX, scaleY, angle, originX: baseObj.originX || "left", originY: baseObj.originY || "top", strokeUniform: true });
       img.__uid = uid;
-      img.__pixelBaseCanvas = baseCopy;
-      img.__pixelLayers = layersToRender;
+      img.__pixelBaseCanvas = expandedBase;
+      img.__pixelLayers = normalizedLayers;
       pixelBaseUidRef.current = uid;
       fc.current.add(img);
       fc.current.setActiveObject(img);
@@ -650,6 +685,19 @@ function EditorInner() {
     lassoActiveRef.current = false; pixelUndoStack.current = []; setLassoSelected(false);
     setSelectedPixelLayerId(null); setSelectedPixelLayerIds([]);
   };
+
+  // In pixel-edit mode, a double click anywhere outside the Layers panel
+  // commits the edit and exits. This also covers the gray area around the canvas.
+  useEffect(() => {
+    if (!pixelEditMode) return;
+    const onPixelEditDoubleClick = (ev: MouseEvent) => {
+      const target = ev.target as HTMLElement | null;
+      if (target?.closest?.('[data-pixel-layers-panel="true"]')) return;
+      exitPixelEdit(true);
+    };
+    document.addEventListener("dblclick", onPixelEditDoubleClick);
+    return () => document.removeEventListener("dblclick", onPixelEditDoubleClick);
+  }, [pixelEditMode, pixelLayers]);
 
   const mergePixelSelections = () => {
     const ids = selectedPixelLayerIds;
@@ -2869,7 +2917,6 @@ function EditorInner() {
                     border: "2px solid #4f46e5", boxSizing: "border-box", imageRendering: "pixelated",
                   }}
                   onMouseDown={ev => {
-                    if (ev.detail >= 2) { exitPixelEdit(true); return; } // double click exits
                     const el = pixelCanvasRef.current!;
                     const rect = el.getBoundingClientRect();
                     const sx = el.width / rect.width; const sy = el.height / rect.height;
@@ -3135,8 +3182,8 @@ function EditorInner() {
                 />
 
                 {/* Pixel layers — independent, selectable, movable and resizable */}
-                {pixelLayers.map(layer => {
-                  const naturalW = imgObj._element?.naturalWidth || imgObj.width || 100;
+                {pixelLayers.map((layer, layerIndex) => {
+                  const naturalW = imgObj?._element?.naturalWidth || imgObj?.width || 100;
                   const scX = editLayer ? z : iw / naturalW;
                   const offsetX = layer.offsetX || 0;
                   const offsetY = layer.offsetY || 0;
@@ -3153,19 +3200,14 @@ function EditorInner() {
 
                   const selectLayer = () => {
                     setSelectedPixelLayerId(layer.id);
-                    // DOM order is the z-order. Move the selected layer to the end so it is on top.
-                    setPixelLayers(prev => {
-                      const found = prev.find(l => l.id === layer.id);
-                      if (!found || prev[prev.length - 1]?.id === layer.id) return prev;
-                      return [...prev.filter(l => l.id !== layer.id), found];
-                    });
+                    setSelectedPixelLayerIds([layer.id]);
                   };
 
                   return (
                     <div key={layer.id}
                       style={{ position: "absolute", left: il + offsetX * scX, top: it + offsetY * scX, width: displayW, height: displayH,
                         cursor: pixelTool === "move" ? (pixelMovingRef.current ? "grabbing" : "grab") : "default", pointerEvents: pixelTool === "move" ? "auto" : "none",
-                        outline: selected ? "1.5px solid #2563eb" : "none", boxSizing: "border-box", zIndex: selected ? 100 : 1 }}
+                        outline: selected ? "1.5px solid #2563eb" : "none", boxSizing: "border-box", zIndex: layerIndex + 1 }}
                       onMouseDown={ev => {
                         if (pixelTool !== "move") return;
                         ev.preventDefault(); ev.stopPropagation();
@@ -3284,7 +3326,7 @@ function EditorInner() {
               </div>
 
               {/* Layers panel — always visible */}
-              <div className="flex flex-col flex-1 overflow-y-auto">
+              <div className="flex flex-col flex-1 overflow-y-auto" data-pixel-layers-panel="true">
                 <p className="px-3 py-2 font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-100" style={{fontSize:10}}>Camadas</p>
 
                 {/* Base image layer */}
