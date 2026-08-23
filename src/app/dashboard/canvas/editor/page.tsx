@@ -502,6 +502,15 @@ function EditorInner() {
   const [selGlowOpacity, setSelGlowOpacity] = useState(1);
   const [selBlur, setSelBlur] = useState(0);
   const [selSaturation, setSelSaturation] = useState(0);
+  const [selBrightness, setSelBrightness] = useState(0);
+  const [selContrast, setSelContrast] = useState(0);
+  const [selExposure, setSelExposure] = useState(0);
+  const [selTemperature, setSelTemperature] = useState(0);
+  const [selTint, setSelTint] = useState(0);
+  const [selHighlights, setSelHighlights] = useState(0);
+  const [selShadows, setSelShadows] = useState(0);
+  const [selSharpness, setSelSharpness] = useState(0);
+  const [selVignette, setSelVignette] = useState(0);
   const [cropMode, setCropMode] = useState(false);
   const [cropX, setCropX] = useState(0);
   const [cropY, setCropY] = useState(0);
@@ -721,7 +730,18 @@ function EditorInner() {
     const uid = obj.__uid;
     setSelBlur(obj.__vectorBlur ?? (uid && blurValueMap.current.has(uid) ? blurValueMap.current.get(uid)! : 0));
     const satFilter = (obj.filters||[]).find((f: any) => f.type === "Saturation");
-    setSelSaturation(satFilter ? (satFilter.saturation ?? 0) : 0);
+    const adjustmentFilter = (obj.filters||[]).find((f: any) => f.type === "ComenteiAdjust");
+    const imageAdjust = obj.__imageAdjustments || adjustmentFilter || {};
+    setSelSaturation(imageAdjust.saturation ?? (satFilter ? (satFilter.saturation ?? 0) : 0));
+    setSelBrightness(imageAdjust.brightness ?? 0);
+    setSelContrast(imageAdjust.contrast ?? 0);
+    setSelExposure(imageAdjust.exposure ?? 0);
+    setSelTemperature(imageAdjust.temperature ?? 0);
+    setSelTint(imageAdjust.tint ?? 0);
+    setSelHighlights(imageAdjust.highlights ?? 0);
+    setSelShadows(imageAdjust.shadows ?? 0);
+    setSelSharpness(imageAdjust.sharpness ?? 0);
+    setSelVignette(imageAdjust.vignette ?? 0);
     if (obj.type === "image") {
       const c = obj.__crop || { x: 0, y: 0, w: 100, h: 100 };
       setCropX(c.x ?? 0); setCropY(c.y ?? 0); setCropW(c.w ?? 100); setCropH(c.h ?? 100);
@@ -2758,15 +2778,155 @@ function EditorInner() {
     };
   }, [cropMode, sel, cropX, cropY, cropW, cropH]);
 
-  const updateSaturation = (v: number) => {
-    setSelSaturation(v);
-    if (!fc.current || !sel) return;
+  type ImageAdjustments = {
+    brightness:number; contrast:number; exposure:number; saturation:number; temperature:number; tint:number;
+    highlights:number; shadows:number; sharpness:number; vignette:number;
+  };
+
+  const ensureComenteiAdjustFilter = () => {
     const fabric = (window as any).fabric;
-    const filters = (sel.filters || []).filter((f: any) => f.type !== "Saturation");
-    filters.push(new fabric.Image.filters.Saturation({ saturation: v }));
+    if (!fabric?.Image?.filters?.BaseFilter) return null;
+    if (!fabric.Image.filters.ComenteiAdjust) {
+      const BaseFilter = fabric.Image.filters.BaseFilter;
+      const Klass = fabric.util.createClass(BaseFilter, {
+        type: "ComenteiAdjust",
+        initialize: function(this:any, options:any = {}) {
+          this.brightness = Number(options.brightness || 0);
+          this.contrast = Number(options.contrast || 0);
+          this.exposure = Number(options.exposure || 0);
+          this.saturation = Number(options.saturation || 0);
+          this.temperature = Number(options.temperature || 0);
+          this.tint = Number(options.tint || 0);
+          this.highlights = Number(options.highlights || 0);
+          this.shadows = Number(options.shadows || 0);
+          this.sharpness = Number(options.sharpness || 0);
+          this.vignette = Number(options.vignette || 0);
+        },
+        isNeutralState: function(this:any) {
+          return !this.brightness && !this.contrast && !this.exposure && !this.saturation && !this.temperature && !this.tint && !this.highlights && !this.shadows && !this.sharpness && !this.vignette;
+        },
+        applyTo2d: function(this:any, options:any) {
+          const imageData = options.imageData;
+          const data = imageData.data as Uint8ClampedArray;
+          const width = imageData.width || options.sourceWidth || 1;
+          const height = imageData.height || options.sourceHeight || 1;
+          const brightness = Math.max(-1, Math.min(1, this.brightness || 0));
+          const contrast = Math.max(-1, Math.min(1, this.contrast || 0));
+          const exposure = Math.max(-1, Math.min(1, this.exposure || 0));
+          const saturation = Math.max(-1, Math.min(1, this.saturation || 0));
+          const temperature = Math.max(-1, Math.min(1, this.temperature || 0));
+          const tint = Math.max(-1, Math.min(1, this.tint || 0));
+          const highlights = Math.max(-1, Math.min(1, this.highlights || 0));
+          const shadows = Math.max(-1, Math.min(1, this.shadows || 0));
+          const vignette = Math.max(0, Math.min(1, this.vignette || 0));
+          const exposureMul = Math.pow(2, exposure * 2);
+          const contrastFactor = contrast >= 0 ? 1 + contrast * 2 : 1 + contrast * 0.8;
+          const cx = (width - 1) / 2, cy = (height - 1) / 2;
+          const maxDist = Math.max(1, Math.hypot(cx, cy));
+
+          for (let i = 0; i < data.length; i += 4) {
+            let r = data[i] * exposureMul + brightness * 80;
+            let g = data[i+1] * exposureMul + brightness * 80;
+            let b = data[i+2] * exposureMul + brightness * 80;
+
+            r = (r - 127.5) * contrastFactor + 127.5;
+            g = (g - 127.5) * contrastFactor + 127.5;
+            b = (b - 127.5) * contrastFactor + 127.5;
+
+            const lum = Math.max(0, Math.min(1, (0.2126*r + 0.7152*g + 0.0722*b) / 255));
+            const shadowWeight = Math.pow(1 - lum, 2);
+            const highlightWeight = Math.pow(lum, 2);
+            const tonal = shadows * shadowWeight * 95 + highlights * highlightWeight * 95;
+            r += tonal; g += tonal; b += tonal;
+
+            const gray = 0.2126*r + 0.7152*g + 0.0722*b;
+            const satMul = 1 + saturation;
+            r = gray + (r - gray) * satMul;
+            g = gray + (g - gray) * satMul;
+            b = gray + (b - gray) * satMul;
+
+            r += temperature * 42 + tint * 18;
+            g -= tint * 34;
+            b -= temperature * 42; b += tint * 18;
+
+            if (vignette > 0) {
+              const px = (i / 4) % width;
+              const py = Math.floor((i / 4) / width);
+              const d = Math.min(1, Math.hypot(px - cx, py - cy) / maxDist);
+              const edge = Math.max(0, (d - 0.28) / 0.72);
+              const v = 1 - vignette * edge * edge * 0.85;
+              r *= v; g *= v; b *= v;
+            }
+
+            data[i] = Math.max(0, Math.min(255, r));
+            data[i+1] = Math.max(0, Math.min(255, g));
+            data[i+2] = Math.max(0, Math.min(255, b));
+          }
+
+          const sharpness = Math.max(0, Math.min(1, this.sharpness || 0));
+          if (sharpness > 0 && width > 2 && height > 2) {
+            const src = new Uint8ClampedArray(data);
+            const a = sharpness * 0.65;
+            for (let y = 1; y < height - 1; y++) {
+              for (let x = 1; x < width - 1; x++) {
+                const i = (y * width + x) * 4;
+                for (let c = 0; c < 3; c++) {
+                  const center = src[i+c] * (1 + 4*a);
+                  const around = (src[i-4+c] + src[i+4+c] + src[i-width*4+c] + src[i+width*4+c]) * a;
+                  data[i+c] = Math.max(0, Math.min(255, center - around));
+                }
+              }
+            }
+          }
+        },
+        toObject: function(this:any) {
+          return {
+            ...this.callSuper("toObject"),
+            brightness:this.brightness, contrast:this.contrast, exposure:this.exposure, saturation:this.saturation,
+            temperature:this.temperature, tint:this.tint, highlights:this.highlights, shadows:this.shadows,
+            sharpness:this.sharpness, vignette:this.vignette,
+          };
+        },
+      });
+      Klass.fromObject = (object:any, callback?: (value:any)=>void) => {
+        const value = new Klass(object);
+        if (callback) callback(value);
+        return value;
+      };
+      fabric.Image.filters.ComenteiAdjust = Klass;
+    }
+    if (fabric.Canvas2dFilterBackend && !(fabric.filterBackend instanceof fabric.Canvas2dFilterBackend)) {
+      fabric.filterBackend = new fabric.Canvas2dFilterBackend();
+    }
+    return fabric.Image.filters.ComenteiAdjust;
+  };
+
+  const applyImageAdjustments = (patch: Partial<ImageAdjustments>) => {
+    if (!fc.current || !sel || sel.type !== "image") return;
+    const next: ImageAdjustments = {
+      brightness: selBrightness, contrast: selContrast, exposure: selExposure, saturation: selSaturation,
+      temperature: selTemperature, tint: selTint, highlights: selHighlights, shadows: selShadows,
+      sharpness: selSharpness, vignette: selVignette, ...patch,
+    };
+    setSelBrightness(next.brightness); setSelContrast(next.contrast); setSelExposure(next.exposure);
+    setSelSaturation(next.saturation); setSelTemperature(next.temperature); setSelTint(next.tint);
+    setSelHighlights(next.highlights); setSelShadows(next.shadows); setSelSharpness(next.sharpness); setSelVignette(next.vignette);
+    sel.__imageAdjustments = { ...next };
+    const Klass = ensureComenteiAdjustFilter();
+    if (!Klass) return;
+    const filters = (sel.filters || []).filter((f:any) => f.type !== "Saturation" && f.type !== "ComenteiAdjust");
+    const neutral = Object.values(next).every(v => Math.abs(Number(v)) < 0.0001);
+    if (!neutral) filters.push(new Klass(next));
     sel.filters = filters;
     sel.applyFilters();
+    sel.dirty = true;
     fc.current.requestRenderAll();
+  };
+
+  const updateSaturation = (v: number) => applyImageAdjustments({ saturation: v });
+
+  const resetImageAdjustments = () => {
+    applyImageAdjustments({ brightness:0, contrast:0, exposure:0, saturation:0, temperature:0, tint:0, highlights:0, shadows:0, sharpness:0, vignette:0 });
   };
 
   const updateTextWidth = (v: number) => {
@@ -4601,9 +4761,20 @@ function EditorInner() {
                       )}
                     </div>
                   )}
-                  <Sec title="Saturação" />
-                  <SliderRow label="" value={Math.round(selSaturation * 100)} min={-100} max={100} unit="%" onChange={v => updateSaturation(v / 100)} />
-                  <div className="flex justify-between text-gray-300 mt-0.5" style={{fontSize:9}}><span>P&amp;B</span><span>Normal</span><span>Vivo</span></div>
+                  <Sec title="Ajustes" />
+                  <div className="flex flex-col gap-2 p-2 rounded-lg border border-gray-100 bg-gray-50/40">
+                    <SliderRow label="Brilho" value={Math.round(selBrightness * 100)} min={-100} max={100} unit="%" onChange={v => applyImageAdjustments({ brightness: v / 100 })} />
+                    <SliderRow label="Contraste" value={Math.round(selContrast * 100)} min={-100} max={100} unit="%" onChange={v => applyImageAdjustments({ contrast: v / 100 })} />
+                    <SliderRow label="Exposição" value={Math.round(selExposure * 100)} min={-100} max={100} unit="%" onChange={v => applyImageAdjustments({ exposure: v / 100 })} />
+                    <SliderRow label="Saturação" value={Math.round(selSaturation * 100)} min={-100} max={100} unit="%" onChange={v => updateSaturation(v / 100)} />
+                    <SliderRow label="Temperatura" value={Math.round(selTemperature * 100)} min={-100} max={100} unit="%" onChange={v => applyImageAdjustments({ temperature: v / 100 })} />
+                    <SliderRow label="Matiz" value={Math.round(selTint * 100)} min={-100} max={100} unit="%" onChange={v => applyImageAdjustments({ tint: v / 100 })} />
+                    <SliderRow label="Realces" value={Math.round(selHighlights * 100)} min={-100} max={100} unit="%" onChange={v => applyImageAdjustments({ highlights: v / 100 })} />
+                    <SliderRow label="Sombras" value={Math.round(selShadows * 100)} min={-100} max={100} unit="%" onChange={v => applyImageAdjustments({ shadows: v / 100 })} />
+                    <SliderRow label="Nitidez" value={Math.round(selSharpness * 100)} min={0} max={100} unit="%" onChange={v => applyImageAdjustments({ sharpness: v / 100 })} />
+                    <SliderRow label="Vinheta" value={Math.round(selVignette * 100)} min={0} max={100} unit="%" onChange={v => applyImageAdjustments({ vignette: v / 100 })} />
+                    <button onClick={resetImageAdjustments} className="w-full py-1.5 mt-1 border border-gray-200 text-gray-500 rounded-lg bg-white hover:bg-gray-50 transition">Zerar ajustes</button>
+                  </div>
                 </>
               )}
 
