@@ -2705,16 +2705,17 @@ function EditorInner() {
                     if (pixelTool === "lasso" && lassoActiveRef.current) {
                       lassoPointsRef.current.push({ x, y });
                       const pts = lassoPointsRef.current;
+                      // Restaura snapshot antes de redesenhar o laço inteiro
+                      const snap = pixelSnapshotRef.current;
+                      if (snap) ctx.putImageData(snap, 0, 0);
                       ctx.save();
                       ctx.setLineDash([5, 4]);
                       ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
-                      ctx.beginPath();
-                      ctx.moveTo(pts[pts.length-2]?.x ?? x, pts[pts.length-2]?.y ?? y);
-                      ctx.lineTo(x, y); ctx.stroke();
+                      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+                      pts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.stroke();
                       ctx.strokeStyle = "#000"; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
-                      ctx.beginPath();
-                      ctx.moveTo(pts[pts.length-2]?.x ?? x, pts[pts.length-2]?.y ?? y);
-                      ctx.lineTo(x, y); ctx.stroke();
+                      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+                      pts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.stroke();
                       ctx.setLineDash([]); ctx.restore();
                       return;
                     }
@@ -2738,7 +2739,6 @@ function EditorInner() {
                     }
 
                     if (!pixelDrawingRef.current) return;
-
                     if (pixelTool === "stamp" && stampSourceRef.current) {
                       const src = stampSourceRef.current; const r = pixelBrushSize / 2;
                       ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.clip();
@@ -2746,12 +2746,12 @@ function EditorInner() {
                       ctx.restore();
                     }
                   }}
+
                   onMouseUp={() => {
                     const el = pixelCanvasRef.current!;
                     const ctx = el.getContext("2d")!;
 
                     if (pixelDrawingRef.current) {
-                      // Atualiza snapshot ANTES de setar false
                       pixelSnapshotRef.current = ctx.getImageData(0, 0, el.width, el.height);
                       pixelUndoStack.current.push(ctx.getImageData(0, 0, el.width, el.height));
                       if (pixelUndoStack.current.length > 30) pixelUndoStack.current.shift();
@@ -2764,7 +2764,9 @@ function EditorInner() {
                       if (pts.length < 3) return;
                       lassoSelectionRef.current = [...pts];
                       setLassoSelected(true);
-                      // Draw closed marching ants
+                      // Restaura imagem limpa e desenha marching ants por cima
+                      const snap = pixelSnapshotRef.current;
+                      if (snap) ctx.putImageData(snap, 0, 0);
                       ctx.save();
                       ctx.setLineDash([6, 3]);
                       ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
@@ -2781,31 +2783,86 @@ function EditorInner() {
                     ev.stopPropagation();
                     const el = pixelCanvasRef.current!;
                     const ctx = el.getContext("2d")!;
+
+                    // Ctrl+Z undo
                     if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && ev.key.toLowerCase() === "z") {
                       const prev = pixelUndoStack.current.pop();
-                      if (prev) { ctx.putImageData(prev, 0, 0); setLassoSelected(false); lassoSelectionRef.current = []; }
+                      if (prev) {
+                        ctx.putImageData(prev, 0, 0);
+                        pixelSnapshotRef.current = prev;
+                        setLassoSelected(false); lassoSelectionRef.current = [];
+                      }
                       return;
                     }
+
+                    // Ctrl+C — copia pixels da seleção
+                    if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && ev.key.toLowerCase() === "c") {
+                      const pts = lassoSelectionRef.current;
+                      if (!pts.length) return;
+                      const copyC = document.createElement("canvas");
+                      copyC.width = el.width; copyC.height = el.height;
+                      const copyCtx = copyC.getContext("2d")!;
+                      copyCtx.drawImage(el, 0, 0);
+                      // Recorta fora da seleção
+                      copyCtx.save();
+                      copyCtx.globalCompositeOperation = "destination-in";
+                      copyCtx.beginPath(); copyCtx.moveTo(pts[0].x, pts[0].y);
+                      pts.forEach(p => copyCtx.lineTo(p.x, p.y)); copyCtx.closePath(); copyCtx.fill();
+                      copyCtx.restore();
+                      (window as any).__pixelClipboard = copyC;
+                      return;
+                    }
+
+                    // Ctrl+V — cola pixels
+                    if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && ev.key.toLowerCase() === "v") {
+                      const clipboard = (window as any).__pixelClipboard as HTMLCanvasElement;
+                      if (!clipboard) return;
+                      pixelUndoStack.current.push(ctx.getImageData(0, 0, el.width, el.height));
+                      ctx.drawImage(clipboard, 0, 0);
+                      pixelSnapshotRef.current = ctx.getImageData(0, 0, el.width, el.height);
+                      return;
+                    }
+
                     const pts = lassoSelectionRef.current;
                     if (!pts.length) return;
+
+                    // Delete — apaga dentro da seleção
                     if (ev.key === "Delete" || ev.key === "Backspace") {
                       pixelUndoStack.current.push(ctx.getImageData(0, 0, el.width, el.height));
+                      const snap = pixelSnapshotRef.current;
+                      if (snap) ctx.putImageData(snap, 0, 0);
                       ctx.save();
                       ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
                       pts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath();
                       ctx.globalCompositeOperation = "destination-out"; ctx.fill();
                       ctx.restore();
+                      pixelSnapshotRef.current = ctx.getImageData(0, 0, el.width, el.height);
                       setLassoSelected(false); lassoSelectionRef.current = [];
                     }
+
+                    // Ctrl+Shift+I — inverte seleção (visualmente troca os pts para cobrir fora)
                     if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && ev.key.toLowerCase() === "i") {
-                      pixelUndoStack.current.push(ctx.getImageData(0, 0, el.width, el.height));
+                      // Inverte: a nova seleção é o retângulo total menos os pontos atuais
+                      const w = el.width; const h = el.height;
+                      const inverted = [
+                        {x:0,y:0},{x:w,y:0},{x:w,y:h},{x:0,y:h},{x:0,y:0},
+                        ...pts, pts[0]
+                      ];
+                      lassoSelectionRef.current = inverted;
+                      // Redesenha marching ants da seleção invertida
+                      const snap = pixelSnapshotRef.current;
+                      if (snap) ctx.putImageData(snap, 0, 0);
                       ctx.save();
-                      ctx.beginPath(); ctx.rect(0, 0, el.width, el.height);
-                      ctx.moveTo(pts[0].x, pts[0].y);
+                      ctx.setLineDash([6, 3]);
+                      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+                      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
                       pts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath();
-                      ctx.globalCompositeOperation = "destination-out"; ctx.fill();
-                      ctx.restore();
-                      setLassoSelected(false); lassoSelectionRef.current = [];
+                      ctx.rect(0, 0, w, h); ctx.stroke();
+                      ctx.strokeStyle = "#222"; ctx.lineWidth = 1;
+                      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+                      pts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath();
+                      ctx.rect(0, 0, w, h); ctx.stroke();
+                      ctx.setLineDash([]); ctx.restore();
                     }
                   }}
                   tabIndex={0}
