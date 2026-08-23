@@ -1,0 +1,254 @@
+name: Apply editable 3D shapes update
+on:
+  push:
+    paths:
+      - '.github/workflows/chatgpt-shape-3d.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Patch editor
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/app/dashboard/canvas/editor/page.tsx')
+          s = p.read_text()
+
+          old = '''  const [lockTransformRatio, setLockTransformRatio] = useState(false);\n  const [selShadow, setSelShadow] = useState(false);'''
+          new = '''  const [lockTransformRatio, setLockTransformRatio] = useState(false);\n  const [threeLoaded, setThreeLoaded] = useState(false);\n  const [sel3DEnabled, setSel3DEnabled] = useState(false);\n  const [sel3DDepth, setSel3DDepth] = useState(32);\n  const [sel3DRotX, setSel3DRotX] = useState(0);\n  const [sel3DRotY, setSel3DRotY] = useState(0);\n  const [sel3DRotZ, setSel3DRotZ] = useState(0);\n  const [sel3DPerspective, setSel3DPerspective] = useState(45);\n  const [sel3DSideColor, setSel3DSideColor] = useState("#334155");\n  const [sel3DLight, setSel3DLight] = useState(100);\n  const [selShadow, setSelShadow] = useState(false);'''
+          assert old in s, '3d state marker not found'
+          s = s.replace(old, new, 1)
+
+          old = '''    setSelFlipX((obj.scaleX ?? 1) < 0);\n    setSelFlipY((obj.scaleY ?? 1) < 0);\n    setSelFontSize(Math.round(obj.fontSize || 48));'''
+          new = '''    setSelFlipX((obj.scaleX ?? 1) < 0);\n    setSelFlipY((obj.scaleY ?? 1) < 0);\n    const d3 = obj.__threeD || {};\n    setSel3DEnabled(!!d3.enabled);\n    setSel3DDepth(Number(d3.depth ?? 32));\n    setSel3DRotX(Number(d3.rotX ?? 0));\n    setSel3DRotY(Number(d3.rotY ?? 0));\n    setSel3DRotZ(Number(d3.rotZ ?? 0));\n    setSel3DPerspective(Number(d3.perspective ?? 45));\n    setSel3DSideColor(d3.sideColor || "#334155");\n    setSel3DLight(Number(d3.light ?? 100));\n    if (d3.enabled) requestAnimationFrame(() => refreshThreeDObject(obj));\n    setSelFontSize(Math.round(obj.fontSize || 48));'''
+          assert old in s, '3d sync marker not found'
+          s = s.replace(old, new, 1)
+
+          old = '''    const paperScript = document.createElement("script");\n    paperScript.src = "https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.18/paper-full.min.js";\n    paperScript.onload = () => setPaperLoaded(true);\n    document.head.appendChild(paperScript);\n\n    try {'''
+          new = '''    const paperScript = document.createElement("script");\n    paperScript.src = "https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.18/paper-full.min.js";\n    paperScript.onload = () => setPaperLoaded(true);\n    document.head.appendChild(paperScript);\n\n    const threeScript = document.createElement("script");\n    threeScript.id = "cmc-threejs";\n    threeScript.src = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js";\n    threeScript.onload = () => {\n      const fabric = (window as any).fabric;\n      // Persist 3D parameters in Fabric JSON while keeping renderer internals transient.\n      if (fabric?.Object?.prototype && !fabric.Object.prototype.__cmc3DSerializer) {\n        const originalToObject = fabric.Object.prototype.toObject;\n        fabric.Object.prototype.toObject = function(propertiesToInclude?: string[]) {\n          return originalToObject.call(this, Array.from(new Set([...(propertiesToInclude || []), "__threeD"])));\n        };\n        fabric.Object.prototype.__cmc3DSerializer = true;\n      }\n      setThreeLoaded(true);\n    };\n    document.head.appendChild(threeScript);\n\n    try {'''
+          assert old in s, 'three script marker not found'
+          s = s.replace(old, new, 1)
+
+          old = '''      try { document.head.removeChild(script); } catch {}\n      try { document.head.removeChild(otScript); } catch {}\n      try { document.head.removeChild(paperScript); } catch {}\n    };\n  }, []);'''
+          new = '''      try { document.head.removeChild(script); } catch {}\n      try { document.head.removeChild(otScript); } catch {}\n      try { document.head.removeChild(paperScript); } catch {}\n      try { document.head.removeChild(threeScript); } catch {}\n    };\n  }, []);\n\n  useEffect(() => {\n    if (!threeLoaded || !fc.current) return;\n    fc.current.getObjects().forEach((o:any) => { if (o.__threeD?.enabled) refreshThreeDObject(o); });\n    fc.current.requestRenderAll();\n  }, [threeLoaded]);'''
+          assert old in s, 'three cleanup marker not found'
+          s = s.replace(old, new, 1)
+
+          old = '''  const updateFill = (color: string) => {\n    setSelFill(color); setSelFillGradient(null);\n    upd({ fill: color });\n  };'''
+          new = '''  const updateFill = (color: string) => {\n    setSelFill(color); setSelFillGradient(null);\n    upd({ fill: color });\n    if (sel?.__threeD?.enabled) requestAnimationFrame(() => refreshThreeDObject(sel));\n  };'''
+          assert old in s, '3d fill refresh marker not found'
+          s = s.replace(old, new, 1)
+
+          marker = '''  const updateRotation = (v: number) => { setSelRotation(v); upd({ angle: v }); };\n  const updateFontSize = (v: number) => {'''
+          insert = r'''  const updateRotation = (v: number) => { setSelRotation(v); upd({ angle: v }); };
+
+  type Shape3DSettings = {
+    enabled:boolean; depth:number; rotX:number; rotY:number; rotZ:number;
+    perspective:number; sideColor:string; light:number;
+  };
+
+  const supported3DShape = (obj:any) => !!obj && ["rect","circle","triangle","polygon","path"].includes(obj.type);
+
+  function threeDFrontColor(obj:any) {
+    if (typeof obj?.fill === "string" && obj.fill !== "transparent") {
+      const parsed = parseGradientColor(obj.fill, 1);
+      return parsed.color || "#64748b";
+    }
+    const stop = obj?.fill?.colorStops?.[0];
+    if (stop?.color) return parseGradientColor(stop.color, stop.opacity ?? 1).color;
+    return "#64748b";
+  }
+
+  function buildThreeShape(obj:any, THREE:any) {
+    const shape = new THREE.Shape();
+    const w = Math.max(1, Number(obj.width || (obj.radius ? obj.radius * 2 : 100)));
+    const h = Math.max(1, Number(obj.height || (obj.radius ? obj.radius * 2 : 100)));
+    const cx = w / 2, cy = h / 2;
+
+    if (obj.type === "rect") {
+      const rx = Math.max(0, Math.min(Number(obj.rx || 0), w/2));
+      const ry = Math.max(0, Math.min(Number(obj.ry || rx || 0), h/2));
+      if (rx > 0 || ry > 0) {
+        const rrx = rx || ry, rry = ry || rx;
+        shape.moveTo(-cx + rrx, cy);
+        shape.lineTo(cx - rrx, cy); shape.quadraticCurveTo(cx, cy, cx, cy - rry);
+        shape.lineTo(cx, -cy + rry); shape.quadraticCurveTo(cx, -cy, cx - rrx, -cy);
+        shape.lineTo(-cx + rrx, -cy); shape.quadraticCurveTo(-cx, -cy, -cx, -cy + rry);
+        shape.lineTo(-cx, cy - rry); shape.quadraticCurveTo(-cx, cy, -cx + rrx, cy); shape.closePath();
+      } else {
+        shape.moveTo(-cx, cy); shape.lineTo(cx, cy); shape.lineTo(cx, -cy); shape.lineTo(-cx, -cy); shape.closePath();
+      }
+      return shape;
+    }
+    if (obj.type === "circle") {
+      shape.absellipse(0, 0, w/2, h/2, 0, Math.PI * 2, false, 0);
+      return shape;
+    }
+    if (obj.type === "triangle") {
+      shape.moveTo(0, cy); shape.lineTo(cx, -cy); shape.lineTo(-cx, -cy); shape.closePath();
+      return shape;
+    }
+    if (obj.type === "polygon" && Array.isArray(obj.points) && obj.points.length >= 3) {
+      const po = obj.pathOffset || { x: 0, y: 0 };
+      obj.points.forEach((pt:any, i:number) => {
+        const x = Number(pt.x) - Number(po.x || 0);
+        const y = -(Number(pt.y) - Number(po.y || 0));
+        if (i === 0) shape.moveTo(x,y); else shape.lineTo(x,y);
+      });
+      shape.closePath(); return shape;
+    }
+    if (obj.type === "path" && Array.isArray(obj.path)) {
+      const po = obj.pathOffset || { x: cx, y: cy };
+      let sx = 0, sy = 0;
+      const X = (n:any) => Number(n || 0) - Number(po.x || 0);
+      const Y = (n:any) => -(Number(n || 0) - Number(po.y || 0));
+      obj.path.forEach((cmd:any[]) => {
+        const c = String(cmd[0]).toUpperCase();
+        if (c === "M") { sx = X(cmd[1]); sy = Y(cmd[2]); shape.moveTo(sx, sy); }
+        else if (c === "L") shape.lineTo(X(cmd[1]), Y(cmd[2]));
+        else if (c === "H") shape.lineTo(X(cmd[1]), sy);
+        else if (c === "V") shape.lineTo(sx, Y(cmd[1]));
+        else if (c === "C") shape.bezierCurveTo(X(cmd[1]),Y(cmd[2]),X(cmd[3]),Y(cmd[4]),X(cmd[5]),Y(cmd[6]));
+        else if (c === "Q") shape.quadraticCurveTo(X(cmd[1]),Y(cmd[2]),X(cmd[3]),Y(cmd[4]));
+        else if (c === "Z") shape.closePath();
+        if (c === "L") { sx = X(cmd[1]); sy = Y(cmd[2]); }
+        if (c === "C") { sx = X(cmd[5]); sy = Y(cmd[6]); }
+        if (c === "Q") { sx = X(cmd[3]); sy = Y(cmd[4]); }
+      });
+      return shape;
+    }
+    return null;
+  }
+
+  function renderThreeDCanvas(obj:any, settings:Shape3DSettings) {
+    const THREE = (window as any).THREE;
+    if (!THREE || !supported3DShape(obj)) return null;
+    let renderer:any = null;
+    try {
+      const shape = buildThreeShape(obj, THREE);
+      if (!shape) return null;
+      const size = 512;
+      renderer = new THREE.WebGLRenderer({ alpha:true, antialias:true, preserveDrawingBuffer:true });
+      renderer.setPixelRatio(1);
+      renderer.setSize(size, size, false);
+      renderer.setClearColor(0x000000, 0);
+
+      const scene = new THREE.Scene();
+      const depth = Math.max(1, Number(settings.depth || 1));
+      const geometry = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled:false, curveSegments:32, steps:1 });
+      geometry.center();
+      const front = new THREE.MeshStandardMaterial({ color:new THREE.Color(threeDFrontColor(obj)), roughness:0.58, metalness:0.04 });
+      const side = new THREE.MeshStandardMaterial({ color:new THREE.Color(settings.sideColor || "#334155"), roughness:0.64, metalness:0.03 });
+      const mesh = new THREE.Mesh(geometry, [front, side]);
+      mesh.rotation.set(
+        Number(settings.rotX || 0) * Math.PI / 180,
+        Number(settings.rotY || 0) * Math.PI / 180,
+        Number(settings.rotZ || 0) * Math.PI / 180,
+      );
+      scene.add(mesh);
+
+      geometry.computeBoundingSphere();
+      const radius = Math.max(10, Number(geometry.boundingSphere?.radius || Math.max(obj.width || 100, obj.height || 100) / 2));
+      const fov = Math.max(18, Math.min(90, Number(settings.perspective || 45)));
+      const camera = new THREE.PerspectiveCamera(fov, 1, Math.max(0.1, radius / 100), radius * 100);
+      const distance = radius / Math.max(0.08, Math.sin((fov * Math.PI / 180) / 2)) * 1.28;
+      camera.position.set(0, 0, distance);
+      camera.lookAt(0,0,0);
+
+      scene.add(new THREE.AmbientLight(0xffffff, 0.58));
+      const key = new THREE.DirectionalLight(0xffffff, Math.max(0, Number(settings.light || 0)) / 100 * 1.35);
+      key.position.set(-radius * 1.4, radius * 1.6, radius * 2.8);
+      scene.add(key);
+      const rim = new THREE.DirectionalLight(0xffffff, Math.max(0, Number(settings.light || 0)) / 100 * 0.28);
+      rim.position.set(radius * 2, -radius, radius);
+      scene.add(rim);
+
+      renderer.render(scene, camera);
+      const out = document.createElement("canvas"); out.width = size; out.height = size;
+      out.getContext("2d")!.drawImage(renderer.domElement, 0, 0);
+      geometry.dispose(); front.dispose(); side.dispose(); renderer.dispose();
+      return out;
+    } catch (err) {
+      try { renderer?.dispose?.(); } catch {}
+      console.warn("3D render failed", err);
+      return null;
+    }
+  }
+
+  function installThreeDRenderer(obj:any) {
+    if (!obj || obj.__threeDRendererInstalled) return;
+    obj.__threeDOriginalRender = obj._render;
+    obj._render = function(ctx:CanvasRenderingContext2D) {
+      if (this.__threeD?.enabled && this.__threeDCanvas) {
+        const w = Math.max(1, Number(this.width || 100));
+        const h = Math.max(1, Number(this.height || 100));
+        ctx.save();
+        ctx.drawImage(this.__threeDCanvas, -w/2, -h/2, w, h);
+        ctx.restore();
+        return;
+      }
+      return this.__threeDOriginalRender.call(this, ctx);
+    };
+    obj.__threeDRendererInstalled = true;
+    obj.objectCaching = false;
+  }
+
+  function refreshThreeDObject(obj:any, override?:Partial<Shape3DSettings>) {
+    if (!obj || !supported3DShape(obj)) return;
+    const current:Shape3DSettings = {
+      enabled: !!obj.__threeD?.enabled,
+      depth: Number(obj.__threeD?.depth ?? 32),
+      rotX: Number(obj.__threeD?.rotX ?? 0), rotY: Number(obj.__threeD?.rotY ?? 0), rotZ: Number(obj.__threeD?.rotZ ?? 0),
+      perspective: Number(obj.__threeD?.perspective ?? 45), sideColor: obj.__threeD?.sideColor || "#334155", light: Number(obj.__threeD?.light ?? 100),
+      ...(override || {}),
+    };
+    obj.__threeD = { ...current };
+    installThreeDRenderer(obj);
+    if (current.enabled && (window as any).THREE) obj.__threeDCanvas = renderThreeDCanvas(obj, current);
+    else obj.__threeDCanvas = null;
+    obj.dirty = true;
+    fc.current?.requestRenderAll();
+  }
+
+  const applyShape3D = (patch:Partial<Shape3DSettings>) => {
+    if (!sel || !supported3DShape(sel)) return;
+    const next:Shape3DSettings = {
+      enabled: sel3DEnabled, depth:sel3DDepth, rotX:sel3DRotX, rotY:sel3DRotY, rotZ:sel3DRotZ,
+      perspective:sel3DPerspective, sideColor:sel3DSideColor, light:sel3DLight, ...patch,
+    };
+    setSel3DEnabled(next.enabled); setSel3DDepth(next.depth); setSel3DRotX(next.rotX); setSel3DRotY(next.rotY); setSel3DRotZ(next.rotZ);
+    setSel3DPerspective(next.perspective); setSel3DSideColor(next.sideColor); setSel3DLight(next.light);
+    refreshThreeDObject(sel, next);
+  };
+
+  const resetShape3D = () => applyShape3D({ enabled:true, depth:32, rotX:0, rotY:0, rotZ:0, perspective:45, sideColor:"#334155", light:100 });
+  const updateFontSize = (v: number) => {'''
+          assert marker in s, '3d function marker not found'
+          s = s.replace(marker, insert, 1)
+
+          marker = '''                  <button onClick={resetFreeTransform} className="w-full py-1.5 rounded-lg border border-gray-200 text-gray-500 text-xs hover:bg-gray-50">Resetar transformação</button>\n                </>\n              )}\n\n              {isRect && ('''
+          insert = '''                  <button onClick={resetFreeTransform} className="w-full py-1.5 rounded-lg border border-gray-200 text-gray-500 text-xs hover:bg-gray-50">Resetar transformação</button>\n                </>\n              )}\n\n              {supported3DShape(sel) && (\n                <>\n                  <Sec title="3D" />\n                  <div className="flex items-center justify-between">\n                    <span className="text-gray-400">Ativar 3D</span>\n                    <button disabled={!threeLoaded} onClick={() => applyShape3D({ enabled: !sel3DEnabled })} className={`w-9 h-5 rounded-full transition disabled:opacity-40 ${sel3DEnabled ? "bg-indigo-500" : "bg-gray-200"}`}>\n                      <span className={`block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${sel3DEnabled ? "translate-x-4" : ""}`} />\n                    </button>\n                  </div>\n                  {!threeLoaded && <p className="text-[9px] text-gray-400">Carregando motor 3D…</p>}\n                  {sel3DEnabled && (\n                    <div className="flex flex-col gap-2 p-2 rounded-lg border border-indigo-100 bg-indigo-50/30">\n                      <SliderRow label="Extrusão" value={sel3DDepth} min={1} max={200} unit="px" onChange={v => applyShape3D({ depth:v })} />\n                      <SliderRow label="Rotação X" value={sel3DRotX} min={-180} max={180} unit="°" onChange={v => applyShape3D({ rotX:v })} />\n                      <SliderRow label="Rotação Y" value={sel3DRotY} min={-180} max={180} unit="°" onChange={v => applyShape3D({ rotY:v })} />\n                      <SliderRow label="Rotação Z" value={sel3DRotZ} min={-180} max={180} unit="°" onChange={v => applyShape3D({ rotZ:v })} />\n                      <SliderRow label="Perspectiva" value={sel3DPerspective} min={18} max={90} unit="°" onChange={v => applyShape3D({ perspective:v })} />\n                      <ColorPicker value={sel3DSideColor} onChange={c => applyShape3D({ sideColor:c })} label="Cor da extrusão" />\n                      <SliderRow label="Iluminação" value={sel3DLight} min={0} max={200} unit="%" onChange={v => applyShape3D({ light:v })} />\n                      <button onClick={resetShape3D} className="w-full py-1.5 rounded-lg border border-indigo-200 text-indigo-600 bg-white text-xs hover:bg-indigo-50">Resetar 3D</button>\n                      <button onClick={() => applyShape3D({ enabled:false })} className="w-full py-1.5 rounded-lg border border-gray-200 text-gray-500 bg-white text-xs hover:bg-gray-50">Remover 3D</button>\n                    </div>\n                  )}\n                </>\n              )}\n\n              {isRect && ('''
+          assert marker in s, '3d ui marker not found'
+          s = s.replace(marker, insert, 1)
+
+          p.write_text(s)
+          PY
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Commit change
+        run: |
+          git config user.name "chatgpt-editor"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/app/dashboard/canvas/editor/page.tsx
+          git commit -m "feat: add editable 3d extrusion for shapes"
+          git push origin main
