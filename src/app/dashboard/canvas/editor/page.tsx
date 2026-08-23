@@ -2603,11 +2603,8 @@ function EditorInner() {
                       const ctx = el.getContext("2d")!;
                       ctx.drawImage(imgEl, 0, 0);
                       pixelUndoStack.current = [];
-                      const initialSnap = ctx.getImageData(0, 0, el.width, el.height);
-                      pixelUndoStack.current.push(initialSnap);
-                      const snap = ctx.getImageData(0, 0, el.width, el.height);
-                      pixelUndoStack.current = [snap];
-                      pixelSnapshotRef.current = snap;
+                      pixelSnapshotRef.current = ctx.getImageData(0, 0, el.width, el.height);
+                      pixelUndoStack.current.push(ctx.getImageData(0, 0, el.width, el.height));
                     }
                   }}
                   style={{
@@ -2704,8 +2701,7 @@ function EditorInner() {
                     if (pixelTool === "eraser") {
                       const r = pixelBrushSize / 2;
                       if (!pixelDrawingRef.current) {
-                        // Preview cursor apenas quando não está apagando
-                        const snap = pixelUndoStack.current[pixelUndoStack.current.length - 1];
+                        const snap = pixelSnapshotRef.current;
                         if (snap) ctx.putImageData(snap, 0, 0);
                         ctx.save();
                         ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -2740,7 +2736,15 @@ function EditorInner() {
                     }
                   }}
                   onMouseUp={() => {
-                    pixelDrawingRef.current = false;
+                    const el = pixelCanvasRef.current!;
+                    const ctx = el.getContext("2d")!;
+
+                    if (pixelDrawingRef.current) {
+                      pixelDrawingRef.current = false;
+                      // Atualiza snapshot para o preview refletir o estado atual
+                      pixelSnapshotRef.current = ctx.getImageData(0, 0, el.width, el.height);
+                    }
+
                     if (pixelTool === "lasso" && lassoActiveRef.current) {
                       lassoActiveRef.current = false;
                       const pts = lassoPointsRef.current;
@@ -2748,8 +2752,6 @@ function EditorInner() {
                       lassoSelectionRef.current = [...pts];
                       setLassoSelected(true);
                       // Draw closed marching ants
-                      const el = pixelCanvasRef.current!;
-                      const ctx = el.getContext("2d")!;
                       ctx.save();
                       ctx.setLineDash([6, 3]);
                       ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
