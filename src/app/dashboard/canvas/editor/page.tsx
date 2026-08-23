@@ -4362,8 +4362,12 @@ function EditorInner() {
           ) : (
             <div className="p-3 flex flex-col gap-3 border-b border-gray-200">
               <p className="font-semibold text-gray-600 uppercase tracking-wide" style={{fontSize:10}}>Fundo do canvas</p>
-              <ColorPicker value={bgSolid} onChange={bg => { setBgSolid(bg); setBgGradient(null); }} label="" />
-              <GradientEditor value={bgGradient} onChange={g => { if (g) setBgGradient(g); else setBgGradient(null); }} />
+              <FillColorPickerWithGradient
+                solid={bgSolid}
+                gradient={bgGradient}
+                onSolid={bg => { setBgSolid(bg); setBgGradient(null); }}
+                onGradient={g => setBgGradient(g)}
+              />
             </div>
           ))}
 
