@@ -496,6 +496,15 @@ function EditorInner() {
   const [selFlipX, setSelFlipX] = useState(false);
   const [selFlipY, setSelFlipY] = useState(false);
   const [lockTransformRatio, setLockTransformRatio] = useState(false);
+  const [threeLoaded, setThreeLoaded] = useState(false);
+  const [sel3DEnabled, setSel3DEnabled] = useState(false);
+  const [sel3DDepth, setSel3DDepth] = useState(32);
+  const [sel3DRotX, setSel3DRotX] = useState(0);
+  const [sel3DRotY, setSel3DRotY] = useState(0);
+  const [sel3DRotZ, setSel3DRotZ] = useState(0);
+  const [sel3DPerspective, setSel3DPerspective] = useState(45);
+  const [sel3DSideColor, setSel3DSideColor] = useState("#334155");
+  const [sel3DLight, setSel3DLight] = useState(100);
   const [selShadow, setSelShadow] = useState(false);
   const [selShadowColor, setSelShadowColor] = useState("rgba(0,0,0,0.5)");
   const [selShadowBlur, setSelShadowBlur] = useState(10);
@@ -665,6 +674,11 @@ function EditorInner() {
     paperScript.onload = () => setPaperLoaded(true);
     document.head.appendChild(paperScript);
 
+    const threeScript = document.createElement("script");
+    threeScript.src = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js";
+    threeScript.onload = () => setThreeLoaded(true);
+    document.head.appendChild(threeScript);
+
     try {
       const worker = new Worker("/rmbg-worker.js", { type: "module" });
       worker.postMessage({ type: "preload" });
@@ -675,8 +689,15 @@ function EditorInner() {
       try { document.head.removeChild(script); } catch {}
       try { document.head.removeChild(otScript); } catch {}
       try { document.head.removeChild(paperScript); } catch {}
+      try { document.head.removeChild(threeScript); } catch {}
     };
   }, []);
+
+  useEffect(() => {
+    if (!threeLoaded || !fc.current) return;
+    fc.current.getObjects().forEach((o:any) => { if (o.__threeD?.enabled) refreshThreeDObject(o); });
+    fc.current.requestRenderAll();
+  }, [threeLoaded]);
 
   const refreshLayers = (canvas: any) => {
     try {
@@ -718,6 +739,16 @@ function EditorInner() {
     setSelSkewY(Math.round(obj.skewY || 0));
     setSelFlipX((obj.scaleX ?? 1) < 0);
     setSelFlipY((obj.scaleY ?? 1) < 0);
+    const d3 = obj.__threeD || {};
+    setSel3DEnabled(!!d3.enabled);
+    setSel3DDepth(Number(d3.depth ?? 32));
+    setSel3DRotX(Number(d3.rotX ?? 0));
+    setSel3DRotY(Number(d3.rotY ?? 0));
+    setSel3DRotZ(Number(d3.rotZ ?? 0));
+    setSel3DPerspective(Number(d3.perspective ?? 45));
+    setSel3DSideColor(d3.sideColor || "#334155");
+    setSel3DLight(Number(d3.light ?? 100));
+    if (d3.enabled) requestAnimationFrame(() => refreshThreeDObject(obj));
     setSelFontSize(Math.round(obj.fontSize || 48));
     setSelFontFamily(obj.fontFamily || "Montserrat");
     setSelBold(obj.fontWeight === "bold");
@@ -2494,6 +2525,7 @@ function EditorInner() {
   const updateFill = (color: string) => {
     setSelFill(color); setSelFillGradient(null);
     upd({ fill: color });
+    if (sel?.__threeD?.enabled) requestAnimationFrame(() => refreshThreeDObject(sel));
   };
   const updateFillGradient = (g: GradValue|null) => {
     setSelFillGradient(g);
@@ -2505,6 +2537,79 @@ function EditorInner() {
   const updateStrokeW  = (v: number) => { setSelStrokeW(v);  upd({ strokeWidth: v, strokeUniform: true }); };
   const updateRadius   = (v: number) => { setSelRadius(v);   upd({ rx: v, ry: v }); };
   const updateRotation = (v: number) => { setSelRotation(v); upd({ angle: v }); };
+
+  type Shape3DSettings = { enabled:boolean; depth:number; rotX:number; rotY:number; rotZ:number; perspective:number; sideColor:string; light:number };
+  const supported3DShape = (obj:any) => !!obj && ["rect","circle","triangle","polygon"].includes(obj.type);
+
+  function front3DColor(obj:any) {
+    if (typeof obj?.fill === "string" && obj.fill !== "transparent") return parseGradientColor(obj.fill, 1).color;
+    const stop = obj?.fill?.colorStops?.[0];
+    return stop?.color ? parseGradientColor(stop.color, stop.opacity ?? 1).color : "#64748b";
+  }
+
+  function build3DShape(obj:any, T:any) {
+    const shape = new T.Shape();
+    const w = Math.max(1, Number(obj.width || (obj.radius ? obj.radius*2 : 100)));
+    const h = Math.max(1, Number(obj.height || (obj.radius ? obj.radius*2 : 100)));
+    const cx=w/2, cy=h/2;
+    if (obj.type === "rect") {
+      const rx=Math.max(0,Math.min(Number(obj.rx||0),w/2)); const ry=Math.max(0,Math.min(Number(obj.ry||rx||0),h/2));
+      if (rx || ry) {
+        const ax=rx||ry, ay=ry||rx;
+        shape.moveTo(-cx+ax,cy); shape.lineTo(cx-ax,cy); shape.quadraticCurveTo(cx,cy,cx,cy-ay);
+        shape.lineTo(cx,-cy+ay); shape.quadraticCurveTo(cx,-cy,cx-ax,-cy); shape.lineTo(-cx+ax,-cy);
+        shape.quadraticCurveTo(-cx,-cy,-cx,-cy+ay); shape.lineTo(-cx,cy-ay); shape.quadraticCurveTo(-cx,cy,-cx+ax,cy); shape.closePath();
+      } else { shape.moveTo(-cx,cy); shape.lineTo(cx,cy); shape.lineTo(cx,-cy); shape.lineTo(-cx,-cy); shape.closePath(); }
+      return shape;
+    }
+    if (obj.type === "circle") { shape.absellipse(0,0,w/2,h/2,0,Math.PI*2,false,0); return shape; }
+    if (obj.type === "triangle") { shape.moveTo(0,cy); shape.lineTo(cx,-cy); shape.lineTo(-cx,-cy); shape.closePath(); return shape; }
+    if (obj.type === "polygon" && Array.isArray(obj.points) && obj.points.length > 2) {
+      const po=obj.pathOffset||{x:0,y:0}; obj.points.forEach((pt:any,i:number)=>{ const x=Number(pt.x)-Number(po.x||0); const y=-(Number(pt.y)-Number(po.y||0)); if(i===0) shape.moveTo(x,y); else shape.lineTo(x,y); }); shape.closePath(); return shape;
+    }
+    return null;
+  }
+
+  function render3D(obj:any, cfg:Shape3DSettings) {
+    const T=(window as any).THREE; if(!T || !supported3DShape(obj)) return null;
+    let renderer:any=null;
+    try {
+      const shape=build3DShape(obj,T); if(!shape) return null;
+      renderer=new T.WebGLRenderer({alpha:true,antialias:true,preserveDrawingBuffer:true}); renderer.setSize(512,512,false); renderer.setClearColor(0x000000,0);
+      const scene=new T.Scene(); const geometry=new T.ExtrudeGeometry(shape,{depth:Math.max(1,cfg.depth),bevelEnabled:false,curveSegments:32,steps:1}); geometry.center();
+      const front=new T.MeshStandardMaterial({color:new T.Color(front3DColor(obj)),roughness:.58,metalness:.04});
+      const side=new T.MeshStandardMaterial({color:new T.Color(cfg.sideColor||"#334155"),roughness:.64,metalness:.03});
+      const mesh=new T.Mesh(geometry,[front,side]); mesh.rotation.set(cfg.rotX*Math.PI/180,cfg.rotY*Math.PI/180,cfg.rotZ*Math.PI/180); scene.add(mesh);
+      geometry.computeBoundingSphere(); const radius=Math.max(10,Number(geometry.boundingSphere?.radius||100)); const fov=Math.max(18,Math.min(90,cfg.perspective));
+      const camera=new T.PerspectiveCamera(fov,1,.1,radius*100); camera.position.z=radius/Math.max(.08,Math.sin((fov*Math.PI/180)/2))*1.28; camera.lookAt(0,0,0);
+      scene.add(new T.AmbientLight(0xffffff,.58)); const key=new T.DirectionalLight(0xffffff,Math.max(0,cfg.light)/100*1.35); key.position.set(-radius*1.4,radius*1.6,radius*2.8); scene.add(key);
+      renderer.render(scene,camera); const out=document.createElement("canvas"); out.width=512; out.height=512; out.getContext("2d")!.drawImage(renderer.domElement,0,0);
+      geometry.dispose(); front.dispose(); side.dispose(); renderer.dispose(); return out;
+    } catch(err) { try{renderer?.dispose?.()}catch{}; console.warn("3D render failed",err); return null; }
+  }
+
+  function install3DRenderer(obj:any) {
+    if(obj.__threeDRendererInstalled) return;
+    obj.__threeDOriginalRender=obj._render;
+    obj._render=function(ctx:CanvasRenderingContext2D){
+      if(this.__threeD?.enabled && this.__threeDCanvas){ const w=Math.max(1,Number(this.width||100)), h=Math.max(1,Number(this.height||100)); ctx.drawImage(this.__threeDCanvas,-w/2,-h/2,w,h); return; }
+      return this.__threeDOriginalRender.call(this,ctx);
+    };
+    obj.__threeDRendererInstalled=true; obj.objectCaching=false;
+  }
+
+  function refreshThreeDObject(obj:any, patch?:Partial<Shape3DSettings>) {
+    if(!supported3DShape(obj)) return;
+    const cfg:Shape3DSettings={enabled:!!obj.__threeD?.enabled,depth:Number(obj.__threeD?.depth??32),rotX:Number(obj.__threeD?.rotX??0),rotY:Number(obj.__threeD?.rotY??0),rotZ:Number(obj.__threeD?.rotZ??0),perspective:Number(obj.__threeD?.perspective??45),sideColor:obj.__threeD?.sideColor||"#334155",light:Number(obj.__threeD?.light??100),...(patch||{})};
+    obj.__threeD={...cfg}; install3DRenderer(obj); obj.__threeDCanvas=cfg.enabled ? render3D(obj,cfg) : null; obj.dirty=true; fc.current?.requestRenderAll();
+  }
+
+  const applyShape3D=(patch:Partial<Shape3DSettings>)=>{
+    if(!sel || !supported3DShape(sel)) return;
+    const cfg:Shape3DSettings={enabled:sel3DEnabled,depth:sel3DDepth,rotX:sel3DRotX,rotY:sel3DRotY,rotZ:sel3DRotZ,perspective:sel3DPerspective,sideColor:sel3DSideColor,light:sel3DLight,...patch};
+    setSel3DEnabled(cfg.enabled); setSel3DDepth(cfg.depth); setSel3DRotX(cfg.rotX); setSel3DRotY(cfg.rotY); setSel3DRotZ(cfg.rotZ); setSel3DPerspective(cfg.perspective); setSel3DSideColor(cfg.sideColor); setSel3DLight(cfg.light); refreshThreeDObject(sel,cfg);
+  };
+  const resetShape3D=()=>applyShape3D({enabled:true,depth:32,rotX:0,rotY:0,rotZ:0,perspective:45,sideColor:"#334155",light:100});
   const updateFontSize = (v: number) => {
     setSelFontSize(v);
     if (!fc.current || !sel) return;
@@ -4602,6 +4707,31 @@ function EditorInner() {
                     <button onClick={() => toggleTransformFlip("y")} className={`py-1.5 rounded-lg border text-xs transition ${selFlipY ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>↕ Flip vertical</button>
                   </div>
                   <button onClick={resetFreeTransform} className="w-full py-1.5 rounded-lg border border-gray-200 text-gray-500 text-xs hover:bg-gray-50">Resetar transformação</button>
+                </>
+              )}
+
+              {supported3DShape(sel) && (
+                <>
+                  <Sec title="3D" />
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Ativar 3D</span>
+                    <button disabled={!threeLoaded} onClick={() => applyShape3D({ enabled: !sel3DEnabled })} className={`w-9 h-5 rounded-full transition disabled:opacity-40 ${sel3DEnabled ? "bg-indigo-500" : "bg-gray-200"}`}>
+                      <span className={`block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${sel3DEnabled ? "translate-x-4" : ""}`} />
+                    </button>
+                  </div>
+                  {sel3DEnabled && (
+                    <div className="flex flex-col gap-2 p-2 rounded-lg border border-indigo-100 bg-indigo-50/30">
+                      <SliderRow label="Extrusão" value={sel3DDepth} min={1} max={200} unit="px" onChange={v => applyShape3D({ depth:v })} />
+                      <SliderRow label="Rotação X" value={sel3DRotX} min={-180} max={180} unit="°" onChange={v => applyShape3D({ rotX:v })} />
+                      <SliderRow label="Rotação Y" value={sel3DRotY} min={-180} max={180} unit="°" onChange={v => applyShape3D({ rotY:v })} />
+                      <SliderRow label="Rotação Z" value={sel3DRotZ} min={-180} max={180} unit="°" onChange={v => applyShape3D({ rotZ:v })} />
+                      <SliderRow label="Perspectiva" value={sel3DPerspective} min={18} max={90} unit="°" onChange={v => applyShape3D({ perspective:v })} />
+                      <ColorPicker value={sel3DSideColor} onChange={c => applyShape3D({ sideColor:c })} label="Cor da extrusão" />
+                      <SliderRow label="Iluminação" value={sel3DLight} min={0} max={200} unit="%" onChange={v => applyShape3D({ light:v })} />
+                      <button onClick={resetShape3D} className="w-full py-1.5 rounded-lg border border-indigo-200 text-indigo-600 bg-white text-xs hover:bg-indigo-50">Resetar 3D</button>
+                      <button onClick={() => applyShape3D({ enabled:false })} className="w-full py-1.5 rounded-lg border border-gray-200 text-gray-500 bg-white text-xs hover:bg-gray-50">Remover 3D</button>
+                    </div>
+                  )}
                 </>
               )}
 
