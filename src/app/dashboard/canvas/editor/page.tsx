@@ -1566,15 +1566,7 @@ function EditorInner() {
     } 
   }, [fabricLoaded, canvasWidth, canvasHeight]);
 
-  useEffect(() => {
-    if (pixelTool !== "eraser" || !pixelEditMode || !pixelCanvasRef.current) return;
-    const el = pixelCanvasRef.current;
-    const ctx = el.getContext("2d")!;
-    const snap = pixelSnapshotRef.current;
-    if (!snap) return;
-    // Só restaura o snapshot limpo, sem desenhar círculo
-    ctx.putImageData(snap, 0, 0);
-  }, [pixelTool, pixelEditMode]);
+
 
   useEffect(() => {
     if (!fc.current) return;
@@ -2632,7 +2624,13 @@ function EditorInner() {
                   }}
                   style={{
                     position: "absolute", left: il, top: it, width: iw, height: ih,
-                    cursor: pixelTool === "lasso" ? "crosshair" : "cell",
+                    cursor: pixelTool === "eraser" ? (() => {
+                      const naturalW = pixelEditImgRef.current?._element?.naturalWidth || 100;
+                      const displaySize = Math.max(Math.round(pixelBrushSize * iw / naturalW), 6);
+                      const half = Math.round(displaySize / 2);
+                      const svg = `%3Csvg xmlns='http://www.w3.org/2000/svg' width='${displaySize}' height='${displaySize}' viewBox='0 0 ${displaySize} ${displaySize}'%3E%3Ccircle cx='${half}' cy='${half}' r='${half - 1}' fill='none' stroke='%234f46e5' stroke-width='1.5' stroke-dasharray='4 3'/%3E%3C/svg%3E`;
+                      return `url("data:image/svg+xml,${svg}") ${half} ${half}, crosshair`;
+                    })() : "crosshair",
                     border: "2px solid #4f46e5", boxSizing: "border-box", imageRendering: "pixelated",
                   }}
                   onMouseDown={ev => {
@@ -2721,30 +2719,20 @@ function EditorInner() {
                       return;
                     }
 
-                    if (pixelTool === "eraser") {
+                    if (pixelTool === "eraser" && pixelDrawingRef.current) {
                       const r = pixelBrushSize / 2;
-                      if (!pixelDrawingRef.current) {
-                        const snap = pixelSnapshotRef.current;
-                        if (snap) ctx.putImageData(snap, 0, 0);
-                        ctx.save();
-                        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
-                        ctx.strokeStyle = "#4f46e5"; ctx.lineWidth = 1.5; ctx.setLineDash([3, 2]);
-                        ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+                      if (pixelSoftness === 0) {
+                        ctx.globalCompositeOperation = "destination-out";
+                        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+                        ctx.globalCompositeOperation = "source-over";
                       } else {
-                        // Apaga normalmente sem restaurar snapshot
-                        if (pixelSoftness === 0) {
-                          ctx.globalCompositeOperation = "destination-out";
-                          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-                          ctx.globalCompositeOperation = "source-over";
-                        } else {
-                          const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
-                          grad.addColorStop(0, `rgba(0,0,0,${pixelSoftness})`);
-                          grad.addColorStop(1, "rgba(0,0,0,0)");
-                          ctx.globalCompositeOperation = "destination-out";
-                          ctx.fillStyle = grad;
-                          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-                          ctx.globalCompositeOperation = "source-over";
-                        }
+                        const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+                        grad.addColorStop(0, `rgba(0,0,0,${pixelSoftness})`);
+                        grad.addColorStop(1, "rgba(0,0,0,0)");
+                        ctx.globalCompositeOperation = "destination-out";
+                        ctx.fillStyle = grad;
+                        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+                        ctx.globalCompositeOperation = "source-over";
                       }
                       return;
                     }
@@ -2787,30 +2775,6 @@ function EditorInner() {
                       pts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath(); ctx.stroke();
                       ctx.setLineDash([]); ctx.restore();
                     }
-                  }}
-
-                  onMouseEnter={ev => {
-                    if (pixelTool !== "eraser" || pixelDrawingRef.current) return;
-                    const el = pixelCanvasRef.current!;
-                    const rect = el.getBoundingClientRect();
-                    const sx = el.width / rect.width; const sy = el.height / rect.height;
-                    const x = (ev.clientX - rect.left) * sx;
-                    const y = (ev.clientY - rect.top) * sy;
-                    const ctx = el.getContext("2d")!;
-                    const snap = pixelSnapshotRef.current;
-                    if (snap) ctx.putImageData(snap, 0, 0);
-                    ctx.save();
-                    ctx.beginPath(); ctx.arc(x, y, pixelBrushSize / 2, 0, Math.PI * 2);
-                    ctx.strokeStyle = "#4f46e5"; ctx.lineWidth = 1.5; ctx.setLineDash([3, 2]);
-                    ctx.stroke(); ctx.setLineDash([]); ctx.restore();
-                  }}
-
-                  onMouseLeave={() => {
-                    if (pixelTool !== "eraser" || pixelDrawingRef.current) return;
-                    const el = pixelCanvasRef.current!;
-                    const ctx = el.getContext("2d")!;
-                    const snap = pixelSnapshotRef.current;
-                    if (snap) ctx.putImageData(snap, 0, 0);
                   }}
 
                   onKeyDown={ev => {
