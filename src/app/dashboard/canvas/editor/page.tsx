@@ -2753,9 +2753,11 @@ function EditorInner() {
                     const ctx = el.getContext("2d")!;
 
                     if (pixelDrawingRef.current) {
-                      pixelDrawingRef.current = false;
-                      // Atualiza snapshot para o preview refletir o estado atual
+                      // Atualiza snapshot ANTES de setar false
                       pixelSnapshotRef.current = ctx.getImageData(0, 0, el.width, el.height);
+                      pixelUndoStack.current.push(ctx.getImageData(0, 0, el.width, el.height));
+                      if (pixelUndoStack.current.length > 30) pixelUndoStack.current.shift();
+                      pixelDrawingRef.current = false;
                     }
 
                     if (pixelTool === "lasso" && lassoActiveRef.current) {
@@ -2776,6 +2778,23 @@ function EditorInner() {
                       ctx.setLineDash([]); ctx.restore();
                     }
                   }}
+
+                  onMouseEnter={ev => {
+                    if (pixelTool !== "eraser" || pixelDrawingRef.current) return;
+                    const el = pixelCanvasRef.current!;
+                    const rect = el.getBoundingClientRect();
+                    const sx = el.width / rect.width; const sy = el.height / rect.height;
+                    const x = (ev.clientX - rect.left) * sx;
+                    const y = (ev.clientY - rect.top) * sy;
+                    const ctx = el.getContext("2d")!;
+                    const snap = pixelSnapshotRef.current;
+                    if (snap) ctx.putImageData(snap, 0, 0);
+                    ctx.save();
+                    ctx.beginPath(); ctx.arc(x, y, pixelBrushSize / 2, 0, Math.PI * 2);
+                    ctx.strokeStyle = "#4f46e5"; ctx.lineWidth = 1.5; ctx.setLineDash([3, 2]);
+                    ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+                  }}
+                  
                   onKeyDown={ev => {
                     ev.stopPropagation();
                     const el = pixelCanvasRef.current!;
