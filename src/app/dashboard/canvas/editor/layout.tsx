@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 
-export default function CanvasEditorLayout({ children }: { children: React.ReactNode }) {
+export default function CanvasEditorLayout({ children }: { children: ReactNode }) {
   useEffect(() => {
     let syncing = false;
 
