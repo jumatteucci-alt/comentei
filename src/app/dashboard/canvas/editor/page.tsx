@@ -309,10 +309,12 @@ function EditorInner() {
   const [selShadowBlur, setSelShadowBlur] = useState(10);
   const [selShadowX, setSelShadowX] = useState(5);
   const [selShadowY, setSelShadowY] = useState(5);
+  const [selShadowOpacity, setSelShadowOpacity] = useState(1);
   const [selGlow, setSelGlow] = useState(false);
   const [selGlowColor, setSelGlowColor] = useState("#ffffff");
   const [selGlowBlur, setSelGlowBlur] = useState(20);
   const [selGlowDistance, setSelGlowDistance] = useState(0);
+  const [selGlowOpacity, setSelGlowOpacity] = useState(1);
   const [selBlur, setSelBlur] = useState(0);
   const [selSaturation, setSelSaturation] = useState(0);
   const [selFontSize, setSelFontSize] = useState(48);
@@ -353,21 +355,23 @@ function EditorInner() {
     shadowBlur?: number;
     shadowX?: number;
     shadowY?: number;
+    shadowOpacity?: number;
     glow?: boolean;
     glowColor?: string;
     glowBlur?: number;
     glowDistance?: number;
+    glowOpacity?: number;
   };
   const DEFAULT_PIXEL_EFFECTS: Required<PixelLayerEffects> = {
     opacity: 1, saturation: 0, blur: 0,
-    shadow: false, shadowColor: "#000000", shadowBlur: 10, shadowX: 5, shadowY: 5,
-    glow: false, glowColor: "#ffffff", glowBlur: 20, glowDistance: 0,
+    shadow: false, shadowColor: "#000000", shadowBlur: 10, shadowX: 5, shadowY: 5, shadowOpacity: 1,
+    glow: false, glowColor: "#ffffff", glowBlur: 20, glowDistance: 0, glowOpacity: 1,
   };
   const [pixelLayers, setPixelLayers] = useState<{
     id:string; name:string; canvas:HTMLCanvasElement; offsetX:number; offsetY:number; scale:number;
     opacity?:number; saturation?:number; blur?:number;
-    shadow?:boolean; shadowColor?:string; shadowBlur?:number; shadowX?:number; shadowY?:number;
-    glow?:boolean; glowColor?:string; glowBlur?:number; glowDistance?:number;
+    shadow?:boolean; shadowColor?:string; shadowBlur?:number; shadowX?:number; shadowY?:number; shadowOpacity?:number;
+    glow?:boolean; glowColor?:string; glowBlur?:number; glowDistance?:number; glowOpacity?:number;
   }[]>([]);
   const [pixelBaseEffects, setPixelBaseEffects] = useState<Required<PixelLayerEffects>>(DEFAULT_PIXEL_EFFECTS);
   const [selectedPixelLayerId, setSelectedPixelLayerId] = useState<string|null>(null);
@@ -383,6 +387,19 @@ function EditorInner() {
   // Always finish a drag even if the cursor is released outside the layer.
   useEffect(() => {
     const stopPixelInteraction = () => {
+      // Mouseup can happen outside the editable canvas. Always end every pixel interaction.
+      if (pixelDrawingRef.current && pixelCanvasRef.current) {
+        const el = pixelCanvasRef.current;
+        const ctx = el.getContext("2d", { willReadFrequently: true });
+        if (ctx) {
+          const snap = ctx.getImageData(0, 0, el.width, el.height);
+          pixelSnapshotRef.current = snap;
+          pixelUndoStack.current.push(snap);
+          if (pixelUndoStack.current.length > 30) pixelUndoStack.current.shift();
+        }
+      }
+      pixelDrawingRef.current = false;
+      lassoActiveRef.current = false;
       pixelMovingRef.current = false;
       pixelResizingRef.current = false;
       pixelMoveLayerRef.current = null;
@@ -498,8 +515,10 @@ function EditorInner() {
     setSelGlowColor(obj.__glowColor || "#ffffff");
     setSelGlowBlur(obj.__glowBlur ?? 20);
     setSelGlowDistance(obj.__glowDistance ?? 0);
+    setSelGlowOpacity(obj.__glowOpacity ?? 1);
+    setSelShadowOpacity(obj.__shadowOpacity ?? 1);
     setSelShadow(!!sh && !glowOn);
-    if (sh && !glowOn) { setSelShadowColor(sh.color||"rgba(0,0,0,0.5)"); setSelShadowBlur(sh.blur||10); setSelShadowX(sh.offsetX||5); setSelShadowY(sh.offsetY||5); }
+    if (sh && !glowOn) { setSelShadowColor(obj.__shadowBaseColor || sh.color || "#000000"); setSelShadowBlur(sh.blur||10); setSelShadowX(sh.offsetX||5); setSelShadowY(sh.offsetY||5); }
     const uid = obj.__uid;
     setSelBlur(uid && blurValueMap.current.has(uid) ? blurValueMap.current.get(uid)! : 0);
     const satFilter = (obj.filters||[]).find((f: any) => f.type === "Saturation");
@@ -664,24 +683,46 @@ function EditorInner() {
     ...(source || {}),
   });
 
+  const colorWithOpacity = (color: string, opacity: number) => {
+    const a = Math.max(0, Math.min(1, opacity));
+    if (/^#[0-9a-fA-F]{6}$/.test(color)) {
+      const r = parseInt(color.slice(1, 3), 16);
+      const g = parseInt(color.slice(3, 5), 16);
+      const b = parseInt(color.slice(5, 7), 16);
+      return `rgba(${r},${g},${b},${a})`;
+    }
+    if (/^#[0-9a-fA-F]{3}$/.test(color)) {
+      const r = parseInt(color[1] + color[1], 16);
+      const g = parseInt(color[2] + color[2], 16);
+      const b = parseInt(color[3] + color[3], 16);
+      return `rgba(${r},${g},${b},${a})`;
+    }
+    const rgb = color.match(/rgba?\(([^)]+)\)/i);
+    if (rgb) {
+      const parts = rgb[1].split(',').map(v => v.trim());
+      return `rgba(${parts[0]},${parts[1]},${parts[2]},${a})`;
+    }
+    return color;
+  };
+
   const pixelEffectsCss = (source?: PixelLayerEffects | null) => {
     const fx = getPixelEffects(source);
     const parts: string[] = [];
     if (fx.blur > 0) parts.push(`blur(${fx.blur}px)`);
     if (fx.saturation !== 0) parts.push(`saturate(${Math.max(0, 1 + fx.saturation)})`);
-    if (fx.shadow) parts.push(`drop-shadow(${fx.shadowX}px ${fx.shadowY}px ${fx.shadowBlur}px ${fx.shadowColor})`);
+    if (fx.shadow) parts.push(`drop-shadow(${fx.shadowX}px ${fx.shadowY}px ${fx.shadowBlur}px ${colorWithOpacity(fx.shadowColor, fx.shadowOpacity)})`);
     if (fx.glow) {
       const d = Math.max(0, fx.glowDistance);
       const b = Math.max(0, fx.glowBlur);
       // Glow is centered on the object. Distance expands the halo equally in all directions.
-      parts.push(`drop-shadow(0 0 ${b}px ${fx.glowColor})`);
+      parts.push(`drop-shadow(0 0 ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`);
       if (d > 0) {
         const q = d * 0.7071;
         parts.push(
-          `drop-shadow(${d}px 0 ${b}px ${fx.glowColor})`, `drop-shadow(${-d}px 0 ${b}px ${fx.glowColor})`,
-          `drop-shadow(0 ${d}px ${b}px ${fx.glowColor})`, `drop-shadow(0 ${-d}px ${b}px ${fx.glowColor})`,
-          `drop-shadow(${q}px ${q}px ${b}px ${fx.glowColor})`, `drop-shadow(${-q}px ${q}px ${b}px ${fx.glowColor})`,
-          `drop-shadow(${q}px ${-q}px ${b}px ${fx.glowColor})`, `drop-shadow(${-q}px ${-q}px ${b}px ${fx.glowColor})`
+          `drop-shadow(${d}px 0 ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`, `drop-shadow(${-d}px 0 ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`,
+          `drop-shadow(0 ${d}px ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`, `drop-shadow(0 ${-d}px ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`,
+          `drop-shadow(${q}px ${q}px ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`, `drop-shadow(${-q}px ${q}px ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`,
+          `drop-shadow(${q}px ${-q}px ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`, `drop-shadow(${-q}px ${-q}px ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`
         );
       }
     }
@@ -700,18 +741,18 @@ function EditorInner() {
     const filters: string[] = [];
     if (fx.blur > 0) filters.push(`blur(${fx.blur}px)`);
     if (fx.saturation !== 0) filters.push(`saturate(${Math.max(0, 1 + fx.saturation)})`);
-    if (fx.shadow) filters.push(`drop-shadow(${fx.shadowX}px ${fx.shadowY}px ${fx.shadowBlur}px ${fx.shadowColor})`);
+    if (fx.shadow) filters.push(`drop-shadow(${fx.shadowX}px ${fx.shadowY}px ${fx.shadowBlur}px ${colorWithOpacity(fx.shadowColor, fx.shadowOpacity)})`);
     if (fx.glow) {
       const d = Math.max(0, fx.glowDistance);
       const b = Math.max(0, fx.glowBlur);
-      filters.push(`drop-shadow(0 0 ${b}px ${fx.glowColor})`);
+      filters.push(`drop-shadow(0 0 ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`);
       if (d > 0) {
         const q = d * 0.7071;
         filters.push(
-          `drop-shadow(${d}px 0 ${b}px ${fx.glowColor})`, `drop-shadow(${-d}px 0 ${b}px ${fx.glowColor})`,
-          `drop-shadow(0 ${d}px ${b}px ${fx.glowColor})`, `drop-shadow(0 ${-d}px ${b}px ${fx.glowColor})`,
-          `drop-shadow(${q}px ${q}px ${b}px ${fx.glowColor})`, `drop-shadow(${-q}px ${q}px ${b}px ${fx.glowColor})`,
-          `drop-shadow(${q}px ${-q}px ${b}px ${fx.glowColor})`, `drop-shadow(${-q}px ${-q}px ${b}px ${fx.glowColor})`
+          `drop-shadow(${d}px 0 ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`, `drop-shadow(${-d}px 0 ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`,
+          `drop-shadow(0 ${d}px ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`, `drop-shadow(0 ${-d}px ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`,
+          `drop-shadow(${q}px ${q}px ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`, `drop-shadow(${-q}px ${q}px ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`,
+          `drop-shadow(${q}px ${-q}px ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`, `drop-shadow(${-q}px ${-q}px ${b}px ${colorWithOpacity(fx.glowColor, fx.glowOpacity)})`
         );
       }
     }
@@ -2225,31 +2266,32 @@ function EditorInner() {
     setSelShadow(on);
     if (!fc.current || !sel) return;
     if (on) { setSelGlow(false); sel.__glowEnabled = false; }
-    sel.set("shadow", on ? new (window as any).fabric.Shadow({ color: selShadowColor, blur: selShadowBlur, offsetX: selShadowX, offsetY: selShadowY }) : null);
+    sel.__shadowOpacity = selShadowOpacity;
+    sel.__shadowBaseColor = selShadowColor;
+    sel.set("shadow", on ? new (window as any).fabric.Shadow({ color: colorWithOpacity(selShadowColor, selShadowOpacity), blur: selShadowBlur, offsetX: selShadowX, offsetY: selShadowY }) : null);
     fc.current.requestRenderAll();
   };
-  const applyShadow = (color: string, blur: number, ox: number, oy: number) => {
+  const applyShadow = (color: string, blur: number, ox: number, oy: number, opacity = selShadowOpacity) => {
     if (!fc.current || !sel || !selShadow) return;
-    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur, offsetX: ox, offsetY: oy }));
+    sel.__shadowOpacity = opacity; sel.__shadowBaseColor = color;
+    sel.set("shadow", new (window as any).fabric.Shadow({ color: colorWithOpacity(color, opacity), blur, offsetX: ox, offsetY: oy }));
     fc.current.requestRenderAll();
   };
-  const applyGlow = (color: string, blur: number, distance: number) => {
+  const applyGlow = (color: string, blur: number, distance: number, opacity = selGlowOpacity) => {
     if (!fc.current || !sel || !selGlow) return;
-    sel.__glowEnabled = true; sel.__glowColor = color; sel.__glowBlur = blur; sel.__glowDistance = distance;
-    // Fabric has no native spread radius. Keep the glow centered and use distance
-    // as extra halo reach, never as an X/Y displacement like a shadow.
+    sel.__glowEnabled = true; sel.__glowColor = color; sel.__glowBlur = blur; sel.__glowDistance = distance; sel.__glowOpacity = opacity;
     const effectiveBlur = Math.max(0, blur + distance);
-    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur: effectiveBlur, offsetX: 0, offsetY: 0 }));
+    sel.set("shadow", new (window as any).fabric.Shadow({ color: colorWithOpacity(color, opacity), blur: effectiveBlur, offsetX: 0, offsetY: 0 }));
     fc.current.requestRenderAll();
   };
   const updateGlow = (on: boolean) => {
     setSelGlow(on);
     if (!fc.current || !sel) return;
-    sel.__glowEnabled = on; sel.__glowColor = selGlowColor; sel.__glowBlur = selGlowBlur; sel.__glowDistance = selGlowDistance;
+    sel.__glowEnabled = on; sel.__glowColor = selGlowColor; sel.__glowBlur = selGlowBlur; sel.__glowDistance = selGlowDistance; sel.__glowOpacity = selGlowOpacity;
     if (on) {
       setSelShadow(false);
       const effectiveBlur = Math.max(0, selGlowBlur + selGlowDistance);
-      sel.set("shadow", new (window as any).fabric.Shadow({ color: selGlowColor, blur: effectiveBlur, offsetX: 0, offsetY: 0 }));
+      sel.set("shadow", new (window as any).fabric.Shadow({ color: colorWithOpacity(selGlowColor, selGlowOpacity), blur: effectiveBlur, offsetX: 0, offsetY: 0 }));
     } else sel.set("shadow", null);
     fc.current.requestRenderAll();
   };
@@ -3226,7 +3268,18 @@ function EditorInner() {
                     if (pixelTool === "move") {
                       ev.preventDefault();
                       ev.stopPropagation();
-                      switchPixelEditTarget(PIXEL_BASE_ID);
+                      if (editLayer) {
+                        setSelectedPixelLayerId(editLayer.id);
+                        setSelectedPixelLayerIds([editLayer.id]);
+                        pixelMoveLayerRef.current = {
+                          id: editLayer.id, canvas: editLayer.canvas, startX: ev.clientX, startY: ev.clientY,
+                          offsetX: editLayer.offsetX || 0, offsetY: editLayer.offsetY || 0,
+                        };
+                        pixelMovingRef.current = true;
+                        pixelResizingRef.current = false;
+                      } else {
+                        switchPixelEditTarget(PIXEL_BASE_ID);
+                      }
                       return;
                     }
                     const el = pixelCanvasRef.current!;
@@ -3288,6 +3341,13 @@ function EditorInner() {
                     }
                   }}
                   onMouseMove={ev => {
+                    if (pixelTool === "move" && editLayer && pixelMovingRef.current && pixelMoveLayerRef.current?.id === editLayer.id) {
+                      const move = pixelMoveLayerRef.current;
+                      const dx = (ev.clientX - move.startX) / baseScaleX;
+                      const dy = (ev.clientY - move.startY) / baseScaleY;
+                      setPixelLayers(prev => prev.map(l => l.id === editLayer.id ? { ...l, offsetX: move.offsetX + dx, offsetY: move.offsetY + dy } : l));
+                      return;
+                    }
                     const el = pixelCanvasRef.current!;
                     const rect = el.getBoundingClientRect();
                     const sx = el.width / rect.width; const sy = el.height / rect.height;
@@ -3429,10 +3489,28 @@ function EditorInner() {
                         canvas: clipCanvas, offsetX: cb.originX || 0, offsetY: cb.originY || 0, scale: 1,
                         ...DEFAULT_PIXEL_EFFECTS,
                       };
+                      // Commit the source surface, then make the pasted layer the real editable target.
+                      commitCurrentPixelSurface();
                       setPixelLayers(prev => [...prev, newLayer]);
+                      pixelEditLayerIdRef.current = newLayer.id;
+                      pixelEditImgRef.current = null;
                       setSelectedPixelLayerId(newLayer.id);
                       setSelectedPixelLayerIds([newLayer.id]);
-                      clearLassoVisual();
+                      setPixelTool("move");
+                      resetPixelToolTransientState();
+                      requestAnimationFrame(() => {
+                        const target = pixelCanvasRef.current;
+                        if (!target) return;
+                        target.width = clipCanvas.width; target.height = clipCanvas.height;
+                        target.dataset.initialized = "true";
+                        const tctx = target.getContext("2d", { willReadFrequently: true })!;
+                        tctx.clearRect(0, 0, target.width, target.height);
+                        tctx.drawImage(clipCanvas, 0, 0);
+                        const snap = tctx.getImageData(0, 0, target.width, target.height);
+                        pixelSnapshotRef.current = snap;
+                        pixelUndoStack.current = [snap];
+                        target.focus();
+                      });
                       return;
                     }
 
@@ -3759,6 +3837,7 @@ function EditorInner() {
                       {fx.shadow && (
                         <div className="flex flex-col gap-2">
                           <ColorPicker value={fx.shadowColor} onChange={c => updateSelectedPixelEffects({ shadowColor: c })} label="Cor" />
+                          <SliderRow label="Opacidade" value={Math.round(fx.shadowOpacity * 100)} min={0} max={100} unit="%" onChange={v => updateSelectedPixelEffects({ shadowOpacity: v / 100 })} />
                           <SliderRow label="Blur" value={fx.shadowBlur} min={0} max={60} onChange={v => updateSelectedPixelEffects({ shadowBlur: v })} />
                           <SliderRow label="X" value={fx.shadowX} min={-50} max={50} onChange={v => updateSelectedPixelEffects({ shadowX: v })} />
                           <SliderRow label="Y" value={fx.shadowY} min={-50} max={50} onChange={v => updateSelectedPixelEffects({ shadowY: v })} />
@@ -3776,6 +3855,7 @@ function EditorInner() {
                       {fx.glow && (
                         <div className="flex flex-col gap-2">
                           <ColorPicker value={fx.glowColor} onChange={c => updateSelectedPixelEffects({ glowColor: c })} label="Cor" />
+                          <SliderRow label="Opacidade" value={Math.round(fx.glowOpacity * 100)} min={0} max={100} unit="%" onChange={v => updateSelectedPixelEffects({ glowOpacity: v / 100 })} />
                           <SliderRow label="Blur" value={fx.glowBlur} min={0} max={80} onChange={v => updateSelectedPixelEffects({ glowBlur: v })} />
                           <SliderRow label="Distância" value={fx.glowDistance} min={0} max={50} onChange={v => updateSelectedPixelEffects({ glowDistance: v })} />
                         </div>
@@ -4020,10 +4100,11 @@ function EditorInner() {
               </div>
               {selShadow && (
                 <div className="flex flex-col gap-2">
-                  <ColorPicker value={selShadowColor} onChange={c => { setSelShadowColor(c); applyShadow(c, selShadowBlur, selShadowX, selShadowY); }} label="Cor" />
-                  <SliderRow label="Blur" value={selShadowBlur} min={0} max={60} onChange={v => { setSelShadowBlur(v); applyShadow(selShadowColor, v, selShadowX, selShadowY); }} />
-                  <SliderRow label="X" value={selShadowX} min={-50} max={50} onChange={v => { setSelShadowX(v); applyShadow(selShadowColor, selShadowBlur, v, selShadowY); }} />
-                  <SliderRow label="Y" value={selShadowY} min={-50} max={50} onChange={v => { setSelShadowY(v); applyShadow(selShadowColor, selShadowBlur, selShadowX, v); }} />
+                  <ColorPicker value={selShadowColor} onChange={c => { setSelShadowColor(c); applyShadow(c, selShadowBlur, selShadowX, selShadowY, selShadowOpacity); }} label="Cor" />
+                  <SliderRow label="Opacidade" value={Math.round(selShadowOpacity * 100)} min={0} max={100} unit="%" onChange={v => { const o=v/100; setSelShadowOpacity(o); applyShadow(selShadowColor, selShadowBlur, selShadowX, selShadowY, o); }} />
+                  <SliderRow label="Blur" value={selShadowBlur} min={0} max={60} onChange={v => { setSelShadowBlur(v); applyShadow(selShadowColor, v, selShadowX, selShadowY, selShadowOpacity); }} />
+                  <SliderRow label="X" value={selShadowX} min={-50} max={50} onChange={v => { setSelShadowX(v); applyShadow(selShadowColor, selShadowBlur, v, selShadowY, selShadowOpacity); }} />
+                  <SliderRow label="Y" value={selShadowY} min={-50} max={50} onChange={v => { setSelShadowY(v); applyShadow(selShadowColor, selShadowBlur, selShadowX, v, selShadowOpacity); }} />
                 </div>
               )}
 
@@ -4036,9 +4117,10 @@ function EditorInner() {
               </div>
               {selGlow && (
                 <div className="flex flex-col gap-2">
-                  <ColorPicker value={selGlowColor} onChange={c => { setSelGlowColor(c); applyGlow(c, selGlowBlur, selGlowDistance); }} label="Cor" />
-                  <SliderRow label="Blur" value={selGlowBlur} min={0} max={80} onChange={v => { setSelGlowBlur(v); applyGlow(selGlowColor, v, selGlowDistance); }} />
-                  <SliderRow label="Distância" value={selGlowDistance} min={0} max={50} onChange={v => { setSelGlowDistance(v); applyGlow(selGlowColor, selGlowBlur, v); }} />
+                  <ColorPicker value={selGlowColor} onChange={c => { setSelGlowColor(c); applyGlow(c, selGlowBlur, selGlowDistance, selGlowOpacity); }} label="Cor" />
+                  <SliderRow label="Opacidade" value={Math.round(selGlowOpacity * 100)} min={0} max={100} unit="%" onChange={v => { const o=v/100; setSelGlowOpacity(o); applyGlow(selGlowColor, selGlowBlur, selGlowDistance, o); }} />
+                  <SliderRow label="Blur" value={selGlowBlur} min={0} max={80} onChange={v => { setSelGlowBlur(v); applyGlow(selGlowColor, v, selGlowDistance, selGlowOpacity); }} />
+                  <SliderRow label="Distância" value={selGlowDistance} min={0} max={50} onChange={v => { setSelGlowDistance(v); applyGlow(selGlowColor, selGlowBlur, v, selGlowOpacity); }} />
                 </div>
               )}
                 </>
