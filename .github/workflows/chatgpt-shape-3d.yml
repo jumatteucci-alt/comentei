@@ -25,3 +25,5 @@ jobs:
           git add src/app/dashboard/canvas/editor/page.tsx
           git commit -m "feat: add editable 3d extrusion for shapes"
           git push origin main
+
+# self-contained patch trigger
