@@ -340,9 +340,26 @@ function EditorInner() {
   const [lassoSelected, setLassoSelected] = useState(false); // true = has active selection
   const lassoSelectionRef = useRef<{x:number;y:number}[]>([]); // closed lasso selection
   const pixelUndoStack = useRef<ImageData[]>([]); // undo history for pixel editor
+  type PixelLayerEffects = {
+    opacity?: number;
+    saturation?: number;
+    blur?: number;
+    shadow?: boolean;
+    shadowColor?: string;
+    shadowBlur?: number;
+    shadowX?: number;
+    shadowY?: number;
+  };
+  const DEFAULT_PIXEL_EFFECTS: Required<PixelLayerEffects> = {
+    opacity: 1, saturation: 0, blur: 0,
+    shadow: false, shadowColor: "#000000", shadowBlur: 10, shadowX: 5, shadowY: 5,
+  };
   const [pixelLayers, setPixelLayers] = useState<{
     id:string; name:string; canvas:HTMLCanvasElement; offsetX:number; offsetY:number; scale:number;
+    opacity?:number; saturation?:number; blur?:number;
+    shadow?:boolean; shadowColor?:string; shadowBlur?:number; shadowX?:number; shadowY?:number;
   }[]>([]);
+  const [pixelBaseEffects, setPixelBaseEffects] = useState<Required<PixelLayerEffects>>(DEFAULT_PIXEL_EFFECTS);
   const [selectedPixelLayerId, setSelectedPixelLayerId] = useState<string|null>(null);
   const [selectedPixelLayerIds, setSelectedPixelLayerIds] = useState<string[]>([]);
   const PIXEL_BASE_ID = "__base__";
@@ -502,6 +519,7 @@ function EditorInner() {
 
     const storedLayers = Array.isArray(imgObj.__pixelLayers) ? imgObj.__pixelLayers : [];
     setPixelLayers(storedLayers);
+    setPixelBaseEffects(getPixelEffects(imgObj.__pixelBaseEffects));
 
     const imgEl = imgObj._element as HTMLImageElement;
     const storedBase = imgObj.__pixelBaseCanvas as HTMLCanvasElement | undefined;
@@ -555,6 +573,48 @@ function EditorInner() {
     setLassoSelected(false);
   };
 
+  const getPixelEffects = (source?: PixelLayerEffects | null): Required<PixelLayerEffects> => ({
+    ...DEFAULT_PIXEL_EFFECTS,
+    ...(source || {}),
+  });
+
+  const pixelEffectsCss = (source?: PixelLayerEffects | null) => {
+    const fx = getPixelEffects(source);
+    const parts: string[] = [];
+    if (fx.blur > 0) parts.push(`blur(${fx.blur}px)`);
+    if (fx.saturation !== 0) parts.push(`saturate(${Math.max(0, 1 + fx.saturation)})`);
+    if (fx.shadow) parts.push(`drop-shadow(${fx.shadowX}px ${fx.shadowY}px ${fx.shadowBlur}px ${fx.shadowColor})`);
+    return parts.length ? parts.join(" ") : "none";
+  };
+
+  const drawPixelSourceWithEffects = (
+    ctx: CanvasRenderingContext2D,
+    source: CanvasImageSource,
+    x: number, y: number, w: number, h: number,
+    effects?: PixelLayerEffects | null,
+  ) => {
+    const fx = getPixelEffects(effects);
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, fx.opacity));
+    const filters: string[] = [];
+    if (fx.blur > 0) filters.push(`blur(${fx.blur}px)`);
+    if (fx.saturation !== 0) filters.push(`saturate(${Math.max(0, 1 + fx.saturation)})`);
+    if (fx.shadow) filters.push(`drop-shadow(${fx.shadowX}px ${fx.shadowY}px ${fx.shadowBlur}px ${fx.shadowColor})`);
+    ctx.filter = filters.length ? filters.join(" ") : "none";
+    ctx.drawImage(source, x, y, w, h);
+    ctx.restore();
+  };
+
+  const updateSelectedPixelEffects = (patch: PixelLayerEffects) => {
+    if (selectedPixelLayerIds.length !== 1) return;
+    const id = selectedPixelLayerIds[0];
+    if (id === PIXEL_BASE_ID) {
+      setPixelBaseEffects(prev => ({ ...prev, ...patch }));
+      return;
+    }
+    setPixelLayers(prev => prev.map(layer => layer.id === id ? { ...layer, ...patch } : layer));
+  };
+
   const findPixelBaseObject = () => {
     if (!fc.current) return null;
     const objs = fc.current.getObjects();
@@ -568,12 +628,30 @@ function EditorInner() {
 
     // Expand the visible image so every internal pixel layer is included, even
     // when a layer was moved outside the original base-image bounds.
-    const minX = Math.floor(Math.min(0, ...layersToRender.map(layer => layer.offsetX || 0)));
-    const minY = Math.floor(Math.min(0, ...layersToRender.map(layer => layer.offsetY || 0)));
-    const maxX = Math.ceil(Math.max(baseCanvas.width, ...layersToRender.map(layer =>
-      (layer.offsetX || 0) + layer.canvas.width * (layer.scale || 1))));
-    const maxY = Math.ceil(Math.max(baseCanvas.height, ...layersToRender.map(layer =>
-      (layer.offsetY || 0) + layer.canvas.height * (layer.scale || 1))));
+    const effectPadding = (fxSource?: PixelLayerEffects | null) => {
+      const fx = getPixelEffects(fxSource);
+      const blurPad = fx.blur * 2;
+      const shadowPadX = fx.shadow ? Math.abs(fx.shadowX) + fx.shadowBlur * 2 : 0;
+      const shadowPadY = fx.shadow ? Math.abs(fx.shadowY) + fx.shadowBlur * 2 : 0;
+      return { x: Math.ceil(blurPad + shadowPadX), y: Math.ceil(blurPad + shadowPadY) };
+    };
+    const basePad = effectPadding(pixelBaseEffects);
+    const minX = Math.floor(Math.min(-basePad.x, ...layersToRender.map(layer => {
+      const pad = effectPadding(layer);
+      return (layer.offsetX || 0) - pad.x;
+    })));
+    const minY = Math.floor(Math.min(-basePad.y, ...layersToRender.map(layer => {
+      const pad = effectPadding(layer);
+      return (layer.offsetY || 0) - pad.y;
+    })));
+    const maxX = Math.ceil(Math.max(baseCanvas.width + basePad.x, ...layersToRender.map(layer => {
+      const pad = effectPadding(layer);
+      return (layer.offsetX || 0) + layer.canvas.width * (layer.scale || 1) + pad.x;
+    })));
+    const maxY = Math.ceil(Math.max(baseCanvas.height + basePad.y, ...layersToRender.map(layer => {
+      const pad = effectPadding(layer);
+      return (layer.offsetY || 0) + layer.canvas.height * (layer.scale || 1) + pad.y;
+    })));
 
     const outW = Math.max(1, maxX - minX);
     const outH = Math.max(1, maxY - minY);
@@ -596,11 +674,14 @@ function EditorInner() {
     composite.width = outW;
     composite.height = outH;
     const ctx = composite.getContext("2d")!;
-    ctx.drawImage(expandedBase, 0, 0);
+    drawPixelSourceWithEffects(ctx, baseCanvas, -minX, -minY, baseCanvas.width, baseCanvas.height, pixelBaseEffects);
     normalizedLayers.forEach(layer => {
-      ctx.drawImage(layer.canvas, 0, 0, layer.canvas.width, layer.canvas.height,
+      drawPixelSourceWithEffects(
+        ctx, layer.canvas,
         layer.offsetX, layer.offsetY,
-        layer.canvas.width * (layer.scale || 1), layer.canvas.height * (layer.scale || 1));
+        layer.canvas.width * (layer.scale || 1), layer.canvas.height * (layer.scale || 1),
+        layer,
+      );
     });
 
     const fabric = (window as any).fabric;
@@ -623,6 +704,7 @@ function EditorInner() {
       img.__uid = uid;
       img.__pixelBaseCanvas = expandedBase;
       img.__pixelLayers = normalizedLayers;
+      img.__pixelBaseEffects = pixelBaseEffects;
       pixelBaseUidRef.current = uid;
       fc.current.add(img);
       fc.current.setActiveObject(img);
@@ -778,14 +860,19 @@ function EditorInner() {
 
       // If the base image is the active pixel-edit target, use the editor canvas;
       // otherwise the editor canvas belongs to a pasted layer, so read the real base image.
-      if (pixelEditImgRef.current && pixelEditLayerIdRef.current === null && pixelCanvasRef.current) {
-        ctx.drawImage(pixelCanvasRef.current, 0, 0, composite.width, composite.height);
-      } else if (baseEl) {
-        ctx.drawImage(baseEl, 0, 0, composite.width, composite.height);
+      const baseSource = (pixelEditImgRef.current && pixelEditLayerIdRef.current === null && pixelCanvasRef.current)
+        ? pixelCanvasRef.current
+        : (pixelBaseCanvasRef.current || baseEl);
+      if (baseSource) {
+        drawPixelSourceWithEffects(ctx, baseSource, 0, 0, composite.width, composite.height, pixelBaseEffects);
       }
       selected.forEach(l => {
-        ctx.drawImage(l.canvas, 0, 0, l.canvas.width, l.canvas.height,
-          l.offsetX, l.offsetY, l.canvas.width * (l.scale || 1), l.canvas.height * (l.scale || 1));
+        drawPixelSourceWithEffects(
+          ctx, l.canvas,
+          l.offsetX, l.offsetY,
+          l.canvas.width * (l.scale || 1), l.canvas.height * (l.scale || 1),
+          l,
+        );
       });
 
       const dataURL = composite.toDataURL("image/png");
@@ -801,6 +888,7 @@ function EditorInner() {
         pixelSnapshotRef.current = pc.getContext("2d")!.getImageData(0, 0, pc.width, pc.height);
         pixelUndoStack.current.push(pixelSnapshotRef.current);
         setPixelLayers(prev => prev.filter(l => !ids.includes(l.id)));
+        setPixelBaseEffects(DEFAULT_PIXEL_EFFECTS);
         setSelectedPixelLayerId(null);
         setSelectedPixelLayerIds([PIXEL_BASE_ID]);
         clearLassoVisual();
@@ -831,9 +919,17 @@ function EditorInner() {
     const c = document.createElement("canvas");
     c.width = Math.max(1, maxX - minX); c.height = Math.max(1, maxY - minY);
     const ctx = c.getContext("2d")!;
-    selected.forEach(l => ctx.drawImage(l.canvas, 0, 0, l.canvas.width, l.canvas.height,
-      l.offsetX - minX, l.offsetY - minY, l.canvas.width * (l.scale || 1), l.canvas.height * (l.scale || 1)));
-    const merged = { id: Math.random().toString(36).slice(2), name: "Camadas mescladas", canvas: c, offsetX: minX, offsetY: minY, scale: 1 };
+    selected.forEach(l => drawPixelSourceWithEffects(
+      ctx, l.canvas,
+      l.offsetX - minX, l.offsetY - minY,
+      l.canvas.width * (l.scale || 1), l.canvas.height * (l.scale || 1),
+      l,
+    ));
+    const merged = {
+      id: Math.random().toString(36).slice(2), name: "Camadas mescladas",
+      canvas: c, offsetX: minX, offsetY: minY, scale: 1,
+      ...DEFAULT_PIXEL_EFFECTS,
+    };
     setPixelLayers(prev => [...prev.filter(l => !ids.includes(l.id)), merged]);
     setSelectedPixelLayerId(merged.id);
     setSelectedPixelLayerIds([merged.id]);
@@ -2974,6 +3070,8 @@ function EditorInner() {
                       return `url("data:image/svg+xml,${svg}") ${half} ${half}, crosshair`;
                     })() : "crosshair",
                     border: "2px solid #4f46e5", boxSizing: "border-box", imageRendering: "pixelated",
+                    opacity: selectedPixelLayerIds.includes(PIXEL_BASE_ID) ? pixelBaseEffects.opacity : pixelBaseEffects.opacity,
+                    filter: pixelEffectsCss(pixelBaseEffects),
                   }}
                   onMouseDown={ev => {
                     // Clicking the visible base image with the Move tool selects the base layer.
@@ -3184,6 +3282,7 @@ function EditorInner() {
                         id: Math.random().toString(36).slice(2),
                         name: `Camada ${Date.now().toString().slice(-4)}`,
                         canvas: clipCanvas, offsetX: cb.originX || 0, offsetY: cb.originY || 0, scale: 1,
+                        ...DEFAULT_PIXEL_EFFECTS,
                       };
                       setPixelLayers(prev => [...prev, newLayer]);
                       setSelectedPixelLayerId(newLayer.id);
@@ -3343,7 +3442,11 @@ function EditorInner() {
                           const c = el.getContext("2d")!; c.clearRect(0, 0, el.width, el.height); c.drawImage(layer.canvas, 0, 0);
                         }
                       }} width={layer.canvas.width} height={layer.canvas.height}
-                        style={{ display: "block", width: "100%", height: "100%", imageRendering: "pixelated", pointerEvents: "none" }} />
+                        style={{
+                          display: "block", width: "100%", height: "100%", imageRendering: "pixelated", pointerEvents: "none",
+                          opacity: getPixelEffects(layer).opacity,
+                          filter: pixelEffectsCss(layer),
+                        }} />
                       {pixelTool === "move" && selected && handles.map(h => (
                         <div key={h.key} title="Arraste para redimensionar" style={{ position: "absolute", left: h.left, right: h.right, top: h.top, bottom: h.bottom, width: 12, height: 12, border: "2px solid #2563eb", background: "#fff", borderRadius: 2, cursor: h.cursor, boxSizing: "border-box" }} />
                       ))}
@@ -3358,57 +3461,88 @@ function EditorInner() {
         </div>
         <div className="w-56 bg-white border-l border-gray-200 flex flex-col flex-shrink-0 overflow-y-auto text-xs">
           {pixelEditMode ? (
-            <div className="flex flex-col h-full">
-              {/* Instructions */}
-              <div className="p-3 flex flex-col gap-2 border-b border-gray-100">
-                <p className="font-semibold text-blue-900 text-xs uppercase tracking-wide">Edição de pixels</p>
-                <p className="text-gray-500 text-xs leading-relaxed">
-                  <b>Duplo clique</b> — aplica e sai<br/>
-                  <b>Ctrl+Z</b> — desfazer<br/>
-                  <b>Esc</b> — sair sem salvar
-                </p>
-                {pixelTool === "lasso" && (
-                  <div className="bg-blue-50 rounded-lg p-2 flex flex-col gap-1">
-                    <p className="text-blue-700 text-xs font-medium">Laço</p>
-                    <p className="text-blue-600 text-xs leading-relaxed">
-                      <b>Delete</b> — apaga seleção<br/>
-                      <b>Ctrl+C</b> — copia seleção<br/>
-                      <b>Ctrl+V</b> — cola como camada<br/>
-                      <b>Ctrl+Shift+I</b> — inverte
-                    </p>
-                    {lassoSelected && <p className="text-green-600 text-xs font-medium">✓ Seleção ativa</p>}
-                  </div>
-                )}
-                {pixelTool === "stamp" && (
-                  <div className="bg-blue-50 rounded-lg p-2">
-                    <p className="text-blue-700 text-xs font-medium mb-1">Carimbo clone</p>
-                    <p className="text-blue-600 text-xs leading-relaxed">
-                      <b>Alt+clique</b> — define fonte<br/>
-                      Arraste para clonar
-                    </p>
-                    {stampSourceRef.current
-                      ? <p className="text-green-600 text-xs mt-1">✓ Fonte definida</p>
-                      : <p className="text-orange-500 text-xs mt-1">Fonte não definida</p>
-                    }
-                  </div>
-                )}
-              </div>
-
-              {/* Layers panel — always visible */}
-              <div className="flex flex-col flex-1 overflow-y-auto" data-pixel-layers-panel="true">
+            <div className="flex flex-col h-full" data-pixel-layers-panel="true">
+              <div className="flex flex-col flex-1 overflow-y-auto">
                 <p className="px-3 py-2 font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-100" style={{fontSize:10}}>Camadas</p>
 
-                {/* Base image layer */}
+                {/* Pasted pixel layers are always above the base. The array is
+                    bottom→top, while the panel is displayed top→bottom. */}
+                {pixelLayers.slice().reverse().map(layer => {
+                  const active = selectedPixelLayerIds.includes(layer.id);
+                  return <div key={layer.id}
+                    draggable
+                    onDragStart={e => {
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("pixel-layer-id", layer.id);
+                    }}
+                    onDragOver={e => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                    }}
+                    onDrop={e => {
+                      e.preventDefault();
+                      const draggedId = e.dataTransfer.getData("pixel-layer-id");
+                      if (!draggedId || draggedId === layer.id) return;
+                      setPixelLayers(prev => {
+                        // Reorder in the same top→bottom order the user sees,
+                        // then convert back to the internal bottom→top order.
+                        const display = [...prev].reverse();
+                        const from = display.findIndex(l => l.id === draggedId);
+                        const to = display.findIndex(l => l.id === layer.id);
+                        if (from < 0 || to < 0) return prev;
+                        const [moved] = display.splice(from, 1);
+                        display.splice(to, 0, moved);
+                        return display.reverse();
+                      });
+                    }}
+                    className={`flex items-center gap-2 px-3 py-2 border-b border-gray-50 cursor-grab active:cursor-grabbing ${active ? "bg-indigo-50 text-indigo-700 font-semibold border-l-2 border-indigo-600" : "hover:bg-gray-50"}`}>
+                    <span className="text-gray-300 select-none" title="Arraste para reorganizar">⋮⋮</span>
+                    <canvas width={32} height={32} ref={el => {
+                      if (el) {
+                        const c=el.getContext("2d")!;
+                        c.clearRect(0,0,32,32);
+                        c.save();
+                        c.globalAlpha = getPixelEffects(layer).opacity;
+                        c.filter = pixelEffectsCss(layer);
+                        c.drawImage(layer.canvas,0,0,32,32);
+                        c.restore();
+                      }
+                    }} className="w-8 h-8 rounded bg-gray-100 border border-gray-200 flex-shrink-0" />
+                    <button
+                      onClick={e => {
+                        const shift=e.shiftKey;
+                        setSelectedPixelLayerIds(prev => shift
+                          ? (prev.includes(layer.id) ? prev.filter(id=>id!==layer.id) : [...prev,layer.id])
+                          : [layer.id]);
+                        setSelectedPixelLayerId(layer.id);
+                      }}
+                      onDoubleClick={() => enterPixelLayerEdit(layer.id)}
+                      className="text-left text-xs flex-1 truncate"
+                    >{layer.name}</button>
+                  </div>;
+                })}
+
+                {/* Base is permanently the bottom pixel layer. */}
                 <button onClick={e => {
                   const shift = (e as any).shiftKey;
                   setSelectedPixelLayerId(null);
-                  setSelectedPixelLayerIds(prev => shift ? (prev.includes(PIXEL_BASE_ID) ? prev.filter(id => id !== PIXEL_BASE_ID) : [...prev, PIXEL_BASE_ID]) : [PIXEL_BASE_ID]);
-                }} className={`w-full flex items-center gap-2 px-3 py-2 border-b border-gray-50 text-left ${selectedPixelLayerIds.includes(PIXEL_BASE_ID) ? "bg-indigo-50 text-indigo-700 font-semibold" : "hover:bg-gray-50"}`}>
+                  setSelectedPixelLayerIds(prev => shift
+                    ? (prev.includes(PIXEL_BASE_ID) ? prev.filter(id => id !== PIXEL_BASE_ID) : [...prev, PIXEL_BASE_ID])
+                    : [PIXEL_BASE_ID]);
+                }} className={`w-full flex items-center gap-2 px-3 py-2 border-b border-gray-50 text-left ${selectedPixelLayerIds.includes(PIXEL_BASE_ID) ? "bg-indigo-50 text-indigo-700 font-semibold border-l-2 border-indigo-600" : "hover:bg-gray-50"}`}>
+                  <span className="w-3 text-gray-200 flex-shrink-0">•</span>
                   <div className="w-8 h-8 rounded bg-gray-100 flex-shrink-0 overflow-hidden border border-gray-200">
                     <canvas ref={el => {
-                      if (el && pixelCanvasRef.current) {
+                      const source = pixelBaseCanvasRef.current || (pixelEditLayerIdRef.current ? null : pixelCanvasRef.current);
+                      if (el && source) {
                         el.width = 32; el.height = 32;
-                        const c = el.getContext("2d")!; c.clearRect(0,0,32,32); c.drawImage(pixelCanvasRef.current, 0, 0, 32, 32);
+                        const c = el.getContext("2d")!;
+                        c.clearRect(0,0,32,32);
+                        c.save();
+                        c.globalAlpha = pixelBaseEffects.opacity;
+                        c.filter = pixelEffectsCss(pixelBaseEffects);
+                        c.drawImage(source, 0, 0, 32, 32);
+                        c.restore();
                       }
                     }} width={32} height={32} style={{width:32,height:32}} />
                   </div>
@@ -3416,40 +3550,54 @@ function EditorInner() {
                   {selectedPixelLayerIds.includes(PIXEL_BASE_ID) && <div className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" title="Camada ativa" />}
                 </button>
 
-                {/* Camadas criadas pelo laço */}
-                {pixelLayers.map(layer => {
-                  const active = selectedPixelLayerIds.includes(layer.id);
-                  return <div key={layer.id}
-                    draggable
-                    onDragStart={e => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("pixel-layer-id", layer.id); }}
-                    onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
-                    onDrop={e => {
-                      e.preventDefault();
-                      const draggedId = e.dataTransfer.getData("pixel-layer-id");
-                      if (!draggedId || draggedId === layer.id) return;
-                      setPixelLayers(prev => {
-                        const from = prev.findIndex(l => l.id === draggedId);
-                        const to = prev.findIndex(l => l.id === layer.id);
-                        if (from < 0 || to < 0) return prev;
-                        const next = [...prev];
-                        const [moved] = next.splice(from, 1);
-                        next.splice(to, 0, moved);
-                        return next;
-                      });
-                    }}
-                    className={`flex items-center gap-2 px-3 py-2 border-b border-gray-50 cursor-grab active:cursor-grabbing ${active ? "bg-indigo-50 text-indigo-700" : "hover:bg-gray-50"}`}>
-                    <span className="text-gray-300 select-none" title="Arraste para reorganizar">⋮⋮</span>
-                    <canvas width={32} height={32} ref={el => { if (el) { const c=el.getContext("2d")!; c.clearRect(0,0,32,32); c.drawImage(layer.canvas,0,0,32,32); } }} className="w-8 h-8 rounded bg-gray-100 border border-gray-200 flex-shrink-0" />
-                    <button onClick={e => { const shift=e.shiftKey; setSelectedPixelLayerIds(prev => shift ? (prev.includes(layer.id) ? prev.filter(id=>id!==layer.id) : [...prev,layer.id]) : [layer.id]); setSelectedPixelLayerId(layer.id); }} onDoubleClick={() => enterPixelLayerEdit(layer.id)} className="text-left text-xs flex-1 truncate">{layer.name}</button>
-                  </div>;
-                })}
                 {selectedPixelLayerIds.length > 1 && (
                   <button onClick={() => mergePixelSelections()} className="mx-3 mt-2 py-1.5 rounded bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700">Mesclar camadas</button>
                 )}
                 {selectedPixelLayerIds.some(id => id !== PIXEL_BASE_ID) && (
                   <button onClick={deleteSelectedPixelLayers} className="mx-3 my-2 py-1.5 rounded border border-red-200 text-red-500 text-xs font-medium hover:bg-red-50">Excluir camada{selectedPixelLayerIds.filter(id => id !== PIXEL_BASE_ID).length > 1 ? "s" : ""}</button>
                 )}
-                {pixelLayers.length === 0 && <p className="text-gray-400 text-xs p-3 text-center">Ctrl+C e Ctrl+V para criar camadas</p>}
+
+                {/* Same core image effects available to regular image objects,
+                    applied only to the single selected pixel layer. */}
+                {(() => {
+                  if (selectedPixelLayerIds.length !== 1) return null;
+                  const selectedId = selectedPixelLayerIds[0];
+                  const selectedLayer = selectedId === PIXEL_BASE_ID ? null : pixelLayers.find(l => l.id === selectedId);
+                  const fx = selectedId === PIXEL_BASE_ID ? pixelBaseEffects : (selectedLayer ? getPixelEffects(selectedLayer) : null);
+                  if (!fx) return null;
+                  return (
+                    <div className="p-3 flex flex-col gap-3 border-t border-gray-200 mt-1">
+                      <p className="font-semibold text-gray-500 uppercase tracking-wide" style={{fontSize:10}}>Efeitos</p>
+
+                      <Sec title="Opacidade" />
+                      <SliderRow label="" value={Math.round(fx.opacity * 100)} min={0} max={100} unit="%" onChange={v => updateSelectedPixelEffects({ opacity: v / 100 })} />
+
+                      <Sec title="Saturação" />
+                      <SliderRow label="" value={Math.round(fx.saturation * 100)} min={-100} max={100} unit="%" onChange={v => updateSelectedPixelEffects({ saturation: v / 100 })} />
+                      <div className="flex justify-between text-gray-300 -mt-2" style={{fontSize:9}}><span>P&amp;B</span><span>Normal</span><span>Vivo</span></div>
+
+                      <Sec title="Blur" />
+                      <SliderRow label="" value={Math.round(fx.blur)} min={0} max={100} onChange={v => updateSelectedPixelEffects({ blur: v })} />
+
+                      <Sec title="Sombra" />
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">Ativar sombra</span>
+                        <button onClick={() => updateSelectedPixelEffects({ shadow: !fx.shadow })}
+                          className={`w-9 h-5 rounded-full transition ${fx.shadow ? "bg-indigo-500" : "bg-gray-200"}`}>
+                          <span className={`block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${fx.shadow ? "translate-x-4" : ""}`} />
+                        </button>
+                      </div>
+                      {fx.shadow && (
+                        <div className="flex flex-col gap-2">
+                          <ColorPicker value={fx.shadowColor} onChange={c => updateSelectedPixelEffects({ shadowColor: c })} label="Cor" />
+                          <SliderRow label="Blur" value={fx.shadowBlur} min={0} max={60} onChange={v => updateSelectedPixelEffects({ shadowBlur: v })} />
+                          <SliderRow label="X" value={fx.shadowX} min={-50} max={50} onChange={v => updateSelectedPixelEffects({ shadowX: v })} />
+                          <SliderRow label="Y" value={fx.shadowY} min={-50} max={50} onChange={v => updateSelectedPixelEffects({ shadowY: v })} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           ) : null}
