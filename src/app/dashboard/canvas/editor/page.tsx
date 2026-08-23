@@ -1676,6 +1676,8 @@ function EditorInner() {
       opacity: 1,
     });
     newPath.__uid = originalPathObj.__uid;
+    newPath.set({ selectable:true, evented:true, hasControls:true, hasBorders:true, padding: Math.max(Number(originalPathObj.padding || 0), 8) });
+    newPath.setCoords();
 
     const idx = canvas.getObjects().indexOf(originalPathObj);
     canvas.remove(originalPathObj);
@@ -2175,21 +2177,10 @@ function EditorInner() {
       canvas.on("object:scaling", (e: any) => {
         const obj = e.target;
         if (!obj) return;
+        // Do not rewrite dimensions while Fabric owns an active corner transform.
         if (obj.type === "textbox" || obj.type === "i-text") {
-          const newSize = Math.round(obj.fontSize * obj.scaleY);
+          const newSize = Math.round(obj.fontSize * Math.abs(obj.scaleY || 1));
           setSelFontSize(newSize);
-        }
-        if (obj.type === "rect") {
-          const storedRx = rectBeforeScale.current?.rx ?? (obj.rx || 0);
-          const sx = obj.scaleX || 1;
-          const sy = obj.scaleY || 1;
-          const newW = obj.width * sx;
-          const newH = obj.height * sy;
-          const maxRx = Math.min(newW, newH) / 2;
-          const newRx = Math.min(storedRx, maxRx);
-          obj.set({ width: newW, height: newH, rx: newRx, ry: newRx, scaleX: 1, scaleY: 1 });
-          rectBeforeScale.current = { rx: newRx, ry: newRx };
-          obj.setCoords();
         }
       });
 
@@ -2203,11 +2194,11 @@ function EditorInner() {
           canvas.requestRenderAll();
           syncSel(obj);
         }
-        if (obj.type === "rect") {
-          rectBeforeScale.current = { rx: obj.rx || 0, ry: obj.ry || 0 };
-          canvas.requestRenderAll();
-          syncSel(obj);
-        }
+        if (obj.type === "rect") rectBeforeScale.current = { rx: obj.rx || 0, ry: obj.ry || 0 };
+        obj.setCoords?.();
+        if (obj.__threeD?.enabled) refreshThreeDObject(obj);
+        canvas.requestRenderAll();
+        syncSel(obj);
       });
 
       canvas.on("mouse:down:before", (e: any) => {
@@ -2216,30 +2207,35 @@ function EditorInner() {
       });
 
       canvas.on("mouse:down", (e: any) => {
-        // Robust selection fallback. Custom renderers (3D/blur) can make Fabric's
-        // normal target detection feel inconsistent near visual edges. In Select
-        // mode, if Fabric did not resolve a target, pick the topmost object whose
-        // transformed bounding box contains the pointer.
-        if (activeToolRef.current === "select" && !isEditingNodesRef.current && !e.target) {
+        if (activeToolRef.current === "select" && !isEditingNodesRef.current && !(canvas as any)._currentTransform) {
           const pointer = canvas.getPointer(e.e);
-          const objects = canvas.getObjects().filter((o:any) =>
-            o && o.visible !== false && o.selectable !== false && o.evented !== false &&
-            !o.isControlHelper && !o.isEditPreview
-          );
+          const objects = canvas.getObjects().filter((o:any) => o && o.visible !== false && o.selectable !== false && o.evented !== false && !o.isControlHelper && !o.isEditPreview);
+          let preferredPath:any = null;
           for (let i = objects.length - 1; i >= 0; i--) {
             const o = objects[i];
+            if (o.type !== "path") continue;
             try {
               o.setCoords?.();
               const br = o.getBoundingRect(true, true);
-              const pad = o.__threeD?.enabled ? 10 : 4;
-              if (pointer.x >= br.left - pad && pointer.x <= br.left + br.width + pad &&
-                  pointer.y >= br.top - pad && pointer.y <= br.top + br.height + pad) {
-                canvas.setActiveObject(o);
-                syncSel(o);
-                canvas.requestRenderAll();
-                break;
-              }
+              const d3Pad = o.__threeD?.enabled ? Math.min(36, 10 + Number(o.__threeD?.depth || 0) * 0.12) : 0;
+              const pad = Math.max(12, Number(o.strokeWidth || 0) * 2 + 6, d3Pad);
+              if (pointer.x >= br.left - pad && pointer.x <= br.left + br.width + pad && pointer.y >= br.top - pad && pointer.y <= br.top + br.height + pad) { preferredPath = o; break; }
             } catch {}
+          }
+          if (preferredPath && preferredPath !== e.target) {
+            preferredPath.set({ selectable:true, evented:true, hasControls:true, hasBorders:true });
+            preferredPath.setCoords?.();
+            canvas.setActiveObject(preferredPath);
+            syncSel(preferredPath);
+            canvas.requestRenderAll();
+          } else if (!e.target) {
+            for (let i = objects.length - 1; i >= 0; i--) {
+              const o = objects[i];
+              try {
+                o.setCoords?.(); const br = o.getBoundingRect(true, true); const pad = o.__threeD?.enabled ? 10 : 4;
+                if (pointer.x >= br.left-pad && pointer.x <= br.left+br.width+pad && pointer.y >= br.top-pad && pointer.y <= br.top+br.height+pad) { canvas.setActiveObject(o); syncSel(o); canvas.requestRenderAll(); break; }
+              } catch {}
+            }
           }
         }
 
