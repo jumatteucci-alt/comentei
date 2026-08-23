@@ -342,10 +342,23 @@ function EditorInner() {
   const [pixelLayers, setPixelLayers] = useState<{
     id:string; name:string; canvas:HTMLCanvasElement; offsetX:number; offsetY:number; scale:number;
   }[]>([]);
+  const [selectedPixelLayerId, setSelectedPixelLayerId] = useState<string|null>(null);
   const pixelMoveLayerRef = useRef<{id:string;canvas:HTMLCanvasElement;startX:number;startY:number;offsetX:number;offsetY:number}|null>(null);
-  const pixelResizeLayerRef = useRef<{id:string;startX:number;startY:number;startScale:number;baseWidth:number;baseHeight:number}|null>(null);
+  const pixelResizeLayerRef = useRef<{id:string;handle:"nw"|"ne"|"sw"|"se";startX:number;startY:number;startScale:number;startOffsetX:number;startOffsetY:number;baseWidth:number;baseHeight:number}|null>(null);
   const pixelMovingRef = useRef(false);
   const pixelResizingRef = useRef(false);
+
+  // Always finish a drag even if the cursor is released outside the layer.
+  useEffect(() => {
+    const stopPixelInteraction = () => {
+      pixelMovingRef.current = false;
+      pixelResizingRef.current = false;
+      pixelMoveLayerRef.current = null;
+      pixelResizeLayerRef.current = null;
+    };
+    window.addEventListener("mouseup", stopPixelInteraction);
+    return () => window.removeEventListener("mouseup", stopPixelInteraction);
+  }, []);
 
   const [bgSolid, setBgSolid] = useState("#ffffff");
   const [bgGradient, setBgGradient] = useState<{stops:{color:string;opacity:number;pos:number}[];angle:number}|null>(null);
@@ -2910,7 +2923,7 @@ function EditorInner() {
                   autoFocus
                 />
 
-                {/* Pixel layers — native size at paste; can be moved and resized independently */}
+                {/* Pixel layers — independent, selectable, movable and resizable */}
                 {pixelLayers.map(layer => {
                   const naturalW = imgObj._element?.naturalWidth || imgObj.width || 100;
                   const scX = iw / naturalW;
@@ -2919,42 +2932,86 @@ function EditorInner() {
                   const layerScale = layer.scale || 1;
                   const displayW = layer.canvas.width * scX * layerScale;
                   const displayH = layer.canvas.height * scX * layerScale;
+                  const selected = selectedPixelLayerId === layer.id;
+                  const handles = [
+                    { key: "nw", left: -6, right: undefined, top: -6, bottom: undefined, cursor: "nwse-resize" },
+                    { key: "ne", left: undefined, right: -6, top: -6, bottom: undefined, cursor: "nesw-resize" },
+                    { key: "sw", left: -6, right: undefined, top: undefined, bottom: -6, cursor: "nesw-resize" },
+                    { key: "se", left: undefined, right: -6, top: undefined, bottom: -6, cursor: "nwse-resize" },
+                  ] as const;
+
+                  const selectLayer = () => {
+                    setSelectedPixelLayerId(layer.id);
+                    // DOM order is the z-order. Move the selected layer to the end so it is on top.
+                    setPixelLayers(prev => {
+                      const found = prev.find(l => l.id === layer.id);
+                      if (!found || prev[prev.length - 1]?.id === layer.id) return prev;
+                      return [...prev.filter(l => l.id !== layer.id), found];
+                    });
+                  };
 
                   return (
                     <div key={layer.id}
                       style={{ position: "absolute", left: il + offsetX * scX, top: it + offsetY * scX, width: displayW, height: displayH,
-                        cursor: pixelTool === "move" ? "grab" : "default", pointerEvents: pixelTool === "move" ? "auto" : "none",
-                        outline: pixelTool === "move" ? "1.5px dashed #3b82f6" : "none", boxSizing: "border-box" }}
+                        cursor: pixelTool === "move" ? (pixelMovingRef.current ? "grabbing" : "grab") : "default", pointerEvents: pixelTool === "move" ? "auto" : "none",
+                        outline: selected ? "1.5px solid #2563eb" : "none", boxSizing: "border-box", zIndex: selected ? 100 : 1 }}
                       onMouseDown={ev => {
                         if (pixelTool !== "move") return;
                         ev.preventDefault(); ev.stopPropagation();
+                        selectLayer();
+
                         const rect = ev.currentTarget.getBoundingClientRect();
-                        const handle = 16;
-                        if (ev.clientX >= rect.right - handle && ev.clientY >= rect.bottom - handle) {
-                          pixelResizeLayerRef.current = { id: layer.id, startX: ev.clientX, startY: ev.clientY, startScale: layerScale,
-                            baseWidth: layer.canvas.width * scX, baseHeight: layer.canvas.height * scX };
+                        const handleSize = 18;
+                        const nearLeft = ev.clientX <= rect.left + handleSize;
+                        const nearRight = ev.clientX >= rect.right - handleSize;
+                        const nearTop = ev.clientY <= rect.top + handleSize;
+                        const nearBottom = ev.clientY >= rect.bottom - handleSize;
+                        const handle = nearTop && nearLeft ? "nw" : nearTop && nearRight ? "ne" : nearBottom && nearLeft ? "sw" : nearBottom && nearRight ? "se" : null;
+
+                        if (handle) {
+                          pixelResizeLayerRef.current = {
+                            id: layer.id, handle, startX: ev.clientX, startY: ev.clientY,
+                            startScale: layerScale, startOffsetX: offsetX, startOffsetY: offsetY,
+                            baseWidth: layer.canvas.width * scX, baseHeight: layer.canvas.height * scX
+                          };
                           pixelResizingRef.current = true;
+                          pixelMovingRef.current = false;
                           return;
                         }
+
                         pixelMoveLayerRef.current = { id: layer.id, canvas: layer.canvas, startX: ev.clientX, startY: ev.clientY, offsetX, offsetY };
                         pixelMovingRef.current = true;
+                        pixelResizingRef.current = false;
                       }}
                       onMouseMove={ev => {
                         if (pixelResizingRef.current && pixelResizeLayerRef.current?.id === layer.id) {
                           const r = pixelResizeLayerRef.current;
-                          const dx = ev.clientX - r.startX, dy = ev.clientY - r.startY;
-                          const delta = Math.abs(dx) >= Math.abs(dy) ? dx : dy;
+                          const dx = ev.clientX - r.startX;
+                          const dy = ev.clientY - r.startY;
+                          let delta = 0;
+                          if (r.handle === "se") delta = Math.max(dx, dy);
+                          if (r.handle === "nw") delta = -Math.min(dx, dy);
+                          if (r.handle === "ne") delta = Math.max(-dx, dy);
+                          if (r.handle === "sw") delta = Math.max(dx, -dy);
                           const reference = Math.max(r.baseWidth, r.baseHeight, 1);
                           const nextScale = Math.max(0.05, r.startScale + delta / reference);
-                          setPixelLayers(prev => prev.map(l => l.id === layer.id ? { ...l, scale: nextScale } : l));
+                          const scaleDelta = nextScale - r.startScale;
+                          let nextOffsetX = r.startOffsetX;
+                          let nextOffsetY = r.startOffsetY;
+                          if (r.handle === "nw" || r.handle === "sw") nextOffsetX = r.startOffsetX - r.baseWidth * scaleDelta / scX;
+                          if (r.handle === "nw" || r.handle === "ne") nextOffsetY = r.startOffsetY - r.baseHeight * scaleDelta / scX;
+                          setPixelLayers(prev => prev.map(l => l.id === layer.id ? { ...l, scale: nextScale, offsetX: nextOffsetX, offsetY: nextOffsetY } : l));
                           return;
                         }
                         if (!pixelMovingRef.current || pixelMoveLayerRef.current?.id !== layer.id) return;
+                        const move = pixelMoveLayerRef.current;
                         const naturalW2 = imgObj._element?.naturalWidth || imgObj.width || 100;
                         const scaleX2 = iw / naturalW2;
-                        const dx = (ev.clientX - pixelMoveLayerRef.current.startX) / scaleX2;
-                        const dy = (ev.clientY - pixelMoveLayerRef.current.startY) / scaleX2;
-                        setPixelLayers(prev => prev.map(l => l.id === layer.id ? { ...l, offsetX: pixelMoveLayerRef.current!.offsetX + dx, offsetY: pixelMoveLayerRef.current!.offsetY + dy } : l));
+                        const dx = (ev.clientX - move.startX) / scaleX2;
+                        const dy = (ev.clientY - move.startY) / scaleX2;
+                        const nextOffsetX = move.offsetX + dx;
+                        const nextOffsetY = move.offsetY + dy;
+                        setPixelLayers(prev => prev.map(l => l.id === layer.id ? { ...l, offsetX: nextOffsetX, offsetY: nextOffsetY } : l));
                       }}
                       onMouseUp={() => { pixelMovingRef.current = false; pixelResizingRef.current = false; pixelMoveLayerRef.current = null; pixelResizeLayerRef.current = null; }}
                     >
@@ -2965,7 +3022,9 @@ function EditorInner() {
                         }
                       }} width={layer.canvas.width} height={layer.canvas.height}
                         style={{ display: "block", width: "100%", height: "100%", imageRendering: "pixelated", pointerEvents: "none" }} />
-                      {pixelTool === "move" && <div title="Arraste para redimensionar" style={{ position: "absolute", right: -5, bottom: -5, width: 12, height: 12, border: "2px solid #3b82f6", background: "#fff", borderRadius: 2, cursor: "nwse-resize" }} />}
+                      {pixelTool === "move" && selected && handles.map(h => (
+                        <div key={h.key} title="Arraste para redimensionar" style={{ position: "absolute", left: h.left, right: h.right, top: h.top, bottom: h.bottom, width: 12, height: 12, border: "2px solid #2563eb", background: "#fff", borderRadius: 2, cursor: h.cursor, boxSizing: "border-box" }} />
+                      ))}
                     </div>
                   );
                 })}
@@ -3040,7 +3099,10 @@ function EditorInner() {
                         }
                       }} width={32} height={32} style={{width:32,height:32}} />
                     </div>
-                    <span className="text-xs text-gray-700 flex-1 truncate">{layer.name}</span>
+                    <button onClick={() => setSelectedPixelLayerId(layer.id)} className={`text-left text-xs flex-1 truncate ${selectedPixelLayerId === layer.id ? "font-semibold text-blue-700" : "text-gray-700"}`}>{layer.name}</button>
+                    <button onClick={() => setPixelLayers(prev => { const i = prev.findIndex(l => l.id === layer.id); if (i < 0 || i === prev.length - 1) return prev; const copy = [...prev]; const [item] = copy.splice(i, 1); copy.push(item); return copy; })} className="text-gray-500 hover:text-blue-700 text-xs" title="Trazer para frente">↑</button>
+                    <button onClick={() => setPixelLayers(prev => { const i = prev.findIndex(l => l.id === layer.id); if (i <= 0) return prev; const copy = [...prev]; const [item] = copy.splice(i, 1); copy.splice(i - 1, 0, item); return copy; })} className="text-gray-500 hover:text-blue-700 text-xs" title="Subir uma camada">↥</button>
+                    <button onClick={() => setPixelLayers(prev => { const i = prev.findIndex(l => l.id === layer.id); if (i < 0 || i === 0) return prev; const copy = [...prev]; const [item] = copy.splice(i, 1); copy.unshift(item); return copy; })} className="text-gray-500 hover:text-blue-700 text-xs" title="Enviar para trás">↓</button>
                     <button onClick={() => {
                       const el = pixelCanvasRef.current;
                       if (!el) return;
@@ -3050,7 +3112,7 @@ function EditorInner() {
                       pixelSnapshotRef.current = ctx.getImageData(0, 0, el.width, el.height);
                       setPixelLayers(prev => prev.filter(l => l.id !== layer.id));
                     }} className="text-green-600 hover:text-green-800 text-xs flex-shrink-0" title="Mesclar">✓</button>
-                    <button onClick={() => setPixelLayers(prev => prev.filter(l => l.id !== layer.id))}
+                    <button onClick={() => { setSelectedPixelLayerId(prev => prev === layer.id ? null : prev); setPixelLayers(prev => prev.filter(l => l.id !== layer.id)); }}
                       className="text-red-400 hover:text-red-600 text-xs flex-shrink-0" title="Descartar">✕</button>
                   </div>
                 ))}
