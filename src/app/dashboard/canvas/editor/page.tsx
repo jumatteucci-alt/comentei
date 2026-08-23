@@ -1572,14 +1572,8 @@ function EditorInner() {
     const ctx = el.getContext("2d")!;
     const snap = pixelSnapshotRef.current;
     if (!snap) return;
+    // Só restaura o snapshot limpo, sem desenhar círculo
     ctx.putImageData(snap, 0, 0);
-    // Desenha círculo no centro como placeholder até o mouse mover
-    const cx = el.width / 2;
-    const cy = el.height / 2;
-    ctx.save();
-    ctx.beginPath(); ctx.arc(cx, cy, pixelBrushSize / 2, 0, Math.PI * 2);
-    ctx.strokeStyle = "#4f46e5"; ctx.lineWidth = 1.5; ctx.setLineDash([3, 2]);
-    ctx.stroke(); ctx.setLineDash([]); ctx.restore();
   }, [pixelTool, pixelEditMode]);
 
   useEffect(() => {
@@ -2809,6 +2803,14 @@ function EditorInner() {
                     ctx.beginPath(); ctx.arc(x, y, pixelBrushSize / 2, 0, Math.PI * 2);
                     ctx.strokeStyle = "#4f46e5"; ctx.lineWidth = 1.5; ctx.setLineDash([3, 2]);
                     ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+                  }}
+
+                  onMouseLeave={() => {
+                    if (pixelTool !== "eraser" || pixelDrawingRef.current) return;
+                    const el = pixelCanvasRef.current!;
+                    const ctx = el.getContext("2d")!;
+                    const snap = pixelSnapshotRef.current;
+                    if (snap) ctx.putImageData(snap, 0, 0);
                   }}
 
                   onKeyDown={ev => {
