@@ -1212,6 +1212,15 @@ function EditorInner() {
   };
   undoLastPenPointRef.current = undoLastPenPoint;
 
+  useEffect(() => {
+    // Quando pixelBrushSize muda, salva o estado atual antes do re-render
+    if (pixelEditMode && pixelCanvasRef.current) {
+      const el = pixelCanvasRef.current;
+      const ctx = el.getContext("2d")!;
+      pixelSnapshotRef.current = ctx.getImageData(0, 0, el.width, el.height);
+    }
+  }, [pixelBrushSize]);
+
   // Renderizador principal e controle de redimensionamento e Zoom
   useEffect(() => {
     if (!fabricLoaded || !canvasRef.current) return;
@@ -2595,17 +2604,21 @@ function EditorInner() {
               return (
                 <canvas
                   ref={el => {
+                    if (!el) return;
                     pixelCanvasRef.current = el;
-                    if (el && pixelEditImgRef.current) {
-                      const imgEl = pixelEditImgRef.current._element as HTMLImageElement;
-                      el.width  = imgEl.naturalWidth  || pixelEditImgRef.current.width;
-                      el.height = imgEl.naturalHeight || pixelEditImgRef.current.height;
-                      const ctx = el.getContext("2d")!;
-                      ctx.drawImage(imgEl, 0, 0);
-                      pixelUndoStack.current = [];
-                      pixelSnapshotRef.current = ctx.getImageData(0, 0, el.width, el.height);
-                      pixelUndoStack.current.push(ctx.getImageData(0, 0, el.width, el.height));
-                    }
+                    // Só inicializa se o canvas ainda não tem conteúdo
+                    if (el.width === 0 || el.dataset.initialized === "true") return;
+                    el.dataset.initialized = "true";
+                    const imgEl = pixelEditImgRef.current?._element as HTMLImageElement;
+                    if (!imgEl) return;
+                    el.width  = imgEl.naturalWidth  || pixelEditImgRef.current?.width || 100;
+                    el.height = imgEl.naturalHeight || pixelEditImgRef.current?.height || 100;
+                    const ctx = el.getContext("2d")!;
+                    ctx.drawImage(imgEl, 0, 0);
+                    pixelUndoStack.current = [];
+                    const snap = ctx.getImageData(0, 0, el.width, el.height);
+                    pixelSnapshotRef.current = snap;
+                    pixelUndoStack.current.push(snap);
                   }}
                   style={{
                     position: "absolute", left: il, top: it, width: iw, height: ih,
