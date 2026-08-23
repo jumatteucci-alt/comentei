@@ -489,6 +489,13 @@ function EditorInner() {
   const [selStrokeW, setSelStrokeW] = useState(0);
   const [selRadius, setSelRadius] = useState(0);
   const [selRotation, setSelRotation] = useState(0);
+  const [selScaleX, setSelScaleX] = useState(100);
+  const [selScaleY, setSelScaleY] = useState(100);
+  const [selSkewX, setSelSkewX] = useState(0);
+  const [selSkewY, setSelSkewY] = useState(0);
+  const [selFlipX, setSelFlipX] = useState(false);
+  const [selFlipY, setSelFlipY] = useState(false);
+  const [lockTransformRatio, setLockTransformRatio] = useState(false);
   const [selShadow, setSelShadow] = useState(false);
   const [selShadowColor, setSelShadowColor] = useState("rgba(0,0,0,0.5)");
   const [selShadowBlur, setSelShadowBlur] = useState(10);
@@ -705,6 +712,12 @@ function EditorInner() {
     setSelStrokeW(obj.strokeWidth || 0);
     setSelRadius(obj.rx || 0);
     setSelRotation(Math.round(obj.angle || 0));
+    setSelScaleX(Math.round(Math.abs(obj.scaleX ?? 1) * 100));
+    setSelScaleY(Math.round(Math.abs(obj.scaleY ?? 1) * 100));
+    setSelSkewX(Math.round(obj.skewX || 0));
+    setSelSkewY(Math.round(obj.skewY || 0));
+    setSelFlipX((obj.scaleX ?? 1) < 0);
+    setSelFlipY((obj.scaleY ?? 1) < 0);
     setSelFontSize(Math.round(obj.fontSize || 48));
     setSelFontFamily(obj.fontFamily || "Montserrat");
     setSelBold(obj.fontWeight === "bold");
@@ -2925,6 +2938,57 @@ function EditorInner() {
 
   const updateSaturation = (v: number) => applyImageAdjustments({ saturation: v });
 
+  const updateTransformScale = (axis: "x"|"y", value: number) => {
+    if (!fc.current || !sel || sel.type === "activeSelection") return;
+    const safe = Math.max(1, Math.min(1000, value));
+    const currentXSign = (sel.scaleX ?? 1) < 0 ? -1 : 1;
+    const currentYSign = (sel.scaleY ?? 1) < 0 ? -1 : 1;
+    if (axis === "x") {
+      setSelScaleX(safe);
+      sel.set("scaleX", currentXSign * safe / 100);
+      if (lockTransformRatio) {
+        setSelScaleY(safe);
+        sel.set("scaleY", currentYSign * safe / 100);
+      }
+    } else {
+      setSelScaleY(safe);
+      sel.set("scaleY", currentYSign * safe / 100);
+      if (lockTransformRatio) {
+        setSelScaleX(safe);
+        sel.set("scaleX", currentXSign * safe / 100);
+      }
+    }
+    sel.setCoords(); sel.dirty = true; fc.current.requestRenderAll();
+  };
+
+  const updateTransformSkew = (axis: "x"|"y", value: number) => {
+    if (!fc.current || !sel || sel.type === "activeSelection") return;
+    const safe = Math.max(-75, Math.min(75, value));
+    if (axis === "x") { setSelSkewX(safe); sel.set("skewX", safe); }
+    else { setSelSkewY(safe); sel.set("skewY", safe); }
+    sel.setCoords(); sel.dirty = true; fc.current.requestRenderAll();
+  };
+
+  const toggleTransformFlip = (axis: "x"|"y") => {
+    if (!fc.current || !sel || sel.type === "activeSelection") return;
+    if (axis === "x") {
+      const next = !(sel.scaleX < 0); setSelFlipX(next);
+      sel.set("scaleX", Math.abs(sel.scaleX || 1) * (next ? -1 : 1));
+    } else {
+      const next = !(sel.scaleY < 0); setSelFlipY(next);
+      sel.set("scaleY", Math.abs(sel.scaleY || 1) * (next ? -1 : 1));
+    }
+    sel.setCoords(); sel.dirty = true; fc.current.requestRenderAll();
+  };
+
+  const resetFreeTransform = () => {
+    if (!fc.current || !sel || sel.type === "activeSelection") return;
+    sel.set({ scaleX: 1, scaleY: 1, skewX: 0, skewY: 0, angle: 0 });
+    setSelScaleX(100); setSelScaleY(100); setSelSkewX(0); setSelSkewY(0);
+    setSelFlipX(false); setSelFlipY(false); setSelRotation(0);
+    sel.setCoords(); sel.dirty = true; fc.current.requestRenderAll();
+  };
+
   const resetImageAdjustments = () => {
     applyImageAdjustments({ brightness:0, contrast:0, exposure:0, saturation:0, temperature:0, tint:0, highlights:0, shadows:0, sharpness:0, vignette:0 });
   };
@@ -4519,8 +4583,25 @@ function EditorInner() {
 
               {sel.type !== "activeSelection" && (
                 <>
-                  <Sec title="Rotação" />
-                  <SliderRow label="" value={selRotation} min={0} max={360} unit="°" onChange={updateRotation} />
+                  <Sec title="Transformação livre" />
+                  <SliderRow label="Rotação" value={selRotation} min={0} max={360} unit="°" onChange={updateRotation} />
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Manter proporção</span>
+                    <button onClick={() => setLockTransformRatio(v => !v)} className={`w-9 h-5 rounded-full transition ${lockTransformRatio ? "bg-indigo-500" : "bg-gray-200"}`}>
+                      <span className={`block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${lockTransformRatio ? "translate-x-4" : ""}`} />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <NumRow label="Escala X (%)" value={selScaleX} min={1} max={1000} onChange={v => updateTransformScale("x", v)} />
+                    <NumRow label="Escala Y (%)" value={selScaleY} min={1} max={1000} onChange={v => updateTransformScale("y", v)} />
+                  </div>
+                  <SliderRow label="Inclinação X" value={selSkewX} min={-75} max={75} unit="°" onChange={v => updateTransformSkew("x", v)} />
+                  <SliderRow label="Inclinação Y" value={selSkewY} min={-75} max={75} unit="°" onChange={v => updateTransformSkew("y", v)} />
+                  <div className="grid grid-cols-2 gap-1">
+                    <button onClick={() => toggleTransformFlip("x")} className={`py-1.5 rounded-lg border text-xs transition ${selFlipX ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>↔ Flip horizontal</button>
+                    <button onClick={() => toggleTransformFlip("y")} className={`py-1.5 rounded-lg border text-xs transition ${selFlipY ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}>↕ Flip vertical</button>
+                  </div>
+                  <button onClick={resetFreeTransform} className="w-full py-1.5 rounded-lg border border-gray-200 text-gray-500 text-xs hover:bg-gray-50">Resetar transformação</button>
                 </>
               )}
 
