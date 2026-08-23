@@ -703,6 +703,61 @@ function EditorInner() {
     return () => document.removeEventListener("dblclick", onPixelEditDoubleClick);
   }, [pixelEditMode, pixelLayers]);
 
+  const deleteSelectedPixelLayers = () => {
+    const idsToDelete = selectedPixelLayerIds.filter(id => id !== PIXEL_BASE_ID);
+    if (!idsToDelete.length) return;
+
+    const deletingCurrentEditLayer = !!pixelEditLayerIdRef.current && idsToDelete.includes(pixelEditLayerIdRef.current);
+    setPixelLayers(prev => prev.filter(l => !idsToDelete.includes(l.id)));
+    setSelectedPixelLayerId(null);
+    setSelectedPixelLayerIds([PIXEL_BASE_ID]);
+
+    // If the layer currently open for pixel editing is deleted, keep the editor open
+    // and immediately switch the editable surface back to the base image.
+    if (deletingCurrentEditLayer) {
+      const baseObj = findPixelBaseObject();
+      pixelEditLayerIdRef.current = null;
+      pixelEditImgRef.current = baseObj;
+      const baseCanvas = pixelBaseCanvasRef.current || baseObj?.__pixelBaseCanvas || null;
+      const el = pixelCanvasRef.current;
+      if (el && (baseCanvas || baseObj?._element)) {
+        const source = baseCanvas || baseObj._element;
+        el.width = baseCanvas?.width || baseObj._element?.naturalWidth || baseObj.width || 1;
+        el.height = baseCanvas?.height || baseObj._element?.naturalHeight || baseObj.height || 1;
+        const ctx = el.getContext("2d", { willReadFrequently: true })!;
+        ctx.clearRect(0, 0, el.width, el.height);
+        ctx.drawImage(source, 0, 0);
+        const snap = ctx.getImageData(0, 0, el.width, el.height);
+        pixelSnapshotRef.current = snap;
+        pixelUndoStack.current = [snap];
+      }
+    }
+  };
+
+  // Pixel-edit keyboard shortcuts need their own live listener. The Fabric listener
+  // is created before pixelEditMode changes and otherwise keeps a stale false value.
+  useEffect(() => {
+    if (!pixelEditMode) return;
+    const onPixelEditKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        exitPixelEdit(false);
+        return;
+      }
+      if ((e.key === "Delete" || e.key === "Backspace") && lassoSelectionRef.current.length === 0) {
+        const hasSelectedPixelLayer = selectedPixelLayerIds.some(id => id !== PIXEL_BASE_ID);
+        if (hasSelectedPixelLayer) {
+          e.preventDefault();
+          e.stopPropagation();
+          deleteSelectedPixelLayers();
+        }
+      }
+    };
+    window.addEventListener("keydown", onPixelEditKeyDown, true);
+    return () => window.removeEventListener("keydown", onPixelEditKeyDown, true);
+  }, [pixelEditMode, selectedPixelLayerIds, pixelLayers]);
+
   const mergePixelSelections = () => {
     const ids = selectedPixelLayerIds;
     const hasBase = ids.includes(PIXEL_BASE_ID);
@@ -2921,6 +2976,16 @@ function EditorInner() {
                     border: "2px solid #4f46e5", boxSizing: "border-box", imageRendering: "pixelated",
                   }}
                   onMouseDown={ev => {
+                    // Clicking the visible base image with the Move tool selects the base layer.
+                    // Pasted layers sit above this canvas and stop propagation, so overlap still
+                    // selects the pasted layer instead.
+                    if (pixelTool === "move") {
+                      ev.preventDefault();
+                      ev.stopPropagation();
+                      setSelectedPixelLayerId(null);
+                      setSelectedPixelLayerIds([PIXEL_BASE_ID]);
+                      return;
+                    }
                     const el = pixelCanvasRef.current!;
                     const rect = el.getBoundingClientRect();
                     const sx = el.width / rect.width; const sy = el.height / rect.height;
@@ -3354,13 +3419,35 @@ function EditorInner() {
                 {/* Camadas criadas pelo laço */}
                 {pixelLayers.map(layer => {
                   const active = selectedPixelLayerIds.includes(layer.id);
-                  return <div key={layer.id} className={`flex items-center gap-2 px-3 py-2 border-b border-gray-50 ${active ? "bg-indigo-50 text-indigo-700" : "hover:bg-gray-50"}`}>
+                  return <div key={layer.id}
+                    draggable
+                    onDragStart={e => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("pixel-layer-id", layer.id); }}
+                    onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
+                    onDrop={e => {
+                      e.preventDefault();
+                      const draggedId = e.dataTransfer.getData("pixel-layer-id");
+                      if (!draggedId || draggedId === layer.id) return;
+                      setPixelLayers(prev => {
+                        const from = prev.findIndex(l => l.id === draggedId);
+                        const to = prev.findIndex(l => l.id === layer.id);
+                        if (from < 0 || to < 0) return prev;
+                        const next = [...prev];
+                        const [moved] = next.splice(from, 1);
+                        next.splice(to, 0, moved);
+                        return next;
+                      });
+                    }}
+                    className={`flex items-center gap-2 px-3 py-2 border-b border-gray-50 cursor-grab active:cursor-grabbing ${active ? "bg-indigo-50 text-indigo-700" : "hover:bg-gray-50"}`}>
+                    <span className="text-gray-300 select-none" title="Arraste para reorganizar">⋮⋮</span>
                     <canvas width={32} height={32} ref={el => { if (el) { const c=el.getContext("2d")!; c.clearRect(0,0,32,32); c.drawImage(layer.canvas,0,0,32,32); } }} className="w-8 h-8 rounded bg-gray-100 border border-gray-200 flex-shrink-0" />
                     <button onClick={e => { const shift=e.shiftKey; setSelectedPixelLayerIds(prev => shift ? (prev.includes(layer.id) ? prev.filter(id=>id!==layer.id) : [...prev,layer.id]) : [layer.id]); setSelectedPixelLayerId(layer.id); }} onDoubleClick={() => enterPixelLayerEdit(layer.id)} className="text-left text-xs flex-1 truncate">{layer.name}</button>
                   </div>;
                 })}
                 {selectedPixelLayerIds.length > 1 && (
-                  <button onClick={() => mergePixelSelections()} className="mx-3 my-2 py-1.5 rounded bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700">Mesclar camadas</button>
+                  <button onClick={() => mergePixelSelections()} className="mx-3 mt-2 py-1.5 rounded bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700">Mesclar camadas</button>
+                )}
+                {selectedPixelLayerIds.some(id => id !== PIXEL_BASE_ID) && (
+                  <button onClick={deleteSelectedPixelLayers} className="mx-3 my-2 py-1.5 rounded border border-red-200 text-red-500 text-xs font-medium hover:bg-red-50">Excluir camada{selectedPixelLayerIds.filter(id => id !== PIXEL_BASE_ID).length > 1 ? "s" : ""}</button>
                 )}
                 {pixelLayers.length === 0 && <p className="text-gray-400 text-xs p-3 text-center">Ctrl+C e Ctrl+V para criar camadas</p>}
               </div>
