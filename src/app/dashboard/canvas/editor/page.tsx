@@ -553,14 +553,80 @@ function EditorInner() {
     setPixelEditMode(true);
   };
 
-  const enterPixelLayerEdit = (layerId: string) => {
-    const layer = pixelLayers.find(l => l.id === layerId);
+  const commitCurrentPixelSurface = () => {
+    const el = pixelCanvasRef.current;
+    if (!el || !el.width || !el.height) return;
+
+    // Never persist the temporary lasso outline into the layer pixels.
+    const clean = document.createElement("canvas");
+    clean.width = el.width; clean.height = el.height;
+    const cleanCtx = clean.getContext("2d", { willReadFrequently: true })!;
+    if ((lassoSelected || lassoActiveRef.current) && pixelSnapshotRef.current) {
+      cleanCtx.putImageData(pixelSnapshotRef.current, 0, 0);
+    } else {
+      cleanCtx.drawImage(el, 0, 0);
+    }
+
+    const currentLayerId = pixelEditLayerIdRef.current;
+    if (currentLayerId) {
+      setPixelLayers(prev => prev.map(l => l.id === currentLayerId ? { ...l, canvas: clean } : l));
+    } else if (pixelEditImgRef.current || pixelBaseCanvasRef.current) {
+      pixelBaseCanvasRef.current = clean;
+    }
+  };
+
+  const resetPixelToolTransientState = () => {
+    lassoPointsRef.current = [];
+    lassoSelectionRef.current = [];
+    lassoActiveRef.current = false;
+    (lassoSelectionRef as any).inverted = false;
+    setLassoSelected(false);
+    stampSourceRef.current = null;
+    pixelDrawingRef.current = false;
+  };
+
+  const switchPixelEditTarget = (targetId: string) => {
+    if (!pixelEditMode) return;
+    const currentId = pixelEditLayerIdRef.current || PIXEL_BASE_ID;
+    if (currentId === targetId) {
+      setSelectedPixelLayerId(targetId === PIXEL_BASE_ID ? null : targetId);
+      setSelectedPixelLayerIds([targetId]);
+      return;
+    }
+
+    commitCurrentPixelSurface();
+    resetPixelToolTransientState();
+
+    if (targetId === PIXEL_BASE_ID) {
+      const baseObj = findPixelBaseObject();
+      pixelEditLayerIdRef.current = null;
+      pixelEditImgRef.current = baseObj;
+      setSelectedPixelLayerId(null);
+      setSelectedPixelLayerIds([PIXEL_BASE_ID]);
+      requestAnimationFrame(() => {
+        const el = pixelCanvasRef.current;
+        const source = pixelBaseCanvasRef.current || baseObj?._element;
+        if (!el || !source) return;
+        el.width = (source as any).width || baseObj?.width || 1;
+        el.height = (source as any).height || baseObj?.height || 1;
+        el.dataset.initialized = "true";
+        const ctx = el.getContext("2d", { willReadFrequently: true })!;
+        ctx.clearRect(0, 0, el.width, el.height);
+        ctx.drawImage(source, 0, 0, el.width, el.height);
+        const snap = ctx.getImageData(0, 0, el.width, el.height);
+        pixelSnapshotRef.current = snap;
+        pixelUndoStack.current = [snap];
+        el.focus();
+      });
+      return;
+    }
+
+    const layer = pixelLayers.find(l => l.id === targetId);
     if (!layer) return;
-    pixelEditLayerIdRef.current = layerId;
+    pixelEditLayerIdRef.current = targetId;
     pixelEditImgRef.current = null;
-    setSelectedPixelLayerId(layerId);
-    setSelectedPixelLayerIds([layerId]);
-    setPixelEditMode(true);
+    setSelectedPixelLayerId(targetId);
+    setSelectedPixelLayerIds([targetId]);
     requestAnimationFrame(() => {
       const el = pixelCanvasRef.current;
       if (!el) return;
@@ -572,7 +638,12 @@ function EditorInner() {
       const snap = ctx.getImageData(0, 0, el.width, el.height);
       pixelSnapshotRef.current = snap;
       pixelUndoStack.current = [snap];
+      el.focus();
     });
+  };
+
+  const enterPixelLayerEdit = (layerId: string) => {
+    switchPixelEditTarget(layerId);
   };
 
   const clearLassoVisual = () => {
@@ -601,7 +672,18 @@ function EditorInner() {
     if (fx.shadow) parts.push(`drop-shadow(${fx.shadowX}px ${fx.shadowY}px ${fx.shadowBlur}px ${fx.shadowColor})`);
     if (fx.glow) {
       const d = Math.max(0, fx.glowDistance);
-      parts.push(`drop-shadow(${d}px 0 ${fx.glowBlur}px ${fx.glowColor})`, `drop-shadow(${-d}px 0 ${fx.glowBlur}px ${fx.glowColor})`, `drop-shadow(0 ${d}px ${fx.glowBlur}px ${fx.glowColor})`, `drop-shadow(0 ${-d}px ${fx.glowBlur}px ${fx.glowColor})`);
+      const b = Math.max(0, fx.glowBlur);
+      // Glow is centered on the object. Distance expands the halo equally in all directions.
+      parts.push(`drop-shadow(0 0 ${b}px ${fx.glowColor})`);
+      if (d > 0) {
+        const q = d * 0.7071;
+        parts.push(
+          `drop-shadow(${d}px 0 ${b}px ${fx.glowColor})`, `drop-shadow(${-d}px 0 ${b}px ${fx.glowColor})`,
+          `drop-shadow(0 ${d}px ${b}px ${fx.glowColor})`, `drop-shadow(0 ${-d}px ${b}px ${fx.glowColor})`,
+          `drop-shadow(${q}px ${q}px ${b}px ${fx.glowColor})`, `drop-shadow(${-q}px ${q}px ${b}px ${fx.glowColor})`,
+          `drop-shadow(${q}px ${-q}px ${b}px ${fx.glowColor})`, `drop-shadow(${-q}px ${-q}px ${b}px ${fx.glowColor})`
+        );
+      }
     }
     return parts.length ? parts.join(" ") : "none";
   };
@@ -621,7 +703,17 @@ function EditorInner() {
     if (fx.shadow) filters.push(`drop-shadow(${fx.shadowX}px ${fx.shadowY}px ${fx.shadowBlur}px ${fx.shadowColor})`);
     if (fx.glow) {
       const d = Math.max(0, fx.glowDistance);
-      filters.push(`drop-shadow(${d}px 0 ${fx.glowBlur}px ${fx.glowColor})`, `drop-shadow(${-d}px 0 ${fx.glowBlur}px ${fx.glowColor})`, `drop-shadow(0 ${d}px ${fx.glowBlur}px ${fx.glowColor})`, `drop-shadow(0 ${-d}px ${fx.glowBlur}px ${fx.glowColor})`);
+      const b = Math.max(0, fx.glowBlur);
+      filters.push(`drop-shadow(0 0 ${b}px ${fx.glowColor})`);
+      if (d > 0) {
+        const q = d * 0.7071;
+        filters.push(
+          `drop-shadow(${d}px 0 ${b}px ${fx.glowColor})`, `drop-shadow(${-d}px 0 ${b}px ${fx.glowColor})`,
+          `drop-shadow(0 ${d}px ${b}px ${fx.glowColor})`, `drop-shadow(0 ${-d}px ${b}px ${fx.glowColor})`,
+          `drop-shadow(${q}px ${q}px ${b}px ${fx.glowColor})`, `drop-shadow(${-q}px ${q}px ${b}px ${fx.glowColor})`,
+          `drop-shadow(${q}px ${-q}px ${b}px ${fx.glowColor})`, `drop-shadow(${-q}px ${-q}px ${b}px ${fx.glowColor})`
+        );
+      }
     }
     ctx.filter = filters.length ? filters.join(" ") : "none";
     ctx.drawImage(source, x, y, w, h);
@@ -2144,7 +2236,10 @@ function EditorInner() {
   const applyGlow = (color: string, blur: number, distance: number) => {
     if (!fc.current || !sel || !selGlow) return;
     sel.__glowEnabled = true; sel.__glowColor = color; sel.__glowBlur = blur; sel.__glowDistance = distance;
-    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur, offsetX: distance, offsetY: distance }));
+    // Fabric has no native spread radius. Keep the glow centered and use distance
+    // as extra halo reach, never as an X/Y displacement like a shadow.
+    const effectiveBlur = Math.max(0, blur + distance);
+    sel.set("shadow", new (window as any).fabric.Shadow({ color, blur: effectiveBlur, offsetX: 0, offsetY: 0 }));
     fc.current.requestRenderAll();
   };
   const updateGlow = (on: boolean) => {
@@ -2153,7 +2248,8 @@ function EditorInner() {
     sel.__glowEnabled = on; sel.__glowColor = selGlowColor; sel.__glowBlur = selGlowBlur; sel.__glowDistance = selGlowDistance;
     if (on) {
       setSelShadow(false);
-      sel.set("shadow", new (window as any).fabric.Shadow({ color: selGlowColor, blur: selGlowBlur, offsetX: selGlowDistance, offsetY: selGlowDistance }));
+      const effectiveBlur = Math.max(0, selGlowBlur + selGlowDistance);
+      sel.set("shadow", new (window as any).fabric.Shadow({ color: selGlowColor, blur: effectiveBlur, offsetX: 0, offsetY: 0 }));
     } else sel.set("shadow", null);
     fc.current.requestRenderAll();
   };
@@ -3070,15 +3166,19 @@ function EditorInner() {
             {pixelEditMode && (pixelEditImgRef.current || pixelEditLayerIdRef.current) && (() => {
               const imgObj = pixelEditImgRef.current;
               const editLayer = pixelEditLayerIdRef.current ? pixelLayers.find(l => l.id === pixelEditLayerIdRef.current) : null;
+              const baseObj = imgObj || findPixelBaseObject();
               const z = zoom / 100;
-              const naturalW = editLayer?.canvas.width || imgObj?._element?.naturalWidth || imgObj?.width || 100;
-              const naturalH = editLayer?.canvas.height || imgObj?._element?.naturalHeight || imgObj?.height || 100;
-              const scaleX = editLayer ? (editLayer.scale || 1) : (imgObj?.scaleX || 1);
-              const scaleY = editLayer ? (editLayer.scale || 1) : (imgObj?.scaleY || 1);
-              const iw = naturalW * scaleX * z;
-              const ih = naturalH * scaleY * z;
-              const il = (editLayer ? editLayer.offsetX : imgObj?.left || 0) * z;
-              const it = (editLayer ? editLayer.offsetY : imgObj?.top || 0) * z;
+              const baseNaturalW = pixelBaseCanvasRef.current?.width || baseObj?._element?.naturalWidth || baseObj?.width || 100;
+              const baseNaturalH = pixelBaseCanvasRef.current?.height || baseObj?._element?.naturalHeight || baseObj?.height || 100;
+              const baseScaleX = (baseObj?.scaleX || 1) * z;
+              const baseScaleY = (baseObj?.scaleY || 1) * z;
+              const baseLeft = (baseObj?.left || 0) * z;
+              const baseTop = (baseObj?.top || 0) * z;
+              const iw = editLayer ? editLayer.canvas.width * (editLayer.scale || 1) * baseScaleX : baseNaturalW * baseScaleX;
+              const ih = editLayer ? editLayer.canvas.height * (editLayer.scale || 1) * baseScaleY : baseNaturalH * baseScaleY;
+              const il = editLayer ? baseLeft + (editLayer.offsetX || 0) * baseScaleX : baseLeft;
+              const it = editLayer ? baseTop + (editLayer.offsetY || 0) * baseScaleY : baseTop;
+              const activeLayerZ = editLayer ? Math.max(1, pixelLayers.findIndex(l => l.id === editLayer.id) + 1) : 0;
               return (
                 <>
                 <canvas
@@ -3108,15 +3208,16 @@ function EditorInner() {
                   style={{
                     position: "absolute", left: il, top: it, width: iw, height: ih,
                     cursor: pixelTool === "eraser" ? (() => {
-                      const naturalW = editLayer?.canvas.width || pixelEditImgRef.current?._element?.naturalWidth || 100;
-                      const displaySize = Math.max(Math.round(pixelBrushSize * iw / naturalW), 6);
+                      const activeNaturalW = editLayer?.canvas.width || pixelBaseCanvasRef.current?.width || baseNaturalW || 100;
+                      const displaySize = Math.max(Math.round(pixelBrushSize * iw / activeNaturalW), 6);
                       const half = Math.round(displaySize / 2);
                       const svg = `%3Csvg xmlns='http://www.w3.org/2000/svg' width='${displaySize}' height='${displaySize}' viewBox='0 0 ${displaySize} ${displaySize}'%3E%3Ccircle cx='${half}' cy='${half}' r='${half - 1}' fill='none' stroke='%234f46e5' stroke-width='1.5' stroke-dasharray='4 3'/%3E%3C/svg%3E`;
                       return `url("data:image/svg+xml,${svg}") ${half} ${half}, crosshair`;
                     })() : "crosshair",
                     border: "2px solid #4f46e5", boxSizing: "border-box", imageRendering: "pixelated",
-                    opacity: selectedPixelLayerIds.includes(PIXEL_BASE_ID) ? pixelBaseEffects.opacity : pixelBaseEffects.opacity,
-                    filter: pixelEffectsCss(pixelBaseEffects),
+                    zIndex: activeLayerZ,
+                    opacity: getPixelEffects(editLayer || pixelBaseEffects).opacity,
+                    filter: pixelEffectsCss(editLayer || pixelBaseEffects),
                   }}
                   onMouseDown={ev => {
                     // Clicking the visible base image with the Move tool selects the base layer.
@@ -3125,8 +3226,7 @@ function EditorInner() {
                     if (pixelTool === "move") {
                       ev.preventDefault();
                       ev.stopPropagation();
-                      setSelectedPixelLayerId(null);
-                      setSelectedPixelLayerIds([PIXEL_BASE_ID]);
+                      switchPixelEditTarget(PIXEL_BASE_ID);
                       return;
                     }
                     const el = pixelCanvasRef.current!;
@@ -3394,15 +3494,38 @@ function EditorInner() {
                   autoFocus
                 />
 
+                {/* When a pasted layer is the editable target, keep the base visible behind it. */}
+                {editLayer && pixelBaseCanvasRef.current && (
+                  <canvas
+                    width={pixelBaseCanvasRef.current.width}
+                    height={pixelBaseCanvasRef.current.height}
+                    ref={el => {
+                      if (!el || !pixelBaseCanvasRef.current) return;
+                      el.width = pixelBaseCanvasRef.current.width;
+                      el.height = pixelBaseCanvasRef.current.height;
+                      const c = el.getContext("2d")!;
+                      c.clearRect(0, 0, el.width, el.height);
+                      c.drawImage(pixelBaseCanvasRef.current, 0, 0);
+                    }}
+                    style={{
+                      position: "absolute", left: baseLeft, top: baseTop,
+                      width: baseNaturalW * baseScaleX, height: baseNaturalH * baseScaleY,
+                      imageRendering: "pixelated", pointerEvents: "none", zIndex: 0,
+                      opacity: pixelBaseEffects.opacity, filter: pixelEffectsCss(pixelBaseEffects),
+                    }}
+                  />
+                )}
+
                 {/* Pixel layers — independent, selectable, movable and resizable */}
-                {pixelLayers.map((layer, layerIndex) => {
-                  const naturalW = imgObj?._element?.naturalWidth || imgObj?.width || 100;
-                  const scX = editLayer ? z : iw / naturalW;
+                {pixelLayers.filter(layer => layer.id !== pixelEditLayerIdRef.current).map((layer) => {
+                  const layerIndex = pixelLayers.findIndex(l => l.id === layer.id);
+                  const scX = baseScaleX;
+                  const scY = baseScaleY;
                   const offsetX = layer.offsetX || 0;
                   const offsetY = layer.offsetY || 0;
                   const layerScale = layer.scale || 1;
                   const displayW = layer.canvas.width * scX * layerScale;
-                  const displayH = layer.canvas.height * scX * layerScale;
+                  const displayH = layer.canvas.height * scY * layerScale;
                   const selected = selectedPixelLayerId === layer.id;
                   const handles = [
                     { key: "nw", left: -6, right: undefined, top: -6, bottom: undefined, cursor: "nwse-resize" },
@@ -3412,13 +3535,12 @@ function EditorInner() {
                   ] as const;
 
                   const selectLayer = () => {
-                    setSelectedPixelLayerId(layer.id);
-                    setSelectedPixelLayerIds([layer.id]);
+                    switchPixelEditTarget(layer.id);
                   };
 
                   return (
                     <div key={layer.id}
-                      style={{ position: "absolute", left: il + offsetX * scX, top: it + offsetY * scX, width: displayW, height: displayH,
+                      style={{ position: "absolute", left: baseLeft + offsetX * scX, top: baseTop + offsetY * scY, width: displayW, height: displayH,
                         cursor: pixelTool === "move" ? (pixelMovingRef.current ? "grabbing" : "grab") : "default", pointerEvents: pixelTool === "move" ? "auto" : "none",
                         outline: selected ? "1.5px solid #2563eb" : "none", boxSizing: "border-box", zIndex: layerIndex + 1 }}
                       onMouseDown={ev => {
@@ -3438,7 +3560,7 @@ function EditorInner() {
                           pixelResizeLayerRef.current = {
                             id: layer.id, handle, startX: ev.clientX, startY: ev.clientY,
                             startScale: layerScale, startOffsetX: offsetX, startOffsetY: offsetY,
-                            baseWidth: layer.canvas.width * scX, baseHeight: layer.canvas.height * scX
+                            baseWidth: layer.canvas.width * scX, baseHeight: layer.canvas.height * scY
                           };
                           pixelResizingRef.current = true;
                           pixelMovingRef.current = false;
@@ -3465,16 +3587,14 @@ function EditorInner() {
                           let nextOffsetX = r.startOffsetX;
                           let nextOffsetY = r.startOffsetY;
                           if (r.handle === "nw" || r.handle === "sw") nextOffsetX = r.startOffsetX - r.baseWidth * scaleDelta / scX;
-                          if (r.handle === "nw" || r.handle === "ne") nextOffsetY = r.startOffsetY - r.baseHeight * scaleDelta / scX;
+                          if (r.handle === "nw" || r.handle === "ne") nextOffsetY = r.startOffsetY - r.baseHeight * scaleDelta / scY;
                           setPixelLayers(prev => prev.map(l => l.id === layer.id ? { ...l, scale: nextScale, offsetX: nextOffsetX, offsetY: nextOffsetY } : l));
                           return;
                         }
                         if (!pixelMovingRef.current || pixelMoveLayerRef.current?.id !== layer.id) return;
                         const move = pixelMoveLayerRef.current;
-                        const naturalW2 = editLayer?.canvas.width || imgObj?._element?.naturalWidth || imgObj?.width || 100;
-                        const scaleX2 = editLayer ? z : iw / naturalW2;
-                        const dx = (ev.clientX - move.startX) / scaleX2;
-                        const dy = (ev.clientY - move.startY) / scaleX2;
+                        const dx = (ev.clientX - move.startX) / baseScaleX;
+                        const dy = (ev.clientY - move.startY) / baseScaleY;
                         const nextOffsetX = move.offsetX + dx;
                         const nextOffsetY = move.offsetY + dy;
                         setPixelLayers(prev => prev.map(l => l.id === layer.id ? { ...l, offsetX: nextOffsetX, offsetY: nextOffsetY } : l));
@@ -3556,10 +3676,12 @@ function EditorInner() {
                     <button
                       onClick={e => {
                         const shift=e.shiftKey;
-                        setSelectedPixelLayerIds(prev => shift
-                          ? (prev.includes(layer.id) ? prev.filter(id=>id!==layer.id) : [...prev,layer.id])
-                          : [layer.id]);
-                        setSelectedPixelLayerId(layer.id);
+                        if (shift) {
+                          setSelectedPixelLayerIds(prev => prev.includes(layer.id) ? prev.filter(id=>id!==layer.id) : [...prev,layer.id]);
+                          setSelectedPixelLayerId(layer.id);
+                        } else {
+                          switchPixelEditTarget(layer.id);
+                        }
                       }}
                       onDoubleClick={() => enterPixelLayerEdit(layer.id)}
                       className="text-left text-xs flex-1 truncate"
@@ -3570,10 +3692,12 @@ function EditorInner() {
                 {/* Base is permanently the bottom pixel layer. */}
                 <button onClick={e => {
                   const shift = (e as any).shiftKey;
-                  setSelectedPixelLayerId(null);
-                  setSelectedPixelLayerIds(prev => shift
-                    ? (prev.includes(PIXEL_BASE_ID) ? prev.filter(id => id !== PIXEL_BASE_ID) : [...prev, PIXEL_BASE_ID])
-                    : [PIXEL_BASE_ID]);
+                  if (shift) {
+                    setSelectedPixelLayerId(null);
+                    setSelectedPixelLayerIds(prev => prev.includes(PIXEL_BASE_ID) ? prev.filter(id => id !== PIXEL_BASE_ID) : [...prev, PIXEL_BASE_ID]);
+                  } else {
+                    switchPixelEditTarget(PIXEL_BASE_ID);
+                  }
                 }} className={`w-full flex items-center gap-2 px-3 py-2 border-b border-gray-50 text-left ${selectedPixelLayerIds.includes(PIXEL_BASE_ID) ? "bg-indigo-50 text-indigo-700 font-semibold border-l-2 border-indigo-600" : "hover:bg-gray-50"}`}>
                   <span className="w-3 text-gray-200 flex-shrink-0">•</span>
                   <div className="w-8 h-8 rounded bg-gray-100 flex-shrink-0 overflow-hidden border border-gray-200">
