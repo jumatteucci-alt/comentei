@@ -343,6 +343,8 @@ function EditorInner() {
     id:string; name:string; canvas:HTMLCanvasElement; offsetX:number; offsetY:number; scale:number;
   }[]>([]);
   const [selectedPixelLayerId, setSelectedPixelLayerId] = useState<string|null>(null);
+  const [selectedPixelLayerIds, setSelectedPixelLayerIds] = useState<string[]>([]);
+  const pixelEditLayerIdRef = useRef<string|null>(null);
   const pixelMoveLayerRef = useRef<{id:string;canvas:HTMLCanvasElement;startX:number;startY:number;offsetX:number;offsetY:number}|null>(null);
   const pixelResizeLayerRef = useRef<{id:string;handle:"nw"|"ne"|"sw"|"se";startX:number;startY:number;startScale:number;startOffsetX:number;startOffsetY:number;baseWidth:number;baseHeight:number}|null>(null);
   const pixelMovingRef = useRef(false);
@@ -503,9 +505,44 @@ function EditorInner() {
     setPixelEditMode(true);
   };
 
+  const enterPixelLayerEdit = (layerId: string) => {
+    const layer = pixelLayers.find(l => l.id === layerId);
+    if (!layer) return;
+    pixelEditLayerIdRef.current = layerId;
+    pixelEditImgRef.current = null;
+    setSelectedPixelLayerId(layerId);
+    setSelectedPixelLayerIds([layerId]);
+    setPixelEditMode(true);
+    requestAnimationFrame(() => {
+      const el = pixelCanvasRef.current;
+      if (!el) return;
+      el.width = layer.canvas.width; el.height = layer.canvas.height;
+      el.dataset.initialized = "true";
+      const ctx = el.getContext("2d")!;
+      ctx.clearRect(0, 0, el.width, el.height);
+      ctx.drawImage(layer.canvas, 0, 0);
+      const snap = ctx.getImageData(0, 0, el.width, el.height);
+      pixelSnapshotRef.current = snap;
+      pixelUndoStack.current = [snap];
+    });
+  };
+
   const exitPixelEdit = (save = true) => {
     const imgObj = pixelEditImgRef.current;
     const pCanvas = pixelCanvasRef.current;
+    const layerId = pixelEditLayerIdRef.current;
+    if (layerId) {
+      if (save && pCanvas) {
+        const nextCanvas = document.createElement("canvas");
+        nextCanvas.width = pCanvas.width; nextCanvas.height = pCanvas.height;
+        nextCanvas.getContext("2d")!.drawImage(pCanvas, 0, 0);
+        setPixelLayers(prev => prev.map(l => l.id === layerId ? { ...l, canvas: nextCanvas } : l));
+      }
+      setPixelEditMode(false); pixelEditLayerIdRef.current = null; pixelCanvasRef.current = null;
+      stampSourceRef.current = null; lassoPointsRef.current = []; lassoSelectionRef.current = [];
+      lassoActiveRef.current = false; pixelUndoStack.current = []; setLassoSelected(false);
+      return;
+    }
     if (!fc.current || !imgObj) { setPixelEditMode(false); return; }
     if (save && pCanvas) {
       const fabric = (window as any).fabric;
@@ -529,6 +566,7 @@ function EditorInner() {
     }
     setPixelEditMode(false);
     pixelEditImgRef.current = null;
+    pixelEditLayerIdRef.current = null;
     stampSourceRef.current = null;
     lassoPointsRef.current = [];
     lassoSelectionRef.current = [];
@@ -2624,28 +2662,37 @@ function EditorInner() {
             ) : <canvas ref={canvasRef} />}
 
             {/* Pixel editor overlay */}
-            {pixelEditMode && pixelEditImgRef.current && (() => {
+            {pixelEditMode && (pixelEditImgRef.current || pixelEditLayerIdRef.current) && (() => {
               const imgObj = pixelEditImgRef.current;
+              const editLayer = pixelEditLayerIdRef.current ? pixelLayers.find(l => l.id === pixelEditLayerIdRef.current) : null;
               const z = zoom / 100;
-              const iw = (imgObj.width || 0) * (imgObj.scaleX || 1) * z;
-              const ih = (imgObj.height || 0) * (imgObj.scaleY || 1) * z;
-              const il = (imgObj.left || 0) * z;
-              const it = (imgObj.top || 0) * z;
-              return <>
+              const naturalW = editLayer?.canvas.width || imgObj?._element?.naturalWidth || imgObj?.width || 100;
+              const naturalH = editLayer?.canvas.height || imgObj?._element?.naturalHeight || imgObj?.height || 100;
+              const scaleX = editLayer ? (editLayer.scale || 1) : (imgObj?.scaleX || 1);
+              const scaleY = editLayer ? (editLayer.scale || 1) : (imgObj?.scaleY || 1);
+              const iw = naturalW * scaleX * z;
+              const ih = naturalH * scaleY * z;
+              const il = (editLayer ? editLayer.offsetX : imgObj?.left || 0) * z;
+              const it = (editLayer ? editLayer.offsetY : imgObj?.top || 0) * z;
               return (
+                <>
                 <canvas
                   ref={el => {
                     if (!el) return;
                     pixelCanvasRef.current = el;
-                    // Só inicializa se o canvas ainda não tem conteúdo
-                    if (el.width === 0 || el.dataset.initialized === "true") return;
+                    if (el.dataset.initialized === "true") return;
                     el.dataset.initialized = "true";
-                    const imgEl = pixelEditImgRef.current?._element as HTMLImageElement;
-                    if (!imgEl) return;
-                    el.width  = imgEl.naturalWidth  || pixelEditImgRef.current?.width || 100;
-                    el.height = imgEl.naturalHeight || pixelEditImgRef.current?.height || 100;
                     const ctx = el.getContext("2d")!;
-                    ctx.drawImage(imgEl, 0, 0);
+                    if (editLayer) {
+                      el.width = editLayer.canvas.width; el.height = editLayer.canvas.height;
+                      ctx.drawImage(editLayer.canvas, 0, 0);
+                    } else {
+                      const imgEl = pixelEditImgRef.current?._element as HTMLImageElement;
+                      if (!imgEl) return;
+                      el.width = imgEl.naturalWidth || pixelEditImgRef.current?.width || 100;
+                      el.height = imgEl.naturalHeight || pixelEditImgRef.current?.height || 100;
+                      ctx.drawImage(imgEl, 0, 0);
+                    }
                     pixelUndoStack.current = [];
                     const snap = ctx.getImageData(0, 0, el.width, el.height);
                     pixelSnapshotRef.current = snap;
@@ -2654,7 +2701,7 @@ function EditorInner() {
                   style={{
                     position: "absolute", left: il, top: it, width: iw, height: ih,
                     cursor: pixelTool === "eraser" ? (() => {
-                      const naturalW = pixelEditImgRef.current?._element?.naturalWidth || 100;
+                      const naturalW = editLayer?.canvas.width || pixelEditImgRef.current?._element?.naturalWidth || 100;
                       const displaySize = Math.max(Math.round(pixelBrushSize * iw / naturalW), 6);
                       const half = Math.round(displaySize / 2);
                       const svg = `%3Csvg xmlns='http://www.w3.org/2000/svg' width='${displaySize}' height='${displaySize}' viewBox='0 0 ${displaySize} ${displaySize}'%3E%3Ccircle cx='${half}' cy='${half}' r='${half - 1}' fill='none' stroke='%234f46e5' stroke-width='1.5' stroke-dasharray='4 3'/%3E%3C/svg%3E`;
@@ -2862,6 +2909,8 @@ function EditorInner() {
                         canvas: clipCanvas, offsetX: cb.originX || 0, offsetY: cb.originY || 0, scale: 1,
                       };
                       setPixelLayers(prev => [...prev, newLayer]);
+                      setSelectedPixelLayerId(newLayer.id);
+                      setSelectedPixelLayerIds([newLayer.id]);
                       return;
                     }
 
@@ -2926,7 +2975,7 @@ function EditorInner() {
                 {/* Pixel layers — independent, selectable, movable and resizable */}
                 {pixelLayers.map(layer => {
                   const naturalW = imgObj._element?.naturalWidth || imgObj.width || 100;
-                  const scX = iw / naturalW;
+                  const scX = editLayer ? z : iw / naturalW;
                   const offsetX = layer.offsetX || 0;
                   const offsetY = layer.offsetY || 0;
                   const layerScale = layer.scale || 1;
@@ -3005,8 +3054,8 @@ function EditorInner() {
                         }
                         if (!pixelMovingRef.current || pixelMoveLayerRef.current?.id !== layer.id) return;
                         const move = pixelMoveLayerRef.current;
-                        const naturalW2 = imgObj._element?.naturalWidth || imgObj.width || 100;
-                        const scaleX2 = iw / naturalW2;
+                        const naturalW2 = editLayer?.canvas.width || imgObj?._element?.naturalWidth || imgObj?.width || 100;
+                        const scaleX2 = editLayer ? z : iw / naturalW2;
                         const dx = (ev.clientX - move.startX) / scaleX2;
                         const dy = (ev.clientY - move.startY) / scaleX2;
                         const nextOffsetX = move.offsetX + dx;
@@ -3028,7 +3077,8 @@ function EditorInner() {
                     </div>
                   );
                 })}
-            </>;
+                </>
+              );
             })()}
           </div>
         </div>
@@ -3088,38 +3138,27 @@ function EditorInner() {
                   <div className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" title="Camada ativa" />
                 </div>
 
-                {/* Pasted layers */}
-                {pixelLayers.map((layer, i) => (
-                  <div key={layer.id} className="flex items-center gap-2 px-3 py-2 border-b border-gray-50 hover:bg-gray-50">
-                    <div className="w-8 h-8 rounded bg-gray-100 flex-shrink-0 overflow-hidden border border-gray-200">
-                      <canvas ref={el => {
-                        if (el && layer.canvas) {
-                          el.width = 32; el.height = 32;
-                          el.getContext("2d")!.drawImage(layer.canvas, 0, 0, 32, 32);
-                        }
-                      }} width={32} height={32} style={{width:32,height:32}} />
-                    </div>
-                    <button onClick={() => setSelectedPixelLayerId(layer.id)} className={`text-left text-xs flex-1 truncate ${selectedPixelLayerId === layer.id ? "font-semibold text-blue-700" : "text-gray-700"}`}>{layer.name}</button>
-                    <button onClick={() => setPixelLayers(prev => { const i = prev.findIndex(l => l.id === layer.id); if (i < 0 || i === prev.length - 1) return prev; const copy = [...prev]; const [item] = copy.splice(i, 1); copy.push(item); return copy; })} className="text-gray-500 hover:text-blue-700 text-xs" title="Trazer para frente">↑</button>
-                    <button onClick={() => setPixelLayers(prev => { const i = prev.findIndex(l => l.id === layer.id); if (i <= 0) return prev; const copy = [...prev]; const [item] = copy.splice(i, 1); copy.splice(i - 1, 0, item); return copy; })} className="text-gray-500 hover:text-blue-700 text-xs" title="Subir uma camada">↥</button>
-                    <button onClick={() => setPixelLayers(prev => { const i = prev.findIndex(l => l.id === layer.id); if (i < 0 || i === 0) return prev; const copy = [...prev]; const [item] = copy.splice(i, 1); copy.unshift(item); return copy; })} className="text-gray-500 hover:text-blue-700 text-xs" title="Enviar para trás">↓</button>
-                    <button onClick={() => {
-                      const el = pixelCanvasRef.current;
-                      if (!el) return;
-                      const ctx = el.getContext("2d")!;
-                      const lx = layer.offsetX || 0, ly = layer.offsetY || 0, ls = layer.scale || 1;
-                      ctx.drawImage(layer.canvas, 0, 0, layer.canvas.width, layer.canvas.height, lx, ly, layer.canvas.width * ls, layer.canvas.height * ls);
-                      pixelSnapshotRef.current = ctx.getImageData(0, 0, el.width, el.height);
-                      setPixelLayers(prev => prev.filter(l => l.id !== layer.id));
-                    }} className="text-green-600 hover:text-green-800 text-xs flex-shrink-0" title="Mesclar">✓</button>
-                    <button onClick={() => { setSelectedPixelLayerId(prev => prev === layer.id ? null : prev); setPixelLayers(prev => prev.filter(l => l.id !== layer.id)); }}
-                      className="text-red-400 hover:text-red-600 text-xs flex-shrink-0" title="Descartar">✕</button>
-                  </div>
-                ))}
-
-                {pixelLayers.length === 0 && (
-                  <p className="text-gray-400 text-xs p-3 text-center">Ctrl+C e Ctrl+V para criar camadas</p>
+                {/* Camadas criadas pelo laço */}
+                {pixelLayers.map(layer => {
+                  const active = selectedPixelLayerIds.includes(layer.id);
+                  return <div key={layer.id} className={`flex items-center gap-2 px-3 py-2 border-b border-gray-50 ${active ? "bg-indigo-50 text-indigo-700" : "hover:bg-gray-50"}`}>
+                    <canvas width={32} height={32} ref={el => { if (el) { const c=el.getContext("2d")!; c.clearRect(0,0,32,32); c.drawImage(layer.canvas,0,0,32,32); } }} className="w-8 h-8 rounded bg-gray-100 border border-gray-200 flex-shrink-0" />
+                    <button onClick={e => { const shift=e.shiftKey; setSelectedPixelLayerIds(prev => shift ? (prev.includes(layer.id) ? prev.filter(id=>id!==layer.id) : [...prev,layer.id]) : [layer.id]); setSelectedPixelLayerId(layer.id); }} onDoubleClick={() => enterPixelLayerEdit(layer.id)} className="text-left text-xs flex-1 truncate">{layer.name}</button>
+                  </div>;
+                })}
+                {selectedPixelLayerIds.length > 1 && (
+                  <button onClick={() => {
+                    const selected = pixelLayers.filter(l => selectedPixelLayerIds.includes(l.id));
+                    if (selected.length < 2) return;
+                    const minX=Math.floor(Math.min(...selected.map(l=>l.offsetX))), minY=Math.floor(Math.min(...selected.map(l=>l.offsetY)));
+                    const maxX=Math.ceil(Math.max(...selected.map(l=>l.offsetX+l.canvas.width*(l.scale||1)))), maxY=Math.ceil(Math.max(...selected.map(l=>l.offsetY+l.canvas.height*(l.scale||1))));
+                    const c=document.createElement("canvas"); c.width=Math.max(1,maxX-minX); c.height=Math.max(1,maxY-minY);
+                    const ctx=c.getContext("2d")!; selected.forEach(l=>ctx.drawImage(l.canvas,0,0,l.canvas.width,l.canvas.height,l.offsetX-minX,l.offsetY-minY,l.canvas.width*(l.scale||1),l.canvas.height*(l.scale||1)));
+                    const merged={id:Math.random().toString(36).slice(2),name:"Camadas mescladas",canvas:c,offsetX:minX,offsetY:minY,scale:1};
+                    setPixelLayers(prev=>[...prev.filter(l=>!selectedPixelLayerIds.includes(l.id)),merged]); setSelectedPixelLayerId(merged.id); setSelectedPixelLayerIds([merged.id]);
+                  }} className="mx-3 my-2 py-1.5 rounded bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700">Mesclar camadas</button>
                 )}
+                {pixelLayers.length === 0 && <p className="text-gray-400 text-xs p-3 text-center">Ctrl+C e Ctrl+V para criar camadas</p>}
               </div>
             </div>
           ) : null}
@@ -3494,7 +3533,15 @@ function EditorInner() {
               )}
             </div>
             <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
-              {layers.length === 0 ? (
+              {pixelLayers.slice().reverse().map(layer => {
+                const active = selectedPixelLayerIds.includes(layer.id);
+                return <div key={layer.id} draggable onDragStart={e=>e.dataTransfer.setData("pixelLayerId",layer.id)} onDragOver={e=>e.preventDefault()} onDrop={e=>{const id=e.dataTransfer.getData("pixelLayerId"); if(!id||id===layer.id)return; setPixelLayers(prev=>{const a=[...prev],fi=a.findIndex(x=>x.id===id),ti=a.findIndex(x=>x.id===layer.id);if(fi<0||ti<0)return prev;const [m]=a.splice(fi,1);a.splice(ti,0,m);return a;});}} className={`flex items-center gap-2 px-3 py-2 ${active?"bg-indigo-50 text-indigo-700 font-semibold border-l-2 border-indigo-600":"text-gray-600 hover:bg-gray-50"}`}>
+                  <canvas width={32} height={32} ref={el=>{if(el){const c=el.getContext("2d")!;c.clearRect(0,0,32,32);c.drawImage(layer.canvas,0,0,32,32)}}} className="w-8 h-8 rounded bg-gray-100 border border-gray-200 flex-shrink-0"/>
+                  <span className="flex-1 truncate text-xs cursor-pointer" onClick={e=>{const shift=e.shiftKey;setSelectedPixelLayerIds(prev=>shift?(prev.includes(layer.id)?prev.filter(id=>id!==layer.id):[...prev,layer.id]):[layer.id]);setSelectedPixelLayerId(layer.id);if(!shift&&fc.current){fc.current.discardActiveObject();fc.current.requestRenderAll();syncSel(null);}}} onDoubleClick={()=>enterPixelLayerEdit(layer.id)}>{layer.name}</span>
+                </div>;
+              })}
+              {selectedPixelLayerIds.length > 1 && <button onClick={()=>{const selected=pixelLayers.filter(l=>selectedPixelLayerIds.includes(l.id));if(selected.length<2)return;const minX=Math.floor(Math.min(...selected.map(l=>l.offsetX))),minY=Math.floor(Math.min(...selected.map(l=>l.offsetY)));const maxX=Math.ceil(Math.max(...selected.map(l=>l.offsetX+l.canvas.width*(l.scale||1)))),maxY=Math.ceil(Math.max(...selected.map(l=>l.offsetY+l.canvas.height*(l.scale||1))));const c=document.createElement("canvas");c.width=Math.max(1,maxX-minX);c.height=Math.max(1,maxY-minY);const ctx=c.getContext("2d")!;selected.forEach(l=>ctx.drawImage(l.canvas,0,0,l.canvas.width,l.canvas.height,l.offsetX-minX,l.offsetY-minY,l.canvas.width*(l.scale||1),l.canvas.height*(l.scale||1)));const merged={id:Math.random().toString(36).slice(2),name:"Camadas mescladas",canvas:c,offsetX:minX,offsetY:minY,scale:1};setPixelLayers(prev=>[...prev.filter(l=>!selectedPixelLayerIds.includes(l.id)),merged]);setSelectedPixelLayerId(merged.id);setSelectedPixelLayerIds([merged.id]);}} className="mx-3 my-2 py-1.5 rounded bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700">Mesclar camadas</button>}
+              {layers.length === 0 && pixelLayers.length === 0 ? (
                 <p className="text-gray-400 p-3 text-center">Sem elementos</p>
               ) : layers.map((layer, index) => {
                 const isActive = selectedUids.includes(layer.id);
@@ -3525,6 +3572,7 @@ function EditorInner() {
                       if (!canvas) return;
                       const clickedObj = canvas.getObjects().find((o: any) => o.__uid === layer.id);
                       if (!clickedObj) return;
+                      setSelectedPixelLayerIds([]); setSelectedPixelLayerId(null);
 
                       if (e.shiftKey) {
                         const active = canvas.getActiveObject();
