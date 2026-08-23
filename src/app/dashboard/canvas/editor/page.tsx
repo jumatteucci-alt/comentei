@@ -508,7 +508,7 @@ function EditorInner() {
     const origC = document.createElement("canvas");
     origC.width = storedBase?.width || imgEl.naturalWidth || imgObj.width;
     origC.height = storedBase?.height || imgEl.naturalHeight || imgObj.height;
-    const octx = origC.getContext("2d")!;
+    const octx = origC.getContext("2d", { willReadFrequently: true })!;
     if (storedBase) octx.drawImage(storedBase, 0, 0);
     else octx.drawImage(imgEl, 0, 0);
     pixelBaseCanvasRef.current = origC;
@@ -533,7 +533,7 @@ function EditorInner() {
       if (!el) return;
       el.width = layer.canvas.width; el.height = layer.canvas.height;
       el.dataset.initialized = "true";
-      const ctx = el.getContext("2d")!;
+      const ctx = el.getContext("2d", { willReadFrequently: true })!;
       ctx.clearRect(0, 0, el.width, el.height);
       ctx.drawImage(layer.canvas, 0, 0);
       const snap = ctx.getImageData(0, 0, el.width, el.height);
@@ -545,7 +545,7 @@ function EditorInner() {
   const clearLassoVisual = () => {
     const el = pixelCanvasRef.current;
     if (el && pixelSnapshotRef.current) {
-      const ctx = el.getContext("2d");
+      const ctx = el.getContext("2d", { willReadFrequently: true });
       if (ctx) { ctx.putImageData(pixelSnapshotRef.current, 0, 0); pixelSnapshotRef.current = ctx.getImageData(0, 0, el.width, el.height); }
     }
     lassoPointsRef.current = [];
@@ -692,6 +692,10 @@ function EditorInner() {
     if (!pixelEditMode) return;
     const onPixelEditDoubleClick = (ev: MouseEvent) => {
       const target = ev.target as HTMLElement | null;
+      // Do not close when the double-click happens inside the pixel canvas area
+      // or inside the internal layers panel. This also prevents the same
+      // double-click used to ENTER pixel edit from immediately closing it.
+      if (target?.closest?.('[data-pixel-canvas-area="true"]')) return;
       if (target?.closest?.('[data-pixel-layers-panel="true"]')) return;
       exitPixelEdit(true);
     };
@@ -1479,7 +1483,7 @@ function EditorInner() {
     // Quando pixelBrushSize muda, salva o estado atual antes do re-render
     if (pixelEditMode && pixelCanvasRef.current) {
       const el = pixelCanvasRef.current;
-      const ctx = el.getContext("2d")!;
+      const ctx = el.getContext("2d", { willReadFrequently: true })!;
       pixelSnapshotRef.current = ctx.getImageData(0, 0, el.width, el.height);
     }
   }, [pixelBrushSize]);
@@ -2859,7 +2863,7 @@ function EditorInner() {
 
         {/* ── CANVAS VIEWPORT ───────────────────────────── */}
         <div ref={canvasContainerRef} className="flex-1 overflow-auto flex items-start justify-center p-8 bg-gray-100">
-          <div className="shadow-2xl relative">
+          <div className="shadow-2xl relative" data-pixel-canvas-area="true">
             {!fabricLoaded ? (
               <div style={{ width: Math.round(canvasWidth * (zoom / 100)), height: Math.round(canvasHeight * (zoom / 100)) }} className="bg-white flex items-center justify-center">
                 <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
@@ -2887,7 +2891,7 @@ function EditorInner() {
                     pixelCanvasRef.current = el;
                     if (el.dataset.initialized === "true") return;
                     el.dataset.initialized = "true";
-                    const ctx = el.getContext("2d")!;
+                    const ctx = el.getContext("2d", { willReadFrequently: true })!;
                     if (editLayer) {
                       el.width = editLayer.canvas.width; el.height = editLayer.canvas.height;
                       ctx.drawImage(editLayer.canvas, 0, 0);
@@ -2922,7 +2926,7 @@ function EditorInner() {
                     const sx = el.width / rect.width; const sy = el.height / rect.height;
                     const x = (ev.clientX - rect.left) * sx;
                     const y = (ev.clientY - rect.top) * sy;
-                    const ctx = el.getContext("2d")!;
+                    const ctx = el.getContext("2d", { willReadFrequently: true })!;
 
                     if (pixelTool === "stamp" && ev.altKey) { stampSourceRef.current = { x, y }; return; }
 
@@ -2981,7 +2985,7 @@ function EditorInner() {
                     const sx = el.width / rect.width; const sy = el.height / rect.height;
                     const x = (ev.clientX - rect.left) * sx;
                     const y = (ev.clientY - rect.top) * sy;
-                    const ctx = el.getContext("2d")!;
+                    const ctx = el.getContext("2d", { willReadFrequently: true })!;
 
                     if (pixelTool === "lasso" && lassoActiveRef.current) {
                       lassoPointsRef.current.push({ x, y });
@@ -3029,7 +3033,7 @@ function EditorInner() {
                   }}
                   onMouseUp={() => {
                     const el = pixelCanvasRef.current!;
-                    const ctx = el.getContext("2d")!;
+                    const ctx = el.getContext("2d", { willReadFrequently: true })!;
 
                     if (pixelDrawingRef.current) {
                       // Atualiza snapshot ANTES de setar false
@@ -3065,7 +3069,7 @@ function EditorInner() {
                     ev.stopPropagation();
                     ev.preventDefault();
                     const el = pixelCanvasRef.current!;
-                    const ctx = el.getContext("2d")!;
+                    const ctx = el.getContext("2d", { willReadFrequently: true })!;
 
                     // Ctrl+Z undo
                     if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && ev.key.toLowerCase() === "z") {
