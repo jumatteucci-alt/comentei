@@ -24,3 +24,5 @@ jobs:
           git add src/app/dashboard/canvas/editor/page.tsx
           git commit -m "fix: pen path selection and object resize"
           git push origin main
+
+# trigger
