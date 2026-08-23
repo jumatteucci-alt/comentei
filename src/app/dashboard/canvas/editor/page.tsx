@@ -502,6 +502,11 @@ function EditorInner() {
   const [selGlowOpacity, setSelGlowOpacity] = useState(1);
   const [selBlur, setSelBlur] = useState(0);
   const [selSaturation, setSelSaturation] = useState(0);
+  const [cropMode, setCropMode] = useState(false);
+  const [cropX, setCropX] = useState(0);
+  const [cropY, setCropY] = useState(0);
+  const [cropW, setCropW] = useState(100);
+  const [cropH, setCropH] = useState(100);
   const [selFontSize, setSelFontSize] = useState(48);
   const [selFontFamily, setSelFontFamily] = useState("Montserrat");
   const [selBold, setSelBold] = useState(false);
@@ -716,6 +721,11 @@ function EditorInner() {
     setSelBlur(obj.__vectorBlur ?? (uid && blurValueMap.current.has(uid) ? blurValueMap.current.get(uid)! : 0));
     const satFilter = (obj.filters||[]).find((f: any) => f.type === "Saturation");
     setSelSaturation(satFilter ? (satFilter.saturation ?? 0) : 0);
+    if (obj.type === "image") {
+      const c = obj.__crop || { x: 0, y: 0, w: 100, h: 100 };
+      setCropX(c.x ?? 0); setCropY(c.y ?? 0); setCropW(c.w ?? 100); setCropH(c.h ?? 100);
+      setCropMode(false);
+    }
     if (obj.__gradMask) {
       const m = obj.__gradMask;
       setGradMaskC1(m.c1); setGradMaskA1(m.a1);
@@ -2650,6 +2660,43 @@ function EditorInner() {
     });
   };
 
+  const applyImageCrop = (x=cropX, y=cropY, wPct=cropW, hPct=cropH) => {
+    if (!fc.current || !sel || sel.type !== "image") return;
+    const fabric = (window as any).fabric;
+    const iw = sel.width || sel._element?.naturalWidth || 1;
+    const ih = sel.height || sel._element?.naturalHeight || 1;
+    const w = Math.max(1, Math.min(100, wPct));
+    const h = Math.max(1, Math.min(100, hPct));
+    const maxX = Math.max(0, 100 - w), maxY = Math.max(0, 100 - h);
+    const nx = Math.max(0, Math.min(maxX, x));
+    const ny = Math.max(0, Math.min(maxY, y));
+    setCropX(nx); setCropY(ny); setCropW(w); setCropH(h);
+    sel.__crop = { x: nx, y: ny, w, h };
+    const clip = new fabric.Rect({
+      left: -iw/2 + iw*(nx/100), top: -ih/2 + ih*(ny/100),
+      width: iw*(w/100), height: ih*(h/100),
+      originX: "left", originY: "top", absolutePositioned: false
+    });
+    sel.clipPath = clip;
+    sel.dirty = true; sel.setCoords(); fc.current.requestRenderAll();
+  };
+
+  const resetImageCrop = () => {
+    if (!fc.current || !sel || sel.type !== "image") return;
+    setCropX(0); setCropY(0); setCropW(100); setCropH(100);
+    delete sel.__crop; sel.clipPath = null; sel.dirty = true; sel.setCoords();
+    fc.current.requestRenderAll();
+  };
+
+  const setCropAspect = (ratio: number) => {
+    if (!sel || sel.type !== "image") return;
+    const iw = sel.width || 1, ih = sel.height || 1;
+    const currentWPx = iw * cropW/100;
+    let nextW = cropW, nextH = (currentWPx / ratio) / ih * 100;
+    if (nextH > 100) { nextH = 100; nextW = (ih * nextH/100 * ratio) / iw * 100; }
+    applyImageCrop(cropX, cropY, nextW, nextH);
+  };
+
   const updateSaturation = (v: number) => {
     setSelSaturation(v);
     if (!fc.current || !sel) return;
@@ -4351,6 +4398,29 @@ function EditorInner() {
               {sel.type === "image" && (
                 <>
                   <Sec title="Imagem" />
+                  <button onClick={() => setCropMode(v => !v)}
+                    className={`w-full py-2 rounded-lg border text-xs font-medium transition ${cropMode ? "bg-indigo-600 text-white border-indigo-600" : "border-indigo-200 text-indigo-600 hover:bg-indigo-50"}`}>
+                    ✂ {cropMode ? "Fechar recorte" : ((sel as any).__crop ? "Editar recorte" : "Recortar imagem")}
+                  </button>
+                  {cropMode && (
+                    <div className="flex flex-col gap-2 p-2 border border-indigo-100 rounded-lg bg-indigo-50/30">
+                      <div className="grid grid-cols-4 gap-1">
+                        <button onClick={() => setCropAspect(1)} className="py-1 border border-gray-200 rounded bg-white hover:bg-gray-50">1:1</button>
+                        <button onClick={() => setCropAspect(4/5)} className="py-1 border border-gray-200 rounded bg-white hover:bg-gray-50">4:5</button>
+                        <button onClick={() => setCropAspect(16/9)} className="py-1 border border-gray-200 rounded bg-white hover:bg-gray-50">16:9</button>
+                        <button onClick={() => setCropAspect(9/16)} className="py-1 border border-gray-200 rounded bg-white hover:bg-gray-50">9:16</button>
+                      </div>
+                      <SliderRow label="X" value={Math.round(cropX)} min={0} max={Math.max(0,100-cropW)} unit="%" onChange={v => applyImageCrop(v,cropY,cropW,cropH)} />
+                      <SliderRow label="Y" value={Math.round(cropY)} min={0} max={Math.max(0,100-cropH)} unit="%" onChange={v => applyImageCrop(cropX,v,cropW,cropH)} />
+                      <SliderRow label="Largura" value={Math.round(cropW)} min={1} max={100-cropX} unit="%" onChange={v => applyImageCrop(cropX,cropY,v,cropH)} />
+                      <SliderRow label="Altura" value={Math.round(cropH)} min={1} max={100-cropY} unit="%" onChange={v => applyImageCrop(cropX,cropY,cropW,v)} />
+                      <div className="grid grid-cols-2 gap-1">
+                        <button onClick={resetImageCrop} className="py-1.5 border border-gray-200 text-gray-500 rounded bg-white hover:bg-gray-50">Resetar</button>
+                        <button onClick={() => setCropMode(false)} className="py-1.5 bg-indigo-600 text-white rounded hover:bg-indigo-700">Concluir</button>
+                      </div>
+                      <p className="text-[9px] text-gray-400">Recorte não destrutivo: a imagem original é preservada.</p>
+                    </div>
+                  )}
                   <button
                     onClick={() => setShowGradientMask(v => !v)}
                     className={`w-full py-2 rounded-lg border transition text-xs font-medium ${showGradientMask ? "bg-purple-600 text-white border-purple-600" : "border-purple-200 text-purple-600 hover:bg-purple-50"}`}>
