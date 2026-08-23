@@ -340,6 +340,12 @@ function EditorInner() {
   const pixelOrigSrcRef = useRef<string>("");
   const pixelBaseCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const stampSourceRef = useRef<{x:number;y:number}|null>(null);
+  // Clone stamp: once the first destination point is chosen, keep a fixed
+  // source-to-destination offset so the sampled area follows the cursor,
+  // like Photoshop's aligned clone stamp.
+  const stampOffsetRef = useRef<{x:number;y:number}|null>(null);
+  const stampStrokeSourceCanvasRef = useRef<HTMLCanvasElement|null>(null);
+  const stampLastPointRef = useRef<{x:number;y:number}|null>(null);
   const lassoPointsRef = useRef<{x:number;y:number}[]>([]);
   const lassoActiveRef = useRef(false);
   const pixelDrawingRef = useRef(false);
@@ -404,6 +410,8 @@ function EditorInner() {
       pixelResizingRef.current = false;
       pixelMoveLayerRef.current = null;
       pixelResizeLayerRef.current = null;
+      stampStrokeSourceCanvasRef.current = null;
+      stampLastPointRef.current = null;
     };
     window.addEventListener("mouseup", stopPixelInteraction);
     return () => window.removeEventListener("mouseup", stopPixelInteraction);
@@ -601,7 +609,35 @@ function EditorInner() {
     (lassoSelectionRef as any).inverted = false;
     setLassoSelected(false);
     stampSourceRef.current = null;
+    stampOffsetRef.current = null;
+    stampStrokeSourceCanvasRef.current = null;
+    stampLastPointRef.current = null;
     pixelDrawingRef.current = false;
+  };
+
+  const applyAlignedCloneStamp = (
+    ctx: CanvasRenderingContext2D,
+    sampleCanvas: HTMLCanvasElement,
+    destX: number,
+    destY: number,
+  ) => {
+    const offset = stampOffsetRef.current;
+    if (!offset) return;
+    const size = Math.max(1, pixelBrushSize);
+    const r = size / 2;
+    const sourceX = destX + offset.x;
+    const sourceY = destY + offset.y;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(destX, destY, r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(
+      sampleCanvas,
+      sourceX - r, sourceY - r, size, size,
+      destX - r, destY - r, size, size,
+    );
+    ctx.restore();
   };
 
   const switchPixelEditTarget = (targetId: string) => {
@@ -900,7 +936,7 @@ function EditorInner() {
       }
       setPixelEditMode(false);
       pixelEditLayerIdRef.current = null; pixelCanvasRef.current = null; pixelBaseCanvasRef.current = null;
-      stampSourceRef.current = null; lassoPointsRef.current = []; lassoSelectionRef.current = [];
+      stampSourceRef.current = null; stampOffsetRef.current = null; stampStrokeSourceCanvasRef.current = null; stampLastPointRef.current = null; lassoPointsRef.current = []; lassoSelectionRef.current = [];
       lassoActiveRef.current = false; pixelUndoStack.current = []; setLassoSelected(false);
       setSelectedPixelLayerId(null); setSelectedPixelLayerIds([]);
       return;
@@ -920,7 +956,7 @@ function EditorInner() {
     setPixelEditMode(false);
     pixelEditImgRef.current = null; pixelEditLayerIdRef.current = null;
     pixelCanvasRef.current = null; pixelBaseCanvasRef.current = null;
-    stampSourceRef.current = null; lassoPointsRef.current = []; lassoSelectionRef.current = [];
+    stampSourceRef.current = null; stampOffsetRef.current = null; stampStrokeSourceCanvasRef.current = null; stampLastPointRef.current = null; lassoPointsRef.current = []; lassoSelectionRef.current = [];
     lassoActiveRef.current = false; pixelUndoStack.current = []; setLassoSelected(false);
     setSelectedPixelLayerId(null); setSelectedPixelLayerIds([]);
   };
@@ -3034,7 +3070,7 @@ function EditorInner() {
                 <div className="w-10 mt-2 flex flex-col items-center">
                   <div className="w-8 border-t border-gray-100 mb-1" />
                   <span className="text-gray-400 text-center leading-tight" style={{fontSize:8}}>
-                    {stampSourceRef.current ? "✓ Fonte" : "Alt+clique = fonte"}
+                    {stampSourceRef.current ? "✓ Fonte alinhada" : "Alt+clique = fonte"}
                   </span>
                 </div>
               )}
@@ -3289,7 +3325,16 @@ function EditorInner() {
                     const y = (ev.clientY - rect.top) * sy;
                     const ctx = el.getContext("2d", { willReadFrequently: true })!;
 
-                    if (pixelTool === "stamp" && ev.altKey) { stampSourceRef.current = { x, y }; return; }
+                    if (pixelTool === "stamp" && ev.altKey) {
+                      // Alt+click defines a new clone source. The aligned offset is
+                      // established only when the user starts painting elsewhere.
+                      stampSourceRef.current = { x, y };
+                      stampOffsetRef.current = null;
+                      stampStrokeSourceCanvasRef.current = null;
+                      stampLastPointRef.current = null;
+                      pixelDrawingRef.current = false;
+                      return;
+                    }
 
                     if (pixelTool === "lasso") {
                       // Restaura snapshot limpo (sem contorno do laço anterior)
@@ -3308,6 +3353,24 @@ function EditorInner() {
                     pixelSnapshotRef.current = snap;
                     pixelUndoStack.current.push(snap);
                     if (pixelUndoStack.current.length > 30) pixelUndoStack.current.shift();
+
+                    if (pixelTool === "stamp") {
+                      if (!stampSourceRef.current) return;
+                      if (!stampOffsetRef.current) {
+                        stampOffsetRef.current = {
+                          x: stampSourceRef.current.x - x,
+                          y: stampSourceRef.current.y - y,
+                        };
+                      }
+                      // Freeze the sampling surface for this stroke. This prevents the
+                      // freshly cloned pixels from recursively feeding back into the same stroke.
+                      const sample = document.createElement("canvas");
+                      sample.width = el.width; sample.height = el.height;
+                      sample.getContext("2d")!.drawImage(el, 0, 0);
+                      stampStrokeSourceCanvasRef.current = sample;
+                      stampLastPointRef.current = { x, y };
+                    }
+
                     pixelDrawingRef.current = true;
 
                     const applyEraser = (px: number, py: number) => {
@@ -3333,11 +3396,8 @@ function EditorInner() {
                     };
 
                     if (pixelTool === "eraser") applyEraser(x, y);
-                    else if (pixelTool === "stamp" && stampSourceRef.current) {
-                      const src = stampSourceRef.current; const r = pixelBrushSize / 2;
-                      ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.clip();
-                      ctx.drawImage(el, src.x - r, src.y - r, pixelBrushSize, pixelBrushSize, x - r, y - r, pixelBrushSize, pixelBrushSize);
-                      ctx.restore();
+                    else if (pixelTool === "stamp" && stampSourceRef.current && stampStrokeSourceCanvasRef.current) {
+                      applyAlignedCloneStamp(ctx, stampStrokeSourceCanvasRef.current, x, y);
                     }
                   }}
                   onMouseMove={ev => {
@@ -3392,11 +3452,24 @@ function EditorInner() {
 
                     if (!pixelDrawingRef.current) return;
 
-                    if (pixelTool === "stamp" && stampSourceRef.current) {
-                      const src = stampSourceRef.current; const r = pixelBrushSize / 2;
-                      ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.clip();
-                      ctx.drawImage(el, src.x - r, src.y - r, pixelBrushSize, pixelBrushSize, x - r, y - r, pixelBrushSize, pixelBrushSize);
-                      ctx.restore();
+                    if (pixelTool === "stamp" && stampSourceRef.current && stampStrokeSourceCanvasRef.current) {
+                      const last = stampLastPointRef.current || { x, y };
+                      const dx = x - last.x;
+                      const dy = y - last.y;
+                      const dist = Math.hypot(dx, dy);
+                      // Interpolate stamps so fast mouse movements create a continuous stroke.
+                      const spacing = Math.max(1, pixelBrushSize * 0.2);
+                      const steps = Math.max(1, Math.ceil(dist / spacing));
+                      for (let i = 1; i <= steps; i++) {
+                        const t = i / steps;
+                        applyAlignedCloneStamp(
+                          ctx,
+                          stampStrokeSourceCanvasRef.current,
+                          last.x + dx * t,
+                          last.y + dy * t,
+                        );
+                      }
+                      stampLastPointRef.current = { x, y };
                     }
                   }}
                   onMouseUp={() => {
@@ -3409,6 +3482,10 @@ function EditorInner() {
                       pixelUndoStack.current.push(ctx.getImageData(0, 0, el.width, el.height));
                       if (pixelUndoStack.current.length > 30) pixelUndoStack.current.shift();
                       pixelDrawingRef.current = false;
+                      if (pixelTool === "stamp") {
+                        stampStrokeSourceCanvasRef.current = null;
+                        stampLastPointRef.current = null;
+                      }
                     }
 
                     if (pixelTool === "lasso" && lassoActiveRef.current) {
