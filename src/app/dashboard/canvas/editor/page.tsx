@@ -635,6 +635,11 @@ function EditorInner() {
 
   const [bgSolid, setBgSolid] = useState("#ffffff");
   const [bgGradient, setBgGradient] = useState<GradValue|null>(null);
+  const [canvasTransformMode, setCanvasTransformMode] = useState(false);
+  const canvasTransformDragRef = useRef<{
+    handle: "nw"|"n"|"ne"|"e"|"se"|"s"|"sw"|"w";
+    startX: number; startY: number; startW: number; startH: number; zoom: number;
+  } | null>(null);
 
   const fitCanvasToScreen = useCallback(() => {
     if (!canvasContainerRef.current) return;
@@ -651,6 +656,36 @@ function EditorInner() {
   useEffect(() => {
     fitCanvasToScreen();
   }, [fitCanvasToScreen]);
+
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const drag = canvasTransformDragRef.current;
+      if (!drag) return;
+      const dx = (e.clientX - drag.startX) / Math.max(0.1, drag.zoom);
+      const dy = (e.clientY - drag.startY) / Math.max(0.1, drag.zoom);
+      let w = drag.startW;
+      let h = drag.startH;
+      if (drag.handle.includes("e")) w = drag.startW + dx;
+      if (drag.handle.includes("w")) w = drag.startW - dx;
+      if (drag.handle.includes("s")) h = drag.startH + dy;
+      if (drag.handle.includes("n")) h = drag.startH - dy;
+      w = Math.max(50, Math.min(8000, Math.round(w)));
+      h = Math.max(50, Math.min(8000, Math.round(h)));
+      setCanvasWidth(w);
+      setCanvasHeight(h);
+      setInputWidth(String(w));
+      setInputHeight(String(h));
+    };
+    const onUp = () => { canvasTransformDragRef.current = null; };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -2507,7 +2542,7 @@ function EditorInner() {
       window.addEventListener("keydown", onKey);
       return () => { canvas.dispose(); fc.current = null; window.removeEventListener("keydown", onKey); };
     } 
-  }, [fabricLoaded, canvasWidth, canvasHeight]);
+  }, [fabricLoaded]);
 
 
 
@@ -3466,6 +3501,8 @@ function EditorInner() {
     penLines.current = [];
     penDots.current = [];
 
+    path.set({ selectable: true, evented: true, hasControls: true, hasBorders: true, padding: Math.max(Number(path.padding || 0), 8) });
+    path.setCoords();
     canvas.add(path);
     canvas.setActiveObject(path);
     syncSel(path);
@@ -3473,6 +3510,8 @@ function EditorInner() {
 
     activeToolRef.current = "select";
     setActiveTool("select");
+    canvas.isDrawingMode = false;
+    canvas.skipTargetFind = false;
     canvas.defaultCursor = "default";
     canvas.hoverCursor = "move";
     canvas.selection = true;
@@ -3951,13 +3990,56 @@ function EditorInner() {
         </div>
 
         {/* ── CANVAS VIEWPORT ───────────────────────────── */}
-        <div ref={canvasContainerRef} className="flex-1 overflow-auto flex items-start justify-center p-8 bg-gray-100">
-          <div className="shadow-2xl relative" data-pixel-canvas-area="true">
+        <div ref={canvasContainerRef}
+          onPointerDown={e => {
+            if (e.target !== e.currentTarget || pixelEditMode) return;
+            setCanvasTransformMode(true);
+            if (fc.current) { fc.current.discardActiveObject(); fc.current.requestRenderAll(); }
+            syncSel(null);
+          }}
+          className="flex-1 overflow-auto flex items-start justify-center p-8 bg-gray-100">
+          <div className="shadow-2xl relative" data-pixel-canvas-area="true"
+            onPointerDown={() => { if (!canvasTransformDragRef.current) setCanvasTransformMode(false); }}>
             {!fabricLoaded ? (
               <div style={{ width: Math.round(canvasWidth * (zoom / 100)), height: Math.round(canvasHeight * (zoom / 100)) }} className="bg-white flex items-center justify-center">
                 <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
               </div>
             ) : <canvas ref={canvasRef} />}
+
+            {!pixelEditMode && canvasTransformMode && (() => {
+              const handles = [
+                ["nw", -7, -7, undefined, undefined, "nwse-resize"],
+                ["n", "50%", -7, undefined, undefined, "ns-resize"],
+                ["ne", undefined, -7, -7, undefined, "nesw-resize"],
+                ["e", undefined, "50%", -7, undefined, "ew-resize"],
+                ["se", undefined, undefined, -7, -7, "nwse-resize"],
+                ["s", "50%", undefined, undefined, -7, "ns-resize"],
+                ["sw", -7, undefined, undefined, -7, "nesw-resize"],
+                ["w", -7, "50%", undefined, undefined, "ew-resize"],
+              ] as const;
+              return (
+                <div style={{ position:"absolute", inset:-2, border:"2px solid #4f46e5", boxSizing:"border-box", zIndex:70, pointerEvents:"none" }}>
+                  <div style={{ position:"absolute", left:8, top:-24, background:"#4f46e5", color:"white", borderRadius:5, padding:"2px 7px", fontSize:10, whiteSpace:"nowrap" }}>
+                    Canvas · {canvasWidth} × {canvasHeight}
+                  </div>
+                  {handles.map(([handle,left,top,right,bottom,cursor]) => (
+                    <div key={handle}
+                      onPointerDown={e => {
+                        e.preventDefault(); e.stopPropagation();
+                        canvasTransformDragRef.current = {
+                          handle, startX:e.clientX, startY:e.clientY, startW:canvasWidth, startH:canvasHeight, zoom:zoom/100,
+                        };
+                        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+                      }}
+                      style={{
+                        position:"absolute", left, top, right, bottom, width:14, height:14,
+                        transform: (left === "50%" || top === "50%") ? "translate(-50%,-50%)" : undefined,
+                        background:"white", border:"2px solid #4f46e5", borderRadius:2, cursor, pointerEvents:"auto", boxSizing:"border-box",
+                      }} />
+                  ))}
+                </div>
+              );
+            })()}
 
             {/* Visual non-destructive crop overlay */}
             {!pixelEditMode && cropMode && sel?.type === "image" && (() => {
