@@ -325,7 +325,7 @@ function EditorInner() {
 
   // Pixel editor
   const [pixelEditMode, setPixelEditMode] = useState(false);
-  const [pixelTool, setPixelTool] = useState<"eraser"|"stamp"|"lasso">("eraser");
+  const [pixelTool, setPixelTool] = useState<"eraser"|"stamp"|"lasso"|"move">("eraser");
   const [pixelBrushSize, setPixelBrushSize] = useState(20);
   const [pixelSoftness, setPixelSoftness] = useState(0); // 0=hard, 1=soft
   const pixelSnapshotRef = useRef<ImageData|null>(null); // snapshot before brush stroke
@@ -339,6 +339,9 @@ function EditorInner() {
   const [lassoSelected, setLassoSelected] = useState(false); // true = has active selection
   const lassoSelectionRef = useRef<{x:number;y:number}[]>([]); // closed lasso selection
   const pixelUndoStack = useRef<ImageData[]>([]); // undo history for pixel editor
+  const [pixelLayers, setPixelLayers] = useState<{id:string;name:string;canvas:HTMLCanvasElement}[]>([]);
+  const pixelMoveLayerRef = useRef<{id:string;canvas:HTMLCanvasElement;startX:number;startY:number;offsetX:number;offsetY:number}|null>(null);
+  const pixelMovingRef = useRef(false);
 
   const [bgSolid, setBgSolid] = useState("#ffffff");
   const [bgGradient, setBgGradient] = useState<{stops:{color:string;opacity:number;pos:number}[];angle:number}|null>(null);
@@ -2413,6 +2416,14 @@ function EditorInner() {
               )}
 
               {/* Lasso instructions */}
+              {/* Move */}
+              <button onClick={() => setPixelTool("move")} title="Mover camada"
+                className={`w-10 h-10 rounded-xl flex items-center justify-center transition ${pixelTool==="move" ? "bg-blue-100 text-blue-700" : "text-gray-500 hover:bg-gray-100"}`}>
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                  <path d="M9 2v14M2 9h14M9 2L6 5M9 2l3 3M9 16l-3-3M9 16l3-3M2 9l3-3M2 9l3 3M16 9l-3-3M16 9l-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                </svg>
+              </button>
+
               {pixelTool === "lasso" && lassoSelected && (
                 <div className="w-10 mt-2 flex flex-col items-center gap-1">
                   <div className="w-8 border-t border-gray-100" />
@@ -2603,6 +2614,7 @@ function EditorInner() {
               const ih = (imgObj.height || 0) * (imgObj.scaleY || 1) * z;
               const il = (imgObj.left || 0) * z;
               const it = (imgObj.top || 0) * z;
+              return <>
               return (
                 <canvas
                   ref={el => {
@@ -2792,7 +2804,7 @@ function EditorInner() {
                       return;
                     }
 
-                    // Ctrl+C — copia pixels da seleção
+                    // Ctrl+C — copia pixels da seleção para clipboard
                     if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && ev.key.toLowerCase() === "c") {
                       const pts = lassoSelectionRef.current;
                       if (!pts.length) return;
@@ -2809,52 +2821,68 @@ function EditorInner() {
                       return;
                     }
 
-                    // Ctrl+V — cola pixels
+                    // Ctrl+V — cola como nova camada
                     if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && ev.key.toLowerCase() === "v") {
                       const clipboard = (window as any).__pixelClipboard as HTMLCanvasElement;
                       if (!clipboard) return;
-                      pixelUndoStack.current.push(ctx.getImageData(0, 0, el.width, el.height));
-                      ctx.drawImage(clipboard, 0, 0);
-                      pixelSnapshotRef.current = ctx.getImageData(0, 0, el.width, el.height);
+                      const layerCanvas = document.createElement("canvas");
+                      layerCanvas.width = el.width; layerCanvas.height = el.height;
+                      layerCanvas.getContext("2d")!.drawImage(clipboard, 0, 0);
+                      const newLayer = { id: Math.random().toString(36).slice(2), name: `Camada colada`, canvas: layerCanvas, offsetX: 0, offsetY: 0 };
+                      setPixelLayers(prev => [...prev, newLayer]);
                       return;
                     }
 
                     const pts = lassoSelectionRef.current;
                     if (!pts.length) return;
 
-                    // Delete — apaga dentro da seleção
+                    // Delete — apaga dentro ou fora da seleção (depende da inversão)
                     if (ev.key === "Delete" || ev.key === "Backspace") {
                       pixelUndoStack.current.push(ctx.getImageData(0, 0, el.width, el.height));
                       const snap = pixelSnapshotRef.current;
                       if (snap) ctx.putImageData(snap, 0, 0);
+                      const isInverted = (lassoSelectionRef as any).inverted;
                       ctx.save();
-                      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
-                      pts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath();
+                      if (isInverted) {
+                        // Apaga fora da seleção
+                        ctx.beginPath();
+                        ctx.rect(0, 0, el.width, el.height);
+                        ctx.moveTo(pts[0].x, pts[0].y);
+                        pts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath();
+                      } else {
+                        // Apaga dentro da seleção
+                        ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+                        pts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath();
+                      }
                       ctx.globalCompositeOperation = "destination-out"; ctx.fill();
                       ctx.restore();
                       pixelSnapshotRef.current = ctx.getImageData(0, 0, el.width, el.height);
+                      (lassoSelectionRef as any).inverted = false;
                       setLassoSelected(false); lassoSelectionRef.current = [];
                       return;
                     }
 
-                    // Ctrl+Shift+I — inverte seleção
+                    // Ctrl+Shift+I — inverte seleção (guarda como flag)
                     if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && ev.key.toLowerCase() === "i") {
                       const w = el.width; const h = el.height;
-                      // Seleção invertida = borda do canvas + buraco onde estava o laço
-                      const inverted = [{x:0,y:0},{x:w,y:0},{x:w,y:h},{x:0,y:h}];
-                      lassoSelectionRef.current = inverted;
-                      // Desenha marching ants na borda
+                      // Marca que a seleção está invertida com flag especial
+                      (lassoSelectionRef as any).inverted = !(lassoSelectionRef as any).inverted;
+                      const isInverted = (lassoSelectionRef as any).inverted;
                       const snap = pixelSnapshotRef.current;
                       if (snap) ctx.putImageData(snap, 0, 0);
                       ctx.save();
                       ctx.setLineDash([6, 3]);
                       ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
-                      ctx.strokeRect(1, 1, w-2, h-2);
+                      if (isInverted) {
+                        ctx.strokeRect(1, 1, w-2, h-2);
+                      }
+                      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+                      pts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath();
+                      ctx.strokeStyle = isInverted ? "#fff" : "#fff"; ctx.stroke();
                       ctx.strokeStyle = "#222"; ctx.lineWidth = 1;
-                      ctx.strokeRect(1, 1, w-2, h-2);
-                      // Também mostra o laço original como "buraco" da seleção
                       ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
                       pts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath(); ctx.stroke();
+                      if (isInverted) ctx.strokeRect(1, 1, w-2, h-2);
                       ctx.setLineDash([]); ctx.restore();
                       return;
                     }
@@ -2862,12 +2890,63 @@ function EditorInner() {
                   tabIndex={0}
                   autoFocus
                 />
-              );
+
+                {/* Pixel layers — rendered on top, moveable */}
+                {pixelLayers.map(layer => {
+                  const naturalW = imgObj._element?.naturalWidth || imgObj.width || 100;
+                  const scX = iw / naturalW;
+                  const offsetX = (layer as any).offsetX || 0;
+                  const offsetY = (layer as any).offsetY || 0;
+                  return (
+                    <canvas
+                      key={layer.id}
+                      ref={el => {
+                        if (el && layer.canvas) {
+                          el.width = layer.canvas.width;
+                          el.height = layer.canvas.height;
+                          el.getContext("2d")!.drawImage(layer.canvas, 0, 0);
+                        }
+                      }}
+                      style={{
+                        position: "absolute",
+                        left: il + offsetX * scX,
+                        top: it + offsetY * scX,
+                        width: iw, height: ih,
+                        cursor: pixelTool === "move" ? "grab" : "default",
+                        imageRendering: "pixelated",
+                        pointerEvents: pixelTool === "move" ? "auto" : "none",
+                        outline: pixelTool === "move" ? "1.5px dashed #3b82f6" : "none",
+                      }}
+                      onMouseDown={ev => {
+                        if (pixelTool !== "move") return;
+                        pixelMoveLayerRef.current = {
+                          id: layer.id, canvas: layer.canvas,
+                          startX: ev.clientX, startY: ev.clientY,
+                          offsetX: (layer as any).offsetX || 0,
+                          offsetY: (layer as any).offsetY || 0,
+                        };
+                        pixelMovingRef.current = true;
+                      }}
+                      onMouseMove={ev => {
+                        if (!pixelMovingRef.current || !pixelMoveLayerRef.current) return;
+                        if (pixelMoveLayerRef.current.id !== layer.id) return;
+                        const naturalW2 = imgObj._element?.naturalWidth || imgObj.width || 100;
+                        const scaleX2 = iw / naturalW2;
+                        const dx = (ev.clientX - pixelMoveLayerRef.current.startX) / scaleX2;
+                        const dy = (ev.clientY - pixelMoveLayerRef.current.startY) / scaleX2;
+                        setPixelLayers(prev => prev.map(l => l.id === layer.id
+                          ? { ...l, offsetX: pixelMoveLayerRef.current!.offsetX + dx, offsetY: pixelMoveLayerRef.current!.offsetY + dy } as any
+                          : l
+                        ));
+                      }}
+                      onMouseUp={() => { pixelMovingRef.current = false; pixelMoveLayerRef.current = null; }}
+                    />
+                  );
+                })}
+            </>;
             })()}
           </div>
         </div>
-
-        {/* ── RIGHT: PROPERTIES + LAYERS ───────────────── */}
         <div className="w-56 bg-white border-l border-gray-200 flex flex-col flex-shrink-0 overflow-y-auto text-xs">
           {pixelEditMode ? (
             <div className="p-3 flex flex-col gap-3">
@@ -2901,6 +2980,30 @@ function EditorInner() {
                     ? <p className="text-green-600 text-xs mt-1">✓ Fonte definida</p>
                     : <p className="text-orange-500 text-xs mt-1">Fonte não definida</p>
                   }
+                </div>
+              )}
+              {pixelTool === "move" && pixelLayers.length > 0 && (
+                <div className="bg-blue-50 rounded-lg p-2 flex flex-col gap-1">
+                  <p className="text-blue-700 text-xs font-medium mb-1">Camadas coladas</p>
+                  {pixelLayers.map(layer => (
+                    <div key={layer.id} className="flex items-center gap-1 justify-between">
+                      <span className="text-blue-600 text-xs truncate flex-1">{layer.name}</span>
+                      <button onClick={() => {
+                        // Merge layer into main canvas
+                        const el = pixelCanvasRef.current;
+                        if (!el) return;
+                        const ctx = el.getContext("2d")!;
+                        const offsetX = (layer as any).offsetX || 0;
+                        const offsetY = (layer as any).offsetY || 0;
+                        ctx.drawImage(layer.canvas, offsetX, offsetY);
+                        pixelSnapshotRef.current = ctx.getImageData(0, 0, el.width, el.height);
+                        setPixelLayers(prev => prev.filter(l => l.id !== layer.id));
+                      }} className="text-green-600 hover:text-green-800 text-xs px-1">✓</button>
+                      <button onClick={() => setPixelLayers(prev => prev.filter(l => l.id !== layer.id))}
+                        className="text-red-400 hover:text-red-600 text-xs px-1">✕</button>
+                    </div>
+                  ))}
+                  <p className="text-blue-500 text-xs mt-1">✓ mescla na imagem · ✕ descarta</p>
                 </div>
               )}
             </div>
