@@ -507,6 +507,7 @@ function EditorInner() {
   const [cropY, setCropY] = useState(0);
   const [cropW, setCropW] = useState(100);
   const [cropH, setCropH] = useState(100);
+  const cropDragRef = useRef<{ mode: string; startX: number; startY: number; x: number; y: number; w: number; h: number } | null>(null);
   const [selFontSize, setSelFontSize] = useState(48);
   const [selFontFamily, setSelFontFamily] = useState("Montserrat");
   const [selBold, setSelBold] = useState(false);
@@ -2694,8 +2695,68 @@ function EditorInner() {
     const currentWPx = iw * cropW/100;
     let nextW = cropW, nextH = (currentWPx / ratio) / ih * 100;
     if (nextH > 100) { nextH = 100; nextW = (ih * nextH/100 * ratio) / iw * 100; }
-    applyImageCrop(cropX, cropY, nextW, nextH);
+    const cx = cropX + cropW / 2, cy = cropY + cropH / 2;
+    const nx = Math.max(0, Math.min(100 - nextW, cx - nextW / 2));
+    const ny = Math.max(0, Math.min(100 - nextH, cy - nextH / 2));
+    applyImageCrop(nx, ny, nextW, nextH);
   };
+
+  const cropPointerToPercent = (clientX: number, clientY: number) => {
+    if (!fc.current || !sel || sel.type !== "image") return null;
+    const fabric = (window as any).fabric;
+    const canvas = fc.current;
+    const pointer = canvas.getPointer({ clientX, clientY, target: canvas.upperCanvasEl } as any);
+    const inverse = fabric.util.invertTransform(sel.calcTransformMatrix());
+    const local = fabric.util.transformPoint(pointer, inverse);
+    const iw = sel.width || 1, ih = sel.height || 1;
+    return {
+      x: ((local.x + iw / 2) / iw) * 100,
+      y: ((local.y + ih / 2) / ih) * 100,
+    };
+  };
+
+  const startCropDrag = (mode: string, e: React.PointerEvent) => {
+    if (!cropMode || !sel || sel.type !== "image") return;
+    e.preventDefault();
+    e.stopPropagation();
+    const p = cropPointerToPercent(e.clientX, e.clientY);
+    if (!p) return;
+    cropDragRef.current = { mode, startX: p.x, startY: p.y, x: cropX, y: cropY, w: cropW, h: cropH };
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  };
+
+  useEffect(() => {
+    if (!cropMode) return;
+    const onMove = (e: PointerEvent) => {
+      const drag = cropDragRef.current;
+      if (!drag || !sel || sel.type !== "image") return;
+      const p = cropPointerToPercent(e.clientX, e.clientY);
+      if (!p) return;
+      const minSize = 2;
+      let left = drag.x, top = drag.y, right = drag.x + drag.w, bottom = drag.y + drag.h;
+      if (drag.mode === "move") {
+        const dx = p.x - drag.startX, dy = p.y - drag.startY;
+        left = Math.max(0, Math.min(100 - drag.w, drag.x + dx));
+        top = Math.max(0, Math.min(100 - drag.h, drag.y + dy));
+        right = left + drag.w; bottom = top + drag.h;
+      } else {
+        if (drag.mode.includes("w")) left = Math.max(0, Math.min(right - minSize, p.x));
+        if (drag.mode.includes("e")) right = Math.min(100, Math.max(left + minSize, p.x));
+        if (drag.mode.includes("n")) top = Math.max(0, Math.min(bottom - minSize, p.y));
+        if (drag.mode.includes("s")) bottom = Math.min(100, Math.max(top + minSize, p.y));
+      }
+      applyImageCrop(left, top, right - left, bottom - top);
+    };
+    const onUp = () => { cropDragRef.current = null; };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [cropMode, sel, cropX, cropY, cropW, cropH]);
 
   const updateSaturation = (v: number) => {
     setSelSaturation(v);
@@ -3432,6 +3493,43 @@ function EditorInner() {
                 <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
               </div>
             ) : <canvas ref={canvasRef} />}
+
+            {/* Visual non-destructive crop overlay */}
+            {!pixelEditMode && cropMode && sel?.type === "image" && (() => {
+              const m = sel.calcTransformMatrix?.();
+              if (!m) return null;
+              const z = zoom / 100;
+              const iw = sel.width || 1, ih = sel.height || 1;
+              const left = (m[4] - m[0] * iw / 2 - m[2] * ih / 2) * z;
+              const top = (m[5] - m[1] * iw / 2 - m[3] * ih / 2) * z;
+              const transform = `matrix(${m[0]}, ${m[1]}, ${m[2]}, ${m[3]}, 0, 0)`;
+              const handles = [
+                ["nw", 0, 0, "nwse-resize"], ["n", 50, 0, "ns-resize"], ["ne", 100, 0, "nesw-resize"],
+                ["e", 100, 50, "ew-resize"], ["se", 100, 100, "nwse-resize"], ["s", 50, 100, "ns-resize"],
+                ["sw", 0, 100, "nesw-resize"], ["w", 0, 50, "ew-resize"],
+              ] as const;
+              return (
+                <div style={{ position:"absolute", left, top, width: iw * z, height: ih * z, transform, transformOrigin:"0 0", zIndex: 50, pointerEvents:"auto" }}>
+                  <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,.42)", pointerEvents:"none" }} />
+                  <div
+                    onPointerDown={e => startCropDrag("move", e)}
+                    style={{
+                      position:"absolute", left:`${cropX}%`, top:`${cropY}%`, width:`${cropW}%`, height:`${cropH}%`,
+                      boxSizing:"border-box", border:"2px solid white", outline:"1px solid #4f46e5", cursor:"move",
+                      boxShadow:"0 0 0 9999px rgba(0,0,0,.0)", background:"rgba(255,255,255,.01)"
+                    }}
+                  >
+                    <div style={{ position:"absolute", inset:0, boxShadow:"0 0 0 9999px rgba(0,0,0,-0.42)", pointerEvents:"none" }} />
+                    {[1,2].map(i => <div key={`v${i}`} style={{position:"absolute",left:`${i*33.333}%`,top:0,bottom:0,borderLeft:"1px solid rgba(255,255,255,.55)",pointerEvents:"none"}} />)}
+                    {[1,2].map(i => <div key={`h${i}`} style={{position:"absolute",top:`${i*33.333}%`,left:0,right:0,borderTop:"1px solid rgba(255,255,255,.55)",pointerEvents:"none"}} />)}
+                    {handles.map(([mode, x, y, cursor]) => (
+                      <div key={mode} onPointerDown={e => startCropDrag(mode, e)}
+                        style={{ position:"absolute", left:`${x}%`, top:`${y}%`, width:12, height:12, transform:"translate(-50%,-50%)", background:"white", border:"2px solid #4f46e5", borderRadius:2, cursor, zIndex:2 }} />
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Pixel editor overlay */}
             {pixelEditMode && (pixelEditImgRef.current || pixelEditLayerIdRef.current) && (() => {
