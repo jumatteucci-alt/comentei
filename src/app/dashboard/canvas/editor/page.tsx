@@ -1567,6 +1567,22 @@ function EditorInner() {
   }, [fabricLoaded, canvasWidth, canvasHeight]);
 
   useEffect(() => {
+    if (pixelTool !== "eraser" || !pixelEditMode || !pixelCanvasRef.current) return;
+    const el = pixelCanvasRef.current;
+    const ctx = el.getContext("2d")!;
+    const snap = pixelSnapshotRef.current;
+    if (!snap) return;
+    ctx.putImageData(snap, 0, 0);
+    // Desenha círculo no centro como placeholder até o mouse mover
+    const cx = el.width / 2;
+    const cy = el.height / 2;
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, pixelBrushSize / 2, 0, Math.PI * 2);
+    ctx.strokeStyle = "#4f46e5"; ctx.lineWidth = 1.5; ctx.setLineDash([3, 2]);
+    ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+  }, [pixelTool, pixelEditMode]);
+
+  useEffect(() => {
     if (!fc.current) return;
     const z = zoom / 100;
     const currentW = Math.round(canvasWidth * z);
@@ -2794,7 +2810,7 @@ function EditorInner() {
                     ctx.strokeStyle = "#4f46e5"; ctx.lineWidth = 1.5; ctx.setLineDash([3, 2]);
                     ctx.stroke(); ctx.setLineDash([]); ctx.restore();
                   }}
-                  
+
                   onKeyDown={ev => {
                     ev.stopPropagation();
                     const el = pixelCanvasRef.current!;
