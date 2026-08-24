@@ -722,7 +722,7 @@ function EditorInner() {
     "__uid", "__animLayerId", "__threeD", "__vectorBlur", "__fillGradient", "__imageAdjustments",
     "__crop", "__gradMask", "__originalSrc", "__glowEnabled", "__glowColor", "__glowBlur",
     "__glowDistance", "__glowOpacity", "__shadowOpacity", "__shadowBaseColor", "__fixedHeight",
-    "__motionPath", "__isMotionPath", "__isOpenPath", "__openPathStroke", "excludeFromExport",
+    "__motionPath", "__isMotionPath", "__isOpenPath", "__openPathStroke", "__isTextPathGuide", "__textPathGuideId", "excludeFromExport",
   ];
 
   const setAnimationLayersLive = (next: AnimationLayer[]) => {
@@ -821,7 +821,7 @@ function EditorInner() {
   const setMotionGuidesVisible = (canvas:any, visible:boolean) => {
     if (!canvas) return;
     canvas.getObjects().forEach((o:any) => {
-      if (!o.__isMotionPath) return;
+      if (!o.__isMotionPath && !o.__isTextPathGuide) return;
       o.set({ visible, selectable:visible, evented:visible, excludeFromExport:true });
       o.setCoords?.();
     });
@@ -886,6 +886,101 @@ function EditorInner() {
       animationFrameDirtyRef.current = true;
       requestAnimationFrame(() => saveAnimationFrame(currentFrameRef.current, layerId));
     }
+  };
+
+  const linkSelectionTextToPath = () => {
+    if (!fc.current || sel?.type !== "activeSelection") return;
+    const canvas = fc.current;
+    const objects = (sel as any).getObjects().filter((o:any) => !o.isControlHelper && !o.isEditPreview);
+    const guide = objects.find((o:any) => o.type === "path");
+    const text = objects.find((o:any) => ["textbox","i-text","text"].includes(o.type));
+    if (!guide || !text || objects.length !== 2) return;
+
+    guide.__uid = guide.__uid || Math.random().toString(36).slice(2);
+    text.__uid = text.__uid || Math.random().toString(36).slice(2);
+    guide.__isTextPathGuide = true;
+    guide.__textPathOriginalStroke = guide.__textPathOriginalStroke ?? guide.stroke;
+    guide.__textPathOriginalStrokeWidth = guide.__textPathOriginalStrokeWidth ?? guide.strokeWidth;
+    guide.__textPathOriginalDash = guide.__textPathOriginalDash ?? guide.strokeDashArray;
+    guide.excludeFromExport = true;
+    guide.set({ fill:null, stroke:"#6366f1", strokeWidth:2, strokeDashArray:[7,5], visible:true, selectable:true, evented:true, objectCaching:false });
+
+    text.__textPathGuideId = guide.__uid;
+    text.path = guide;
+    text.pathStartOffset = Number(text.pathStartOffset || 0);
+    text.pathSide = text.pathSide || "left";
+    text.pathAlign = text.pathAlign || "baseline";
+    text.set({ left:guide.left, top:guide.top, objectCaching:false });
+    text.dirty = true;
+    text.initDimensions?.();
+    text.setCoords?.();
+
+    const sync = () => {
+      if (!fc.current) return;
+      fc.current.getObjects().forEach((o:any) => {
+        if (o.__textPathGuideId !== guide.__uid) return;
+        o.path = guide;
+        o.set({ left:guide.left, top:guide.top });
+        o.dirty = true;
+        o.initDimensions?.();
+        o.setCoords?.();
+      });
+      fc.current.requestRenderAll();
+    };
+    if (!guide.__textPathSyncInstalled) {
+      guide.on?.("moving", sync);
+      guide.on?.("scaling", sync);
+      guide.on?.("rotating", sync);
+      guide.on?.("modified", sync);
+      guide.__textPathSyncInstalled = true;
+    }
+
+    canvas.discardActiveObject();
+    canvas.setActiveObject(text);
+    syncSel(text);
+    refreshLayers(canvas);
+    canvas.requestRenderAll();
+    if (animationModeRef.current) {
+      animationFrameDirtyRef.current = true;
+      requestAnimationFrame(() => saveAnimationFrame(currentFrameRef.current, text.__animLayerId || selectedAnimLayerIdRef.current));
+    }
+  };
+
+  const updateSelectedTextPath = (patch:Record<string,any>) => {
+    if (!fc.current || !sel || !sel.__textPathGuideId || !["textbox","i-text","text"].includes(sel.type)) return;
+    sel.set(patch);
+    sel.dirty = true;
+    sel.initDimensions?.();
+    sel.setCoords?.();
+    fc.current.requestRenderAll();
+    if (animationModeRef.current) {
+      animationFrameDirtyRef.current = true;
+      requestAnimationFrame(() => saveAnimationFrame(currentFrameRef.current, sel.__animLayerId || selectedAnimLayerIdRef.current));
+    }
+  };
+
+  const unlinkSelectedTextPath = () => {
+    if (!fc.current || !sel?.__textPathGuideId) return;
+    const canvas = fc.current;
+    const guideId = sel.__textPathGuideId;
+    const guide = canvas.getObjects().find((o:any) => o.__uid === guideId);
+    sel.path = null;
+    delete sel.__textPathGuideId;
+    sel.dirty = true;
+    sel.initDimensions?.();
+    if (guide) {
+      guide.__isTextPathGuide = false;
+      guide.excludeFromExport = false;
+      guide.set({
+        visible:true, selectable:true, evented:true,
+        stroke:guide.__textPathOriginalStroke || "#4f46e5",
+        strokeWidth:Number(guide.__textPathOriginalStrokeWidth || 2.5),
+        strokeDashArray:guide.__textPathOriginalDash || null,
+      });
+    }
+    sel.setCoords?.();
+    refreshLayers(canvas);
+    canvas.requestRenderAll();
   };
 
   const updateSelectedMotionPath = (patch:Record<string,any>) => {
@@ -3244,21 +3339,21 @@ function EditorInner() {
   }
 
   const TEXT_3D_FONT_URLS: Record<string,string> = {
-    "Montserrat":"https://fonts.gstatic.com/s/montserrat/v29/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCtr6Hw5aXo.woff",
-    "Playfair Display":"https://fonts.gstatic.com/s/playfairdisplay/v36/nuFiD-vYSZviVYUb_rj3ij__anPXDTnCjmHKM4nYO7KN_qiTbtA.woff",
-    "Roboto":"https://fonts.gstatic.com/s/roboto/v32/KFOmCnqEu92Fr1Mu4mxKKTU1Kg.woff",
-    "Oswald":"https://fonts.gstatic.com/s/oswald/v53/TK3_WkUHHAIjg75cFRf3bXL8LICs13NvgUFoZAaRliE.woff",
-    "Lato":"https://fonts.gstatic.com/s/lato/v24/S6uyw4BMUTPHjx4wXiWtFCc.woff",
-    "Raleway":"https://fonts.gstatic.com/s/raleway/v34/1Ptrg8zYS_SKggPNwJYtWqhPANqczVsq4A.woff",
-    "Pacifico":"https://fonts.gstatic.com/s/pacifico/v22/FwZY7-Qmy14u9lezJ-6H6MmBp0u-.woff",
-    "Dancing Script":"https://fonts.gstatic.com/s/dancingscript/v25/If2cXTr6YS-zF4S-kcSWSVi_sxjsohD9F50Ruu7BMSo3ROp6.woff",
-    "Bebas Neue":"https://fonts.gstatic.com/s/bebasneue/v14/JTUSjIg69CK48gW7PXoo9WlhyyTh89Y.woff",
+    "Montserrat":"https://raw.githubusercontent.com/JulietaUla/Montserrat/master/fonts/ttf/Montserrat-Regular.ttf",
+    "Playfair Display":"https://raw.githubusercontent.com/google/fonts/main/ofl/playfairdisplay/PlayfairDisplay%5Bwght%5D.ttf",
+    "Roboto":"https://raw.githubusercontent.com/google/fonts/main/ofl/roboto/Roboto%5Bwdth,wght%5D.ttf",
+    "Oswald":"https://raw.githubusercontent.com/google/fonts/main/ofl/oswald/Oswald%5Bwght%5D.ttf",
+    "Lato":"https://raw.githubusercontent.com/google/fonts/main/ofl/lato/Lato-Regular.ttf",
+    "Raleway":"https://raw.githubusercontent.com/google/fonts/main/ofl/raleway/Raleway%5Bwght%5D.ttf",
+    "Pacifico":"https://raw.githubusercontent.com/google/fonts/main/ofl/pacifico/Pacifico-Regular.ttf",
+    "Dancing Script":"https://raw.githubusercontent.com/google/fonts/main/ofl/dancingscript/DancingScript%5Bwght%5D.ttf",
+    "Bebas Neue":"https://raw.githubusercontent.com/google/fonts/main/ofl/bebasneue/BebasNeue-Regular.ttf",
   };
 
-  async function get3DFont(family:string) {
+  const getVectorFont = async (family:string) => {
     const opentype = (window as any).opentype;
     if (!opentype) return null;
-    const store = ((window as any).__cmc3DFontCache ||= new Map());
+    const store = ((window as any).__cmcVectorFontCache ||= new Map());
     const key = TEXT_3D_FONT_URLS[family] ? family : (family === "Georgia" ? "Playfair Display" : family === "Impact" ? "Oswald" : "Roboto");
     if (store.has(key)) return store.get(key);
     const url = TEXT_3D_FONT_URLS[key] || TEXT_3D_FONT_URLS.Roboto;
@@ -3266,7 +3361,14 @@ function EditorInner() {
       const font = await opentype.load(url);
       store.set(key, font);
       return font;
-    } catch { return null; }
+    } catch (err) {
+      console.warn("Falha ao carregar fonte vetorial", key, url, err);
+      return null;
+    }
+  };
+
+  async function get3DFont(family:string) {
+    return getVectorFont(family);
   }
 
   async function build3DTextShapes(obj:any, T:any) {
@@ -3911,26 +4013,18 @@ function EditorInner() {
       const uid        = sel.__uid;
 
       const FONT_URLS: Record<string, string> = {
-        "Montserrat":       "https://fonts.gstatic.com/s/montserrat/v29/JTUHjIg1_i6t8kCHKm4532VJOt5-QNFgpCtr6Hw5aXo.woff",
-        "Playfair Display": "https://fonts.gstatic.com/s/playfairdisplay/v36/nuFiD-vYSZviVYUb_rj3ij__anPXDTnCjmHKM4nYO7KN_qiTbtA.woff",
-        "Roboto":           "https://fonts.gstatic.com/s/roboto/v32/KFOmCnqEu92Fr1Mu4mxKKTU1Kg.woff",
-        "Oswald":           "https://fonts.gstatic.com/s/oswald/v53/TK3_WkUHHAIjg75cFRf3bXL8LICs13NvgUFoZAaRliE.woff",
-        "Lato":             "https://fonts.gstatic.com/s/lato/v24/S6uyw4BMUTPHjx4wXiWtFCc.woff",
-        "Raleway":          "https://fonts.gstatic.com/s/raleway/v34/1Ptxg8zYS_SKggPN4iEgvnHyvveLxVsEpYCP.woff",
-        "Pacifico":         "https://fonts.gstatic.com/s/pacifico/v22/FwZY7-Qmy14u9lezJ96A4sijpFu_.woff",
-        "Dancing Script":   "https://fonts.gstatic.com/s/dancingscript/v25/If2cXTr6YS-zF4S-kcSWSVi_sxjsohD9F50Ruu7BMSo3ROp6.woff",
-        "Bebas Neue":       "https://fonts.gstatic.com/s/bebasneue/v14/JTUSjIg69CK48gW7PXoo9WlhyyTh89Y.woff",
+        "Montserrat":       "https://raw.githubusercontent.com/JulietaUla/Montserrat/master/fonts/ttf/Montserrat-Regular.ttf",
+        "Playfair Display": "https://raw.githubusercontent.com/google/fonts/main/ofl/playfairdisplay/PlayfairDisplay%5Bwght%5D.ttf",
+        "Roboto":           "https://raw.githubusercontent.com/google/fonts/main/ofl/roboto/Roboto%5Bwdth,wght%5D.ttf",
+        "Oswald":           "https://raw.githubusercontent.com/google/fonts/main/ofl/oswald/Oswald%5Bwght%5D.ttf",
+        "Lato":             "https://raw.githubusercontent.com/google/fonts/main/ofl/lato/Lato-Regular.ttf",
+        "Raleway":          "https://raw.githubusercontent.com/google/fonts/main/ofl/raleway/Raleway%5Bwght%5D.ttf",
+        "Pacifico":         "https://raw.githubusercontent.com/google/fonts/main/ofl/pacifico/Pacifico-Regular.ttf",
+        "Dancing Script":   "https://raw.githubusercontent.com/google/fonts/main/ofl/dancingscript/DancingScript%5Bwght%5D.ttf",
+        "Bebas Neue":       "https://raw.githubusercontent.com/google/fonts/main/ofl/bebasneue/BebasNeue-Regular.ttf",
       };
 
-      const loadFont = async (family: string): Promise<any> => {
-        const url = FONT_URLS[family];
-        if (url) {
-          try { return await opentype.load(url); } catch {}
-        }
-        return null;
-      };
-
-      const font = await loadFont(fontFamily);
+      const font = await getVectorFont(fontFamily);
 
       if (!font) {
         const svgData = sel.toSVG();
@@ -4234,7 +4328,11 @@ function EditorInner() {
     canvas.setZoom(1);
     canvas.setWidth(canvasWidth);
     canvas.setHeight(canvasHeight);
+    const editorGuides = canvas.getObjects().filter((o:any) => o.__isMotionPath || o.__isTextPathGuide).map((o:any) => ({ o, visible:o.visible }));
+    editorGuides.forEach(({o}:any) => o.set("visible", false));
+    canvas.requestRenderAll();
     const dataUrl = canvas.toDataURL({ format:"png", multiplier:1 });
+    editorGuides.forEach(({o,visible}:any) => o.set("visible", visible));
     canvas.setZoom(currentZoom);
     canvas.setWidth(Math.round(canvasWidth * currentZoom));
     canvas.setHeight(Math.round(canvasHeight * currentZoom));
@@ -5431,11 +5529,20 @@ function EditorInner() {
                 const guide = objs.find((o:any) => o.type === "path");
                 const target = objs.find((o:any) => o !== guide && !o.__isMotionPath);
                 if (!guide || !target || objs.length !== 2) return null;
+                const textTarget = ["textbox","i-text","text"].includes(target.type);
                 return (
-                  <button onClick={linkSelectionToMotionPath}
-                    className="w-full py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition text-xs font-medium">
-                    ↝ Vincular ao caminho
-                  </button>
+                  <div className="flex flex-col gap-2">
+                    {textTarget && (
+                      <button onClick={linkSelectionTextToPath}
+                        className="w-full py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition text-xs font-medium">
+                        ⌁ Texto no caminho
+                      </button>
+                    )}
+                    <button onClick={linkSelectionToMotionPath}
+                      className="w-full py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition text-xs font-medium">
+                      ↝ Animar pelo caminho
+                    </button>
+                  </div>
                 );
               })()}
 
@@ -5690,6 +5797,26 @@ function EditorInner() {
                   >
                     {converting ? "Convertendo..." : "⟳ Converter em vetor"}
                   </button>
+                  {sel.__textPathGuideId && (
+                    <div className="flex flex-col gap-2 p-2 rounded-lg border border-violet-100 bg-violet-50/30">
+                      <Sec title="Texto no caminho" />
+                      <SliderRow label="Posição" value={Math.round(Number(sel.pathStartOffset || 0))} min={-500} max={1500} unit="px" onChange={v => updateSelectedTextPath({ pathStartOffset:v })} />
+                      <div className="grid grid-cols-2 gap-2">
+                        <button onClick={() => updateSelectedTextPath({ pathSide:"left" })}
+                          className={`py-1.5 rounded-lg border text-xs ${sel.pathSide !== "right" ? "bg-violet-600 text-white border-violet-600" : "bg-white text-gray-500 border-gray-200"}`}>Lado A</button>
+                        <button onClick={() => updateSelectedTextPath({ pathSide:"right" })}
+                          className={`py-1.5 rounded-lg border text-xs ${sel.pathSide === "right" ? "bg-violet-600 text-white border-violet-600" : "bg-white text-gray-500 border-gray-200"}`}>Lado B</button>
+                      </div>
+                      <select value={sel.pathAlign || "baseline"} onChange={e => updateSelectedTextPath({ pathAlign:e.target.value })}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-lg bg-white text-xs focus:outline-none focus:border-violet-400">
+                        <option value="baseline">Na linha</option>
+                        <option value="center">Centralizado</option>
+                        <option value="ascender">Acima</option>
+                        <option value="descender">Abaixo</option>
+                      </select>
+                      <button onClick={unlinkSelectedTextPath} className="w-full py-1.5 rounded-lg border border-gray-200 text-gray-500 bg-white text-xs hover:bg-gray-50">Remover caminho do texto</button>
+                    </div>
+                  )}
                 </>
               )}
 
