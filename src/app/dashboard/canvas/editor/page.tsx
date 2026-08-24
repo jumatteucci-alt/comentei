@@ -410,26 +410,44 @@ function EditorInner() {
   const rectBeforeScale = useRef<{ rx: number; ry: number } | null>(null);
 
   const applyVectorBlurRendering = (obj: any, value: number) => {
-    if (!obj || obj.type === "image") return;
-    obj.__vectorBlur = Math.max(0, value || 0);
+    if (!obj) return;
+    const blurValue = Math.max(0, value || 0);
+    obj.__vectorBlur = blurValue;
+
+    if (obj.__blurOriginalObjectCaching === undefined) {
+      obj.__blurOriginalObjectCaching = obj.objectCaching !== false;
+    }
+
     if (!obj.__vectorBlurOriginalRender) {
       obj.__vectorBlurOriginalRender = obj._render;
       obj._render = function(ctx: CanvasRenderingContext2D) {
         ctx.save();
-        const blurValue = Math.max(0, this.__vectorBlur || 0);
-        if (blurValue > 0) ctx.filter = `blur(${Math.max(0.25, blurValue * 0.3)}px)`;
+        const v = Math.max(0, Number(this.__vectorBlur || 0));
+        if (v > 0) {
+          // Apply blur to the fully rendered object, not to its source pixels.
+          // This lets the blur bleed outside vector and image bounds instead of
+          // being clipped to Fabric's object/image cache rectangle.
+          ctx.filter = `blur(${Math.max(0.5, v * 0.35)}px)`;
+        }
         this.__vectorBlurOriginalRender.call(this, ctx);
         ctx.restore();
       };
     }
-    obj.set({ padding: obj.__vectorBlur > 0 ? Math.ceil(obj.__vectorBlur * 1.2) : 0 });
+
+    // Fabric object caching clips filter pixels to the cache bounds. Disable it
+    // while blur is enabled so soft edges can extend naturally past the object.
+    obj.set({
+      objectCaching: blurValue > 0 ? false : !!obj.__blurOriginalObjectCaching,
+      padding: blurValue > 0 ? Math.ceil(blurValue * 1.8) : 0,
+    });
     obj.dirty = true;
+    obj.setCoords?.();
   };
 
   const copyBlurMetadata = (source: any, target: any) => {
     if (!source || !target) return;
     const blur = source.__vectorBlur ?? (source.__uid ? blurValueMap.current.get(source.__uid) : 0) ?? 0;
-    if (target.type !== "image" && blur > 0) {
+    if (blur > 0) {
       target.__vectorBlur = blur;
       applyVectorBlurRendering(target, blur);
     }
@@ -2886,19 +2904,18 @@ function EditorInner() {
     else blurValueMap.current.delete(uid);
 
     if (sel.type === "image") {
-      const fabric = (window as any).fabric;
+      // Remove the old Fabric source-pixel Blur filter. It is constrained to the
+      // image rectangle and therefore leaves a hard outer edge. Other image
+      // adjustment filters remain intact.
       const filters = (sel.filters || []).filter((f: any) => f.type !== "Blur");
-      if (v > 0) filters.push(new fabric.Image.filters.Blur({ blur: v / 100 }));
-      sel.filters = filters;
-      sel.set({ padding: v > 0 ? Math.round(v * 0.8) : 0 });
-      sel.applyFilters();
-      sel.dirty = true;
-      fc.current.requestRenderAll();
-      return;
+      if (filters.length !== (sel.filters || []).length) {
+        sel.filters = filters;
+        sel.applyFilters();
+      }
     }
 
-    // Vector/text objects remain true Fabric objects. Blur is applied only at render time,
-    // so copy/paste, node editing, fills and strokes remain fully editable.
+    // Use the same post-render blur for vectors, text and images. This preserves
+    // editability and lets the blur extend beyond the object's visible bounds.
     applyVectorBlurRendering(sel, v);
     fc.current.requestRenderAll();
   };
