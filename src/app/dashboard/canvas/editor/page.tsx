@@ -682,6 +682,7 @@ function EditorInner() {
   const currentFrameRef = useRef(0);
   const animationBackgroundsRef = useRef<Record<number, AnimationBackground>>({});
   const timelineScrollRef = useRef<HTMLDivElement | null>(null);
+  const animationFrameDirtyRef = useRef(false);
 
   const fitCanvasToScreen = useCallback(() => {
     if (!canvasContainerRef.current) return;
@@ -812,10 +813,15 @@ function EditorInner() {
       if (!o.__uid) o.__uid = Math.random().toString(36).slice(2);
     });
     const layerObjects = objects.filter((o:any) => o.__animLayerId === layerId).map(serializeAnimationObject);
-    const next = animationLayersRef.current.map(layer =>
-      layer.id === layerId ? { ...layer, frames: { ...layer.frames, [frame]: layerObjects } } : layer
-    );
+    const next = animationLayersRef.current.map(layer => {
+      if (layer.id !== layerId) return layer;
+      const frames = { ...layer.frames };
+      if (layerObjects.length > 0) frames[frame] = layerObjects;
+      else delete frames[frame];
+      return { ...layer, frames };
+    });
     setAnimationLayersLive(next);
+    animationFrameDirtyRef.current = false;
     const nextBg = {
       ...animationBackgroundsRef.current,
       [frame]: { solid: bgSolid, gradient: cloneAnimationGradient(bgGradient) },
@@ -829,14 +835,15 @@ function EditorInner() {
     const layer = layers.find(l => l.id === layerId);
     if (!layer || layer.frames[frame] !== undefined) return;
     const inherited = resolveAnimationLayerFrame(layer, frame);
-    const cloned = JSON.parse(JSON.stringify(inherited || []));
+    if (!inherited || inherited.length === 0) return;
+    const cloned = JSON.parse(JSON.stringify(inherited));
     setAnimationLayersLive(layers.map(l => l.id === layerId ? { ...l, frames: { ...l.frames, [frame]: cloned } } : l));
   };
 
   const loadAnimationFrame = (frame: number, saveCurrent = true, createKeyframe = false, keyLayerId?: string) => {
     if (!fc.current || !animationModeRef.current) return;
     const target = Math.max(0, Math.min(100, Math.round(frame)));
-    if (saveCurrent) saveAnimationFrame(currentFrameRef.current);
+    if (saveCurrent && animationFrameDirtyRef.current) saveAnimationFrame(currentFrameRef.current);
     const activeLayer = keyLayerId || selectedAnimLayerIdRef.current;
     if (createKeyframe) ensureAnimationKeyframe(activeLayer, target);
 
@@ -859,6 +866,7 @@ function EditorInner() {
       setBgGradient(cloneAnimationGradient(background.gradient));
       currentFrameRef.current = target;
       setCurrentFrame(target);
+      animationFrameDirtyRef.current = false;
       refreshLayers(canvas);
       canvas.requestRenderAll();
       savingHistory.current = false;
@@ -891,10 +899,23 @@ function EditorInner() {
     if (!animationModeRef.current) return;
     saveAnimationFrame(currentFrameRef.current);
     const id = `anim-layer-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
-    const next = [...animationLayersRef.current, { id, name: `Camada ${animationLayersRef.current.length + 1}`, frames: { [currentFrameRef.current]: [] }, easing: "easeInOut" as AnimationEasing }];
+    const next = [...animationLayersRef.current, { id, name: `Camada ${animationLayersRef.current.length + 1}`, frames: {}, easing: "easeInOut" as AnimationEasing }];
     setAnimationLayersLive(next);
     selectedAnimLayerIdRef.current = id;
     setSelectedAnimLayerId(id);
+  };
+
+  const reorderAnimationLayers = (draggedId: string, targetId: string) => {
+    if (!draggedId || draggedId === targetId) return;
+    const display = [...animationLayersRef.current].reverse();
+    const from = display.findIndex(l => l.id === draggedId);
+    const to = display.findIndex(l => l.id === targetId);
+    if (from < 0 || to < 0) return;
+    const [moved] = display.splice(from, 1);
+    display.splice(to, 0, moved);
+    const next = display.reverse();
+    setAnimationLayersLive(next);
+    if (animationModeRef.current) loadAnimationFrame(currentFrameRef.current, false, false);
   };
 
   const updateAnimationLayerEasing = (id: string, easing: AnimationEasing) => {
@@ -917,7 +938,7 @@ function EditorInner() {
 
   const playAnimation = () => {
     if (!animationModeRef.current) return;
-    saveAnimationFrame(currentFrameRef.current);
+    if (animationFrameDirtyRef.current) saveAnimationFrame(currentFrameRef.current);
     setAnimationPlaying(true);
   };
 
@@ -2471,6 +2492,10 @@ function EditorInner() {
           if (obj?.type !== "textbox" && obj?.type !== "i-text") {
             syncSel(obj);
           }
+          if (animationModeRef.current && !animationLoadingRef.current && obj && !obj.isControlHelper && !obj.isEditPreview) {
+            animationFrameDirtyRef.current = true;
+            requestAnimationFrame(() => saveAnimationFrame(currentFrameRef.current, obj.__animLayerId || selectedAnimLayerIdRef.current));
+          }
         }
       });
       canvas.on("object:added", (e:any) => {
@@ -2478,9 +2503,24 @@ function EditorInner() {
         if (animationModeRef.current && !animationLoadingRef.current && obj && !obj.isControlHelper && !obj.isEditPreview && !obj.__animLayerId) {
           obj.__animLayerId = selectedAnimLayerIdRef.current;
         }
-        if (!savingHistory.current) { saveState(); refreshLayers(canvas); }
+        if (!savingHistory.current) {
+          saveState(); refreshLayers(canvas);
+          if (animationModeRef.current && !animationLoadingRef.current && obj && !obj.isControlHelper && !obj.isEditPreview) {
+            animationFrameDirtyRef.current = true;
+            requestAnimationFrame(() => saveAnimationFrame(currentFrameRef.current, obj.__animLayerId || selectedAnimLayerIdRef.current));
+          }
+        }
       });
-      canvas.on("object:removed",  () => { if (!savingHistory.current) refreshLayers(canvas); });
+      canvas.on("object:removed", (e:any) => {
+        if (!savingHistory.current) {
+          refreshLayers(canvas);
+          const obj = e.target;
+          if (animationModeRef.current && !animationLoadingRef.current && obj && !obj.isControlHelper && !obj.isEditPreview) {
+            animationFrameDirtyRef.current = true;
+            requestAnimationFrame(() => saveAnimationFrame(currentFrameRef.current, obj.__animLayerId || selectedAnimLayerIdRef.current));
+          }
+        }
+      });
 
       canvas.on("mouse:dblclick", (e: any) => {
         if (isEditingNodesRef.current) {
@@ -2871,6 +2911,10 @@ function EditorInner() {
   const upd = (props: Record<string, any>) => {
     if (!fc.current || !sel) return;
     sel.set(props);
+    if (animationModeRef.current && !animationLoadingRef.current && sel.type !== "activeSelection") {
+      animationFrameDirtyRef.current = true;
+      requestAnimationFrame(() => saveAnimationFrame(currentFrameRef.current, sel.__animLayerId || selectedAnimLayerIdRef.current));
+    }
     if (isText && sel.fontFamily) {
       document.fonts.load(`${sel.fontSize || 48}px "${sel.fontFamily}"`).finally(() => {
         fc.current?.requestRenderAll();
@@ -5622,13 +5666,13 @@ function EditorInner() {
                 title={animationPlaying ? "Parar" : "Reproduzir"}>
                 {animationPlaying ? "■" : "▶"}
               </button>
-              <button onClick={() => loadAnimationFrame(Math.max(0, currentFrame - 1), true, false)} className="w-7 h-7 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50" title="Frame anterior">‹</button>
-              <button onClick={() => loadAnimationFrame(Math.min(100, currentFrame + 1), true, false)} className="w-7 h-7 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50" title="Próximo frame">›</button>
+              <button onClick={() => loadAnimationFrame(Math.max(0, currentFrame - 1), false, false)} className="w-7 h-7 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50" title="Frame anterior">‹</button>
+              <button onClick={() => loadAnimationFrame(Math.min(100, currentFrame + 1), false, false)} className="w-7 h-7 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50" title="Próximo frame">›</button>
             </div>
             <div className="flex items-center gap-1 text-xs text-gray-500">
               <span>Frame</span>
               <input type="number" min={0} max={100} value={currentFrame}
-                onChange={e => loadAnimationFrame(Math.max(0, Math.min(100, +e.target.value || 0)), true, true)}
+                onChange={e => loadAnimationFrame(Math.max(0, Math.min(100, +e.target.value || 0)), false, false)}
                 className="w-14 h-7 px-2 border border-gray-200 rounded-lg text-center focus:outline-none focus:border-indigo-400" />
               <span className="text-gray-300">/ 100</span>
             </div>
@@ -5652,7 +5696,7 @@ function EditorInner() {
               </select>
             </div>
             <div className="ml-auto text-[10px] text-gray-400">
-              Clique em um frame para criar/editar um keyframe · cada linha é uma camada de animação
+              Clique = visualizar · edite para criar keyframe · duplo clique = keyframe explícito
             </div>
           </div>
 
@@ -5663,10 +5707,15 @@ function EditorInner() {
                 <button onClick={addAnimationLayer} className="w-5 h-5 rounded text-indigo-600 hover:bg-indigo-50 text-sm" title="Nova camada">＋</button>
               </div>
               <div className="overflow-y-auto" style={{maxHeight: 132}}>
-                {animationLayers.map(layer => (
+                {[...animationLayers].reverse().map(layer => (
                   <div key={layer.id}
+                    draggable
+                    onDragStart={e => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("anim-layer-id", layer.id); }}
+                    onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
+                    onDrop={e => { e.preventDefault(); reorderAnimationLayers(e.dataTransfer.getData("anim-layer-id"), layer.id); }}
                     onClick={() => { selectedAnimLayerIdRef.current = layer.id; setSelectedAnimLayerId(layer.id); }}
-                    className={`h-8 px-2 flex items-center gap-1 border-b border-gray-100 cursor-pointer ${selectedAnimLayerId === layer.id ? "bg-indigo-50 text-indigo-700" : "text-gray-600 hover:bg-white"}`}>
+                    className={`h-8 px-2 flex items-center gap-1 border-b border-gray-100 cursor-grab active:cursor-grabbing ${selectedAnimLayerId === layer.id ? "bg-indigo-50 text-indigo-700" : "text-gray-600 hover:bg-white"}`}>
+                    <span className="text-gray-300 select-none text-[10px]" title="Arraste para reorganizar">⋮⋮</span>
                     <span className="w-2 h-2 rounded-full bg-indigo-400 flex-shrink-0" />
                     <input value={layer.name}
                       onClick={e => e.stopPropagation()}
@@ -5687,14 +5736,16 @@ function EditorInner() {
               <div style={{minWidth: 101 * 28}}>
                 <div className="h-7 flex sticky top-0 bg-white z-10 border-b border-gray-200">
                   {Array.from({length:101}, (_, frame) => (
-                    <div key={frame} style={{width:28,minWidth:28}} className={`h-7 border-r border-gray-100 relative ${currentFrame===frame ? "bg-indigo-50" : ""}`}>
+                    <button key={frame} onClick={() => loadAnimationFrame(frame, false, false)}
+                      style={{width:28,minWidth:28}} className={`h-7 border-r border-gray-100 relative hover:bg-indigo-50 ${currentFrame===frame ? "bg-indigo-50" : ""}`}
+                      title={`Visualizar frame ${frame}`}>
                       {frame % 5 === 0 && <span className={`absolute left-1 top-1 text-[8px] ${currentFrame===frame ? "text-indigo-600 font-bold" : "text-gray-400"}`}>{frame}</span>}
                       {currentFrame===frame && <div className="absolute left-1/2 top-0 bottom-0 w-px bg-indigo-500" />}
-                    </div>
+                    </button>
                   ))}
                 </div>
 
-                {animationLayers.map(layer => (
+                {[...animationLayers].reverse().map(layer => (
                   <div key={layer.id} className={`h-8 flex border-b border-gray-100 ${selectedAnimLayerId===layer.id ? "bg-indigo-50/20" : ""}`}>
                     {Array.from({length:101}, (_, frame) => {
                       const hasKey = layer.frames[frame] !== undefined;
@@ -5708,7 +5759,12 @@ function EditorInner() {
                           onClick={() => {
                             selectedAnimLayerIdRef.current = layer.id;
                             setSelectedAnimLayerId(layer.id);
-                            loadAnimationFrame(frame, true, true, layer.id);
+                            loadAnimationFrame(frame, false, false, layer.id);
+                          }}
+                          onDoubleClick={() => {
+                            selectedAnimLayerIdRef.current = layer.id;
+                            setSelectedAnimLayerId(layer.id);
+                            loadAnimationFrame(frame, false, true, layer.id);
                           }}
                           className={`relative h-8 border-r border-gray-100 flex items-center justify-center hover:bg-indigo-50/70 ${active ? "bg-indigo-50" : ""}`}
                           style={{width:28,minWidth:28}}
