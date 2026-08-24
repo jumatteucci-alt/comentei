@@ -24,3 +24,5 @@ jobs:
           git add src/app/dashboard/canvas/editor/page.tsx
           git commit -m "fix: keep text aligned to a single visible path guide"
           git push origin main
+
+# retrigger
