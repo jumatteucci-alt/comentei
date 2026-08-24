@@ -24,3 +24,5 @@ jobs:
           git add src/app/dashboard/canvas/editor/page.tsx
           git commit -m "fix: keep open Pen paths visible after deselection"
           git push origin main
+
+# retrigger
