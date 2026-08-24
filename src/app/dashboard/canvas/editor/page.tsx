@@ -4134,17 +4134,17 @@ function EditorInner() {
   };
 
   const stopPen = () => {
+    if (activeToolRef.current === "pen" && penPoints.current.length >= 2) {
+      finalizePen(false);
+      return;
+    }
     setActiveTool("select"); activeToolRef.current = "select";
-    // A finalized path is already a real Fabric object. Clear this undo-only
-    // pointer before temporary Pen cleanup so switching tools cannot treat the
-    // permanent object as part of the drawing session.
     lastFinalizedPath.current = null;
     cancelPenRef.current();
     if (fc.current) {
       fc.current.defaultCursor = "default";
       fc.current.hoverCursor = "move";
       fc.current.selection = true;
-      fc.current.isDrawingMode = false;
       fc.current.skipTargetFind = false;
     }
   };
@@ -4349,7 +4349,16 @@ function EditorInner() {
 
       <div className="flex flex-1 overflow-hidden">
         {/* ── LEFT TOOLBAR ─────────────────────────────── */}
-        <div className="w-14 bg-white border-r border-gray-200 flex flex-col items-center py-3 gap-1 flex-shrink-0 overflow-y-auto">
+        <div
+          onPointerDownCapture={e => {
+            if (pixelEditMode || activeToolRef.current !== "pen" || penPoints.current.length < 2) return;
+            const action = (e.target as HTMLElement).closest("button,label") as HTMLElement | null;
+            if (!action) return;
+            const title = action.getAttribute("title") || "";
+            if (title.startsWith("Caneta") || title.startsWith("Fechar forma") || title.startsWith("Finalizar aberto") || title.startsWith("Cancelar")) return;
+            finalizePenRef.current(false);
+          }}
+          className="w-14 bg-white border-r border-gray-200 flex flex-col items-center py-3 gap-1 flex-shrink-0 overflow-y-auto">
 
           {pixelEditMode ? (
             /* ── Pixel edit tools ── */
