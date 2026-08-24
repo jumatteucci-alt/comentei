@@ -722,7 +722,7 @@ function EditorInner() {
     "__uid", "__animLayerId", "__threeD", "__vectorBlur", "__fillGradient", "__imageAdjustments",
     "__crop", "__gradMask", "__originalSrc", "__glowEnabled", "__glowColor", "__glowBlur",
     "__glowDistance", "__glowOpacity", "__shadowOpacity", "__shadowBaseColor", "__fixedHeight",
-    "__motionPath", "__isMotionPath", "excludeFromExport",
+    "__motionPath", "__isMotionPath", "__isOpenPath", "excludeFromExport",
   ];
 
   const setAnimationLayersLive = (next: AnimationLayer[]) => {
@@ -915,7 +915,12 @@ function EditorInner() {
     if (guide) {
       guide.__isMotionPath = false;
       guide.excludeFromExport = false;
-      guide.set({ visible:true, selectable:true, evented:true, strokeDashArray:null, opacity:1 });
+      guide.set({
+        visible:true, selectable:true, evented:true, strokeDashArray:null, opacity:1,
+        fill: guide.__isOpenPath ? null : guide.fill,
+        stroke: guide.stroke || "#000000",
+        strokeWidth: Math.max(2, Number(guide.strokeWidth || 2)),
+      });
     }
     setMotionPathVersion(v => v + 1);
     fc.current.requestRenderAll();
@@ -4045,11 +4050,16 @@ function EditorInner() {
     }
 
     const path = new fabric.Path(d, {
-      fill: close ? (selFill !== "transparent" ? selFill : "#4f46e5") : "transparent",
-      stroke: "#000000",
-      strokeWidth: 2,
+      // Open Pen paths are permanent vector strokes. They must not depend on a
+      // closed fill to stay visible/selectable, because they are also valid
+      // Motion Path guides.
+      fill: close ? (selFill !== "transparent" ? selFill : "#4f46e5") : null,
+      stroke: close ? "#000000" : (selStroke && selStroke !== "transparent" ? selStroke : "#000000"),
+      strokeWidth: close ? 2 : Math.max(2, Number(selStrokeW || 2)),
       strokeUniform: true,
+      objectCaching: false,
     });
+    path.__isOpenPath = !close;
 
     penLines.current.forEach(l => canvas.remove(l));
     penDots.current.forEach(d => canvas.remove(d));
@@ -4059,8 +4069,12 @@ function EditorInner() {
     }
     penLines.current = [];
     penDots.current = [];
+    // Finalizing must fully detach the permanent path from the temporary Pen
+    // session. Otherwise later Pen cleanup can leave stale geometry/state.
+    penPoints.current = [];
+    penCurveHandles.current = [];
 
-    path.set({ selectable: true, evented: true, hasControls: true, hasBorders: true, padding: Math.max(Number(path.padding || 0), 8) });
+    path.set({ selectable: true, evented: true, visible: true, hasControls: true, hasBorders: true, padding: Math.max(Number(path.padding || 0), 8) });
     path.setCoords();
     canvas.add(path);
     canvas.setActiveObject(path);
