@@ -24,3 +24,5 @@ jobs:
           git add src/app/dashboard/canvas/editor/page.tsx
           git commit -m "fix: prepare Fabric path segments for text on path"
           git push origin main
+
+# retrigger
