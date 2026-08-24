@@ -24,3 +24,5 @@ jobs:
           git add src/app/dashboard/canvas/editor/page.tsx
           git commit -m "feat: add motion paths and WebM animation export"
           git push origin main
+
+# retrigger motion path export
