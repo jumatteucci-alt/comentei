@@ -722,7 +722,7 @@ function EditorInner() {
     "__uid", "__animLayerId", "__threeD", "__vectorBlur", "__fillGradient", "__imageAdjustments",
     "__crop", "__gradMask", "__originalSrc", "__glowEnabled", "__glowColor", "__glowBlur",
     "__glowDistance", "__glowOpacity", "__shadowOpacity", "__shadowBaseColor", "__fixedHeight",
-    "__motionPath", "__isMotionPath", "__isOpenPath", "excludeFromExport",
+    "__motionPath", "__isMotionPath", "__isOpenPath", "__openPathStroke", "excludeFromExport",
   ];
 
   const setAnimationLayersLive = (next: AnimationLayer[]) => {
@@ -2715,9 +2715,19 @@ function EditorInner() {
         try { canvas.loadFromJSON(JSON.parse(json), () => { try { canvas.renderAll(); refreshLayers(canvas); } catch {} savingHistory.current = false; }); } catch { savingHistory.current = false; }
       };
 
-      canvas.on("selection:created", () => syncSel(canvas.getActiveObject()));
-      canvas.on("selection:updated", () => syncSel(canvas.getActiveObject()));
-      canvas.on("selection:cleared", () => syncSel(null));
+      const keepOpenPenPathsVisible = () => {
+        canvas.getObjects().forEach((o:any) => {
+          if (!o.__isOpenPath || o.__isMotionPath) return;
+          const currentStroke = String(o.stroke || "");
+          const badStroke = !currentStroke || currentStroke === "transparent" || currentStroke === "rgba(0,0,0,0)";
+          if (badStroke) o.set("stroke", o.__openPathStroke || "#4f46e5");
+          o.set({ visible:true, opacity: Number.isFinite(Number(o.opacity)) ? o.opacity : 1, objectCaching:false });
+          o.setCoords?.();
+        });
+      };
+      canvas.on("selection:created", () => { keepOpenPenPathsVisible(); syncSel(canvas.getActiveObject()); });
+      canvas.on("selection:updated", () => { keepOpenPenPathsVisible(); syncSel(canvas.getActiveObject()); });
+      canvas.on("selection:cleared", () => { keepOpenPenPathsVisible(); syncSel(null); canvas.requestRenderAll(); });
       canvas.on("text:changed", (e:any) => { if (e.target?.__threeD?.enabled) refreshThreeDObject(e.target); });
       canvas.on("object:modified", (e: any) => {
         if (!savingHistory.current) {
@@ -4050,16 +4060,19 @@ function EditorInner() {
     }
 
     const path = new fabric.Path(d, {
-      // Open Pen paths are permanent vector strokes. They must not depend on a
-      // closed fill to stay visible/selectable, because they are also valid
-      // Motion Path guides.
+      // Open Pen paths are permanent vector strokes. Do not inherit the last
+      // selected object's border color: a white/transparent stroke looked like
+      // the path disappeared as soon as the Fabric selection outline went away.
       fill: close ? (selFill !== "transparent" ? selFill : "#4f46e5") : null,
-      stroke: close ? "#000000" : (selStroke && selStroke !== "transparent" ? selStroke : "#000000"),
-      strokeWidth: close ? 2 : Math.max(2, Number(selStrokeW || 2)),
+      stroke: close ? "#000000" : "#4f46e5",
+      strokeWidth: close ? 2 : 2.5,
       strokeUniform: true,
       objectCaching: false,
+      opacity: 1,
+      visible: true,
     });
     path.__isOpenPath = !close;
+    if (!close) path.__openPathStroke = "#4f46e5";
 
     penLines.current.forEach(l => canvas.remove(l));
     penDots.current.forEach(d => canvas.remove(d));
@@ -4122,6 +4135,10 @@ function EditorInner() {
 
   const stopPen = () => {
     setActiveTool("select"); activeToolRef.current = "select";
+    // A finalized path is already a real Fabric object. Clear this undo-only
+    // pointer before temporary Pen cleanup so switching tools cannot treat the
+    // permanent object as part of the drawing session.
+    lastFinalizedPath.current = null;
     cancelPenRef.current();
     if (fc.current) {
       fc.current.defaultCursor = "default";
