@@ -820,21 +820,19 @@ function EditorInner() {
 
   const repairTextPathRuntimeData = (canvas:any) => {
     if (!canvas) return;
-    const fabric = (window as any).fabric;
     const guides = new Map<string, any>();
     canvas.getObjects().forEach((o:any) => {
       if (!o.__isTextPathGuide || !o.__uid || !Array.isArray(o.path) || o.path.length < 2) return;
-      o.segmentsInfo = fabric?.util?.getPathSegmentsInfo?.(o.path);
       guides.set(o.__uid, o);
     });
     canvas.getObjects().forEach((o:any) => {
       if (!o.__textPathGuideId) return;
       const guide = guides.get(o.__textPathGuideId);
-      if (!guide?.segmentsInfo?.length) return;
-      o.set("path", guide);
-      o.dirty = true;
-      o.initDimensions?.();
-      o.setCoords?.();
+      if (!guide) return;
+      const runtime = makeRuntimeTextPath(guide);
+      if (!runtime) return;
+      o.__textPathRuntime = runtime;
+      positionTextOnGuide(o, guide, runtime);
     });
   };
 
@@ -909,6 +907,41 @@ function EditorInner() {
     }
   };
 
+  const makeRuntimeTextPath = (guide:any) => {
+    const fabric = (window as any).fabric;
+    if (!fabric || !Array.isArray(guide?.path) || guide.path.length < 2) return null;
+    const runtime = new fabric.Path(guide.path, {
+      fill: null,
+      stroke: null,
+      strokeWidth: 0,
+      selectable: false,
+      evented: false,
+      objectCaching: false,
+      visible: false,
+    });
+    runtime.segmentsInfo = fabric.util?.getPathSegmentsInfo?.(runtime.path);
+    return runtime.segmentsInfo?.length ? runtime : null;
+  };
+
+  const positionTextOnGuide = (text:any, guide:any, runtime:any) => {
+    if (!text || !guide || !runtime) return;
+    const center = guide.getCenterPoint?.() || { x:Number(guide.left||0), y:Number(guide.top||0) };
+    text.set({
+      path: runtime,
+      angle: Number(guide.angle || 0),
+      scaleX: Number(guide.scaleX || 1),
+      scaleY: Number(guide.scaleY || 1),
+      flipX: !!guide.flipX,
+      flipY: !!guide.flipY,
+      objectCaching: false,
+    });
+    if (text.setPositionByOrigin) text.setPositionByOrigin(center, 'center', 'center');
+    else text.set({ left:center.x, top:center.y, originX:'center', originY:'center' });
+    text.dirty = true;
+    text.initDimensions?.();
+    text.setCoords?.();
+  };
+
   const linkSelectionTextToPath = () => {
     if (!fc.current || sel?.type !== "activeSelection") return;
     const canvas = fc.current;
@@ -917,48 +950,53 @@ function EditorInner() {
     const text = objects.find((o:any) => ["textbox","i-text","text"].includes(o.type));
     if (!guide || !text || objects.length !== 2) return;
 
+    // ActiveSelection stores children in selection-local coordinates. Exit it
+    // first so guide/text recover their real canvas transforms before linking.
+    canvas.discardActiveObject();
+    guide.setCoords?.();
+    text.setCoords?.();
+
     guide.__uid = guide.__uid || Math.random().toString(36).slice(2);
     text.__uid = text.__uid || Math.random().toString(36).slice(2);
-    // Fabric 5 text-on-path requires precomputed segment metadata. Paths made
-    // with our Pen tool do not have it until we explicitly calculate it.
-    if (!Array.isArray(guide.path) || guide.path.length < 2) return;
-    guide.segmentsInfo = (window as any).fabric?.util?.getPathSegmentsInfo?.(guide.path);
-    if (!guide.segmentsInfo?.length) return;
+
+    const runtime = makeRuntimeTextPath(guide);
+    if (!runtime) return;
+
     guide.__isTextPathGuide = true;
     guide.__textPathOriginalStroke = guide.__textPathOriginalStroke ?? guide.stroke;
     guide.__textPathOriginalStrokeWidth = guide.__textPathOriginalStrokeWidth ?? guide.strokeWidth;
     guide.__textPathOriginalDash = guide.__textPathOriginalDash ?? guide.strokeDashArray;
     guide.excludeFromExport = true;
-    guide.set({ fill:null, stroke:"#6366f1", strokeWidth:2, strokeDashArray:[7,5], visible:true, selectable:true, evented:true, objectCaching:false });
+    guide.set({
+      fill:null,
+      stroke:"#6366f1",
+      strokeWidth:2,
+      strokeDashArray:[7,5],
+      visible:true,
+      selectable:true,
+      evented:true,
+      objectCaching:false,
+    });
 
     text.__textPathGuideId = guide.__uid;
-    // Use set() so Fabric invalidates text dimensions/cache correctly.
-    text.set("path", guide);
+    text.__textPathRuntime = runtime;
     text.pathStartOffset = Number(text.pathStartOffset || 0);
     text.pathSide = text.pathSide || "left";
     text.pathAlign = text.pathAlign || "baseline";
-    text.set({ left:guide.left, top:guide.top, objectCaching:false });
-    text.dirty = true;
-    text.initDimensions?.();
-    text.setCoords?.();
+    positionTextOnGuide(text, guide, runtime);
 
     const sync = () => {
       if (!fc.current) return;
-      // Recalculate path measurements after node edits/transforms so the text
-      // keeps following the latest curve instead of stale segment data.
-      if (Array.isArray(guide.path) && guide.path.length > 1) {
-        guide.segmentsInfo = (window as any).fabric?.util?.getPathSegmentsInfo?.(guide.path);
-      }
       fc.current.getObjects().forEach((o:any) => {
         if (o.__textPathGuideId !== guide.__uid) return;
-        o.set("path", guide);
-        o.set({ left:guide.left, top:guide.top });
-        o.dirty = true;
-        o.initDimensions?.();
-        o.setCoords?.();
+        const nextRuntime = makeRuntimeTextPath(guide);
+        if (!nextRuntime) return;
+        o.__textPathRuntime = nextRuntime;
+        positionTextOnGuide(o, guide, nextRuntime);
       });
       fc.current.requestRenderAll();
     };
+
     if (!guide.__textPathSyncInstalled) {
       guide.on?.("moving", sync);
       guide.on?.("scaling", sync);
@@ -967,7 +1005,6 @@ function EditorInner() {
       guide.__textPathSyncInstalled = true;
     }
 
-    canvas.discardActiveObject();
     canvas.setActiveObject(text);
     syncSel(text);
     refreshLayers(canvas);
@@ -997,6 +1034,7 @@ function EditorInner() {
     const guideId = sel.__textPathGuideId;
     const guide = canvas.getObjects().find((o:any) => o.__uid === guideId);
     sel.path = null;
+    delete sel.__textPathRuntime;
     delete sel.__textPathGuideId;
     sel.dirty = true;
     sel.initDimensions?.();
