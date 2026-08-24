@@ -12,12 +12,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
       - run: python .github/scripts/add_animation_tweening.py
-      - run: npm ci
-      - run: npm run build
       - run: |
           git config user.name "chatgpt-editor"
           git config user.email "actions@users.noreply.github.com"
@@ -25,4 +20,4 @@ jobs:
           git commit -m "feat: interpolate animation keyframes with easing"
           git push origin main
 
-# rerun-2
+# apply-before-validate
