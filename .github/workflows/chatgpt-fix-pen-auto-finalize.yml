@@ -24,3 +24,5 @@ jobs:
           git add src/app/dashboard/canvas/editor/page.tsx
           git commit -m "fix: auto-finalize open Pen paths when changing tools"
           git push origin main
+
+# retrigger
