@@ -662,12 +662,13 @@ function EditorInner() {
   // Animation mode: timeline layers are separate from the normal object Layers panel.
   // Each animation-layer keyframe stores only the Fabric objects belonging to that layer.
   // The visible canvas is reconstructed by compositing the latest keyframe from every layer.
-  type AnimationLayer = { id: string; name: string; frames: Record<number, any[]> };
+  type AnimationEasing = "linear" | "easeIn" | "easeOut" | "easeInOut" | "bounce";
+  type AnimationLayer = { id: string; name: string; frames: Record<number, any[]>; easing: AnimationEasing };
   type AnimationBackground = { solid: string; gradient: GradValue | null };
   const FIRST_ANIM_LAYER = "anim-layer-1";
   const [animationMode, setAnimationMode] = useState(false);
   const [animationLayers, setAnimationLayers] = useState<AnimationLayer[]>([
-    { id: FIRST_ANIM_LAYER, name: "Camada 1", frames: {} },
+    { id: FIRST_ANIM_LAYER, name: "Camada 1", frames: {}, easing: "easeInOut" },
   ]);
   const [selectedAnimLayerId, setSelectedAnimLayerId] = useState(FIRST_ANIM_LAYER);
   const [currentFrame, setCurrentFrame] = useState(0);
@@ -725,11 +726,74 @@ function EditorInner() {
     catch { return obj.toObject?.() || {}; }
   };
 
+  const applyAnimationEasing = (t: number, easing: AnimationEasing) => {
+    const x = Math.max(0, Math.min(1, t));
+    if (easing === "easeIn") return x * x * x;
+    if (easing === "easeOut") return 1 - Math.pow(1 - x, 3);
+    if (easing === "easeInOut") return x < .5 ? 4*x*x*x : 1 - Math.pow(-2*x + 2, 3) / 2;
+    if (easing === "bounce") {
+      const n1 = 7.5625, d1 = 2.75;
+      if (x < 1/d1) return n1*x*x;
+      if (x < 2/d1) { const y=x-1.5/d1; return n1*y*y+.75; }
+      if (x < 2.5/d1) { const y=x-2.25/d1; return n1*y*y+.9375; }
+      const y=x-2.625/d1; return n1*y*y+.984375;
+    }
+    return x;
+  };
+
+  const tweenNumber = (a:any, b:any, t:number) => {
+    const na = Number(a), nb = Number(b);
+    return Number.isFinite(na) && Number.isFinite(nb) ? na + (nb - na) * t : a;
+  };
+
+  const tweenAngle = (a:any, b:any, t:number) => {
+    const na = Number(a || 0), nb = Number(b || 0);
+    const delta = ((nb - na + 540) % 360) - 180;
+    return na + delta * t;
+  };
+
+  const tweenAnimationObject = (from:any, to:any, t:number) => {
+    if (!from || !to || from.type !== to.type || !from.__uid || from.__uid !== to.__uid) return JSON.parse(JSON.stringify(from || to));
+    const out = JSON.parse(JSON.stringify(from));
+    const numeric = [
+      "left","top","scaleX","scaleY","skewX","skewY","opacity","width","height",
+      "rx","ry","strokeWidth","fontSize","charSpacing","lineHeight","__vectorBlur"
+    ];
+    numeric.forEach(k => { if (from[k] != null && to[k] != null) out[k] = tweenNumber(from[k], to[k], t); });
+    if (from.angle != null || to.angle != null) out.angle = tweenAngle(from.angle, to.angle, t);
+
+    if (from.shadow && to.shadow) {
+      out.shadow = { ...from.shadow };
+      ["blur","offsetX","offsetY"].forEach(k => { if (from.shadow[k] != null && to.shadow[k] != null) out.shadow[k] = tweenNumber(from.shadow[k], to.shadow[k], t); });
+    }
+
+    if (from.__threeD && to.__threeD && from.__threeD.enabled && to.__threeD.enabled) {
+      out.__threeD = { ...from.__threeD };
+      ["depth","rotX","rotY","rotZ","perspective","light"].forEach(k => {
+        if (from.__threeD[k] != null && to.__threeD[k] != null) out.__threeD[k] = k.startsWith("rot") ? tweenAngle(from.__threeD[k], to.__threeD[k], t) : tweenNumber(from.__threeD[k], to.__threeD[k], t);
+      });
+    }
+    return out;
+  };
+
   const resolveAnimationLayerFrame = (layer: AnimationLayer, frame: number) => {
     if (layer.frames[frame] !== undefined) return layer.frames[frame];
-    const keys = Object.keys(layer.frames).map(Number).filter(n => n <= frame).sort((a,b) => b-a);
-    if (keys.length) return layer.frames[keys[0]];
-    return [];
+    const keys = Object.keys(layer.frames).map(Number).sort((a,b) => a-b);
+    const prev = [...keys].reverse().find(n => n < frame);
+    const next = keys.find(n => n > frame);
+    if (prev === undefined) return [];
+    if (next === undefined) return layer.frames[prev] || [];
+
+    const fromObjects = layer.frames[prev] || [];
+    const toObjects = layer.frames[next] || [];
+    const rawT = (frame - prev) / Math.max(1, next - prev);
+    const t = applyAnimationEasing(rawT, layer.easing || "linear");
+    const toByUid = new Map<any, any>(toObjects.filter((o:any) => o?.__uid).map((o:any) => [o.__uid, o]));
+
+    return fromObjects.map((from:any) => {
+      const to = from?.__uid ? toByUid.get(from.__uid) : null;
+      return to ? tweenAnimationObject(from, to, t) : JSON.parse(JSON.stringify(from));
+    });
   };
 
   const resolveAnimationBackground = (frame: number): AnimationBackground => {
@@ -827,10 +891,15 @@ function EditorInner() {
     if (!animationModeRef.current) return;
     saveAnimationFrame(currentFrameRef.current);
     const id = `anim-layer-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
-    const next = [...animationLayersRef.current, { id, name: `Camada ${animationLayersRef.current.length + 1}`, frames: { [currentFrameRef.current]: [] } }];
+    const next = [...animationLayersRef.current, { id, name: `Camada ${animationLayersRef.current.length + 1}`, frames: { [currentFrameRef.current]: [] }, easing: "easeInOut" as AnimationEasing }];
     setAnimationLayersLive(next);
     selectedAnimLayerIdRef.current = id;
     setSelectedAnimLayerId(id);
+  };
+
+  const updateAnimationLayerEasing = (id: string, easing: AnimationEasing) => {
+    setAnimationLayersLive(animationLayersRef.current.map(layer => layer.id === id ? { ...layer, easing } : layer));
+    if (animationModeRef.current) loadAnimationFrame(currentFrameRef.current, false, false);
   };
 
   const removeAnimationLayer = (id: string) => {
@@ -5569,6 +5638,19 @@ function EditorInner() {
                 onChange={e => setAnimationFps(Math.max(1, Math.min(60, +e.target.value || 1)))}
                 className="w-14 h-7 px-2 border border-gray-200 rounded-lg text-center focus:outline-none focus:border-indigo-400" />
             </div>
+            <div className="flex items-center gap-1 text-xs text-gray-500 ml-2">
+              <span>Easing</span>
+              <select
+                value={animationLayers.find(l => l.id === selectedAnimLayerId)?.easing || "easeInOut"}
+                onChange={e => updateAnimationLayerEasing(selectedAnimLayerId, e.target.value as AnimationEasing)}
+                className="h-7 px-2 border border-gray-200 rounded-lg bg-white text-xs focus:outline-none focus:border-indigo-400">
+                <option value="linear">Linear</option>
+                <option value="easeIn">Ease In</option>
+                <option value="easeOut">Ease Out</option>
+                <option value="easeInOut">Ease In/Out</option>
+                <option value="bounce">Bounce</option>
+              </select>
+            </div>
             <div className="ml-auto text-[10px] text-gray-400">
               Clique em um frame para criar/editar um keyframe · cada linha é uma camada de animação
             </div>
@@ -5616,6 +5698,10 @@ function EditorInner() {
                   <div key={layer.id} className={`h-8 flex border-b border-gray-100 ${selectedAnimLayerId===layer.id ? "bg-indigo-50/20" : ""}`}>
                     {Array.from({length:101}, (_, frame) => {
                       const hasKey = layer.frames[frame] !== undefined;
+                      const keys = Object.keys(layer.frames).map(Number).sort((a,b)=>a-b);
+                      const hasPrev = keys.some(k => k < frame);
+                      const hasNext = keys.some(k => k > frame);
+                      const isTween = !hasKey && hasPrev && hasNext;
                       const active = currentFrame === frame;
                       return (
                         <button key={frame}
@@ -5628,6 +5714,7 @@ function EditorInner() {
                           style={{width:28,minWidth:28}}
                           title={`${layer.name} · frame ${frame}${hasKey ? " · keyframe" : ""}`}>
                           {hasKey && <span className={`block w-2.5 h-2.5 rotate-45 rounded-[1px] ${selectedAnimLayerId===layer.id ? "bg-indigo-600" : "bg-indigo-400"}`} />}
+                          {isTween && <span className="w-1 h-1 rounded-full bg-indigo-200" title="Frame interpolado" />}
                           {active && <span className="absolute left-1/2 top-0 bottom-0 w-px bg-indigo-500 pointer-events-none" />}
                         </button>
                       );
