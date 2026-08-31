@@ -32,17 +32,73 @@ export default function CommentsPage() {
     setComments(prev => prev.filter(c => c.id !== id));
   };
 
+  const handleExportCsv = () => {
+    if (comments.length === 0) return;
+
+    const escapeCsv = (value: string | number | null | undefined) => {
+      const normalized = String(value ?? "").replace(/\r?\n/g, " ");
+      return `"${normalized.replace(/"/g, '""')}"`;
+    };
+
+    const header = [
+      "Tipo",
+      "Nome",
+      "E-mail",
+      "Página",
+      "Comentário",
+      "Data",
+      "ID",
+      "ID do comentário pai",
+    ];
+
+    const rows = comments.map(comment => [
+      comment.parentId ? "Resposta" : "Comentário",
+      comment.name,
+      comment.email,
+      comment.pageId,
+      comment.text,
+      new Date(comment.createdAt).toLocaleString("pt-BR"),
+      comment.id,
+      comment.parentId ?? "",
+    ]);
+
+    const csv = [header, ...rows]
+      .map(row => row.map(value => escapeCsv(value)).join(";"))
+      .join("\n");
+
+    const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const date = new Date().toISOString().slice(0, 10);
+
+    link.href = url;
+    link.download = `comentarios-${date}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const roots = comments.filter(c => !c.parentId);
   const replies = comments.filter(c => !!c.parentId);
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-8">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 gap-4">
         <div>
           <h1 className="text-xl font-semibold text-gray-900">Comentários</h1>
           <p className="text-sm text-gray-500 mt-1">{comments.length} no total</p>
         </div>
-        <button onClick={load} className="text-sm text-indigo-600 hover:underline">Atualizar</button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleExportCsv}
+            disabled={loading || comments.length === 0}
+            className="text-sm px-3 py-2 rounded-lg border border-gray-200 text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            Baixar CSV
+          </button>
+          <button onClick={load} className="text-sm text-indigo-600 hover:underline">Atualizar</button>
+        </div>
       </div>
 
       {loading ? (
